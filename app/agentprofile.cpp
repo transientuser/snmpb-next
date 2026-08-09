@@ -66,7 +66,7 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
     connect( ap.Address, SIGNAL( editingFinished() ), 
              this, SLOT ( SetAddress() ) );
     connect( ap.Port, SIGNAL( editingFinished() ), 
-             this, SLOT ( SetPort() ) );
+             this, SLOT ( ApplyPort() ) );
     connect( ap.Retries, SIGNAL( valueChanged( int ) ),
              this, SLOT ( SetRetries() ) );
     connect( ap.Timeout, SIGNAL( valueChanged( int ) ), 
@@ -245,10 +245,10 @@ void AgentProfileManager::SetAddress(void)
         currentprofile->SetAddress();
 }
 
-void AgentProfileManager::SetPort(void)
+void AgentProfileManager::ApplyPort(void)
 {
     if (currentprofile)
-        currentprofile->SetPort();
+        currentprofile->ApplyPort();
 }
 
 void AgentProfileManager::SetRetries(void)
@@ -698,7 +698,7 @@ QString AgentProfile::GetAddress(void)
     return address;
 }
 
-void AgentProfile::SetPort(void)
+void AgentProfile::ApplyPort(void)
 {
     port = ap->Port->text();
 }

@@ -27,7 +27,9 @@
 class MibModule;
 class Trap;
 class Agent;
+#if SNMPB_ENABLE_QWT
 class GraphManager;
+#endif
 class MibEditor;
 class LogSnmpb;
 class Discovery;
@@ -80,7 +82,9 @@ private:
     MibViewLoader loader;
     Trap *trap;
     Agent *agent;
+#if SNMPB_ENABLE_QWT
     GraphManager *gm;
+#endif
     MibEditor *editor;
     LogSnmpb *logsnmpb;
     Discovery *discovery;

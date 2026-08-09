@@ -18,6 +18,7 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include <qmessagebox.h>
+#include <algorithm>
 #include <QDate>
 #include <QDialog>
 
@@ -765,7 +766,7 @@ void Agent::AsyncCallbackTrap(int reason, Pdu &pdu, SnmpTarget &target)
     {
         ctxname = pdu.get_context_name().get_printable();
         ctxid = pdu.get_context_engine_id().get_printable();
-        msgid = pdu.get_message_id();
+        msgid = QString::number(pdu.get_message_id());
         switch(pdu.get_security_level())
         {
             case SNMP_SECURITY_LEVEL_NOAUTH_NOPRIV:
@@ -1770,7 +1771,7 @@ void Agent::VarbindsMoveUp(void)
     QList<QTreeWidgetItem *> items = vbl->selectedItems();
     bool cleared = false;
 
-    qSort(items.begin(), items.end(), CompareItemPositions);
+    std::sort(items.begin(), items.end(), CompareItemPositions);
 
     for (int i = 0; i < items.size(); i++)
     {
@@ -1801,7 +1802,7 @@ void Agent::VarbindsMoveDown(void)
     QList<QTreeWidgetItem *> items = vbl->selectedItems();
     bool cleared = false;
 
-    qSort(items.begin(), items.end(), CompareItemPositions);
+    std::sort(items.begin(), items.end(), CompareItemPositions);
 
     for (int i = items.size()-1; i >= 0; i--)
     {
@@ -2078,19 +2079,19 @@ unsigned long Agent::GetSyncValue(const QString& oid)
     {
         pdu->get_vb(vb, 0);
         
-        unsigned long _uint32 = 0;
-        long _int32 = 0;
+        unsigned long uint32_value = 0;
+        long int32_value = 0;
         
         switch(vb.get_syntax())
         {
         case sNMP_SYNTAX_INT32:
-            vb.get_value(_int32);
-            return _int32;
+            vb.get_value(int32_value);
+            return int32_value;
         case sNMP_SYNTAX_CNTR32:
         case sNMP_SYNTAX_GAUGE32: /* also sNMP_SYNTAX_UINT32*/
         case sNMP_SYNTAX_TIMETICKS:
-            vb.get_value(_uint32);
-            return _uint32;
+            vb.get_value(uint32_value);
+            return uint32_value;
         /* TODO: case sNMP_SYNTAX_CNTR64: */
         default:
             break;

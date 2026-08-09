@@ -1,0 +1,110 @@
+if(SNMPB_ENABLE_QWT)
+    message(FATAL_ERROR
+        "SNMPB_ENABLE_QWT requires a future Qt 6 port of bundled Qwt 6.1.2"
+    )
+endif()
+
+set(SNMPB_APP_SOURCES
+    agent.cpp
+    agentprofile.cpp
+    comboboxes.cpp
+    discovery.cpp
+    logsnmpb.cpp
+    markerwidget.cpp
+    mibeditor.cpp
+    mibhighlighter.cpp
+    mibmodule.cpp
+    mibnode.cpp
+    mibselection.cpp
+    mibtextedit.cpp
+    mibview.cpp
+    preferences.cpp
+    snmpb.cpp
+    trap.cpp
+    usmprofile.cpp
+    main.cpp
+)
+
+set(SNMPB_APP_HEADERS
+    agent.h
+    agentprofile.h
+    comboboxes.h
+    discovery.h
+    logsnmpb.h
+    markerwidget.h
+    mibeditor.h
+    mibhighlighter.h
+    mibmodule.h
+    mibnode.h
+    mibselection.h
+    mibtextedit.h
+    mibview.h
+    preferences.h
+    snmpb.h
+    snmpbapp.h
+    trap.h
+    usmprofile.h
+)
+
+set(SNMPB_APP_FORMS
+    agentprofile.ui
+    find.ui
+    gotoline.ui
+    mainw.ui
+    plot.ui
+    preferences.ui
+    replace.ui
+    usmprofile.ui
+    varbinds.ui
+)
+
+if(WIN32)
+    list(APPEND SNMPB_APP_SOURCES snmpb.rc)
+endif()
+
+add_executable(snmpb
+    ${SNMPB_APP_SOURCES}
+    ${SNMPB_APP_HEADERS}
+    ${SNMPB_APP_FORMS}
+    snmpb.qrc
+)
+
+set_target_properties(snmpb PROPERTIES
+    AUTOMOC ON
+    AUTOUIC ON
+    AUTORCC ON
+    AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}
+    WIN32_EXECUTABLE ON
+    MACOSX_BUNDLE ON
+)
+
+target_compile_definitions(snmpb
+    PRIVATE
+        SNMPB_ENABLE_QWT=0
+)
+
+target_include_directories(snmpb
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(snmpb
+    PRIVATE
+        Qt6::Core
+        Qt6::Widgets
+        snmpb_libsmi
+        snmpb_snmp_pp
+        snmpb_libtomcrypt
+)
+
+find_package(Qt6 6.11 REQUIRED COMPONENTS LinguistTools)
+
+qt_add_translations(snmpb
+    TS_FILES
+        l10n/snmpb.uk_UA.ts
+    LRELEASE_OPTIONS
+        -removeidentical
+        -compress
+    RESOURCE_PREFIX
+        /i18n
+)

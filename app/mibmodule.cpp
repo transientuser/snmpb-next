@@ -25,6 +25,7 @@
 #include <qmessagebox.h> 
 #include <qtextstream.h>
 #include <QStringBuilder>
+#include <algorithm>
 
 #include "mibmodule.h"
 #include "agent.h"
@@ -280,7 +281,7 @@ void MibModule::RebuildTotalList()
     /* warn if there're MIBs which failed to load */
     if (!errored_files.empty())
     {
-        qSort(errored_files.begin(), errored_files.end());
+        std::sort(errored_files.begin(), errored_files.end());
 
         QMessageBox::warning (s->MainUI()->MIBTree, tr("MIB loading errors"),
                               tr("<p>The following MIB files failed to load. Check the log tab.</p>")
@@ -290,7 +291,7 @@ void MibModule::RebuildTotalList()
                               QMessageBox::Ok, Qt::NoButton);
     }
 
-    qSort(Total.begin(), Total.end(), compareModule);
+    std::sort(Total.begin(), Total.end(), compareModule);
 }
 
 // Attempts to identify and load a mib module that resolves a specific oid
@@ -401,7 +402,7 @@ void MibModule::RebuildLoadedList()
         new QTreeWidgetItem(s->MainUI()->LoadedModules, columns);
     }
     
-    qSort(Loaded.begin(), Loaded.end(), lessThanLoadedMibModule);
+    std::sort(Loaded.begin(), Loaded.end(), lessThanLoadedMibModule);
 }
 
 void MibModule::RebuildUnloadedList()
@@ -556,9 +557,9 @@ void MibModule::RegenerateSmiConf()
 
     std::unique_ptr<char, decltype(&std::free)> smipath{ smiGetPath(), &std::free };
     QStringList mibpaths = QString(smipath.get()).split(SMI_PATH_SEPARATOR);
-    out << "path " << mibpaths.join(SMI_PATH_SEPARATOR) << endl;
+    out << "path " << mibpaths.join(SMI_PATH_SEPARATOR) << Qt::endl;
 
     // write out mib preload list
     for (int i = 0; i < Wanted.size(); ++i)
-        out << "load " << Wanted[i] << endl;
+        out << "load " << Wanted[i] << Qt::endl;
 }

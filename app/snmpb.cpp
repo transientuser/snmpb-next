@@ -26,7 +26,9 @@
 #include "mibmodule.h"
 #include "agent.h"
 #include "trap.h"
+#if SNMPB_ENABLE_QWT
 #include "graph.h"
+#endif
 #include "logsnmpb.h"
 #include "mibeditor.h"
 #include "discovery.h"
@@ -38,7 +40,9 @@
 // These are needed to get the libraries version strings for the about box
 #include "smi.h"
 #include "tomcrypt.h"
+#if SNMPB_ENABLE_QWT
 #include "qwt.h"
+#endif
 #include "snmp_pp/config_snmp_pp.h"
 
 #define SMI_CONFIG_FILE          "smi.conf"
@@ -47,6 +51,17 @@
 #define AGENTS_CONFIG_FILE       "agents.conf"
 #define LOG_CONFIG_FILE          "log.conf"
 #define GRAPHS_CONFIG_FILE       "graphs.conf"
+
+#if SNMPB_ENABLE_QWT
+#define SNMPB_QWT_ABOUT_LINE \
+    "QWT [v%5] (<a href=http://qwt.sourceforge.net>http://qwt.sourceforge.net</a>)<br>"
+#define SNMPB_QT_ABOUT_LINE \
+    "QT [v%6] (<a href=http://qt.io>http://qt.io</a>)"
+#else
+#define SNMPB_QWT_ABOUT_LINE ""
+#define SNMPB_QT_ABOUT_LINE \
+    "QT [v%5] (<a href=http://qt.io>http://qt.io</a>)"
+#endif
 
 
 Snmpb::Snmpb(void)
@@ -111,7 +126,11 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     trap = new Trap(this);
     agent->Init();
     upm = new USMProfileManager(this);
+#if SNMPB_ENABLE_QWT
     gm = new GraphManager(this);
+#else
+    w.TabW->setTabVisible(w.TabW->indexOf(w.GraphsTab), false);
+#endif
     editor = new MibEditor(this);
     discovery = new Discovery(this);
 
@@ -364,14 +383,16 @@ This program uses the following libraries, covered by their respective license: 
 Snmp++ [v%2] (<a href=http://www.agentpp.com>http://www.agentpp.com</a>)<br>     \
 Libtomcrypt [v%3] (<a href=http://libtom.net>http://libtom.net</a>)<br>          \
 Libsmi [v%4] (<a href=http://www.ibr.cs.tu-bs.de/projects/libsmi>                \
-http://www.ibr.cs.tu-bs.de/projects/libsmi</a>)<br>                              \
-QWT [v%5] (<a href=http://qwt.sourceforge.net>http://qwt.sourceforge.net</a>)<br>\
-QT [v%6] (<a href=http://qt.io>http://qt.io</a>)")
+http://www.ibr.cs.tu-bs.de/projects/libsmi</a>)<br>"
+SNMPB_QWT_ABOUT_LINE
+SNMPB_QT_ABOUT_LINE)
         .arg(SNMPB_VERSION_STRING)
         .arg(SNMP_PP_VERSION_STRING)
         .arg(SCRYPT)
         .arg(SMI_VERSION_STRING)
+#if SNMPB_ENABLE_QWT
         .arg(QWT_VERSION_STR)
+#endif
         .arg(QT_VERSION_STR));
 }
 

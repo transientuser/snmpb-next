@@ -53,7 +53,7 @@ public:
     void SetAddress(void);
     void SetAddress(QString a) {address = a;};
     QString GetAddress(void);
-    void SetPort(void);
+    void ApplyPort(void);
     QString GetPort(void);
     void SetTarget(QString a, QString p);
 
@@ -139,7 +139,7 @@ protected slots:
     void ProtocolV3Support(bool checked);
     void SetProfileName(void);
     void SetAddress(void);
-    void SetPort(void);
+    void ApplyPort(void);
     void SetRetries(void);
     void SetTimeout(void);
     void SetReadComm(void);

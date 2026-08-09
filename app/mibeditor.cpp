@@ -21,6 +21,7 @@
 #include <QScrollBar>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QRegularExpression>
 #include <qfileinfo.h>
 #include <qpainter.h>
 #include "mibeditor.h"
@@ -202,7 +203,7 @@ void MibEditor::Find(bool reevaluate)
 
     if (reevaluate)
     {
-        ff = 0;
+        ff = {};
         find_string = find_uid.comboFind->currentText();
         if (!find_strings.contains(find_string))
             find_strings.append(find_string);
@@ -271,7 +272,7 @@ bool MibEditor::Replace(bool doreplace)
 {
     QTextCursor tc;
 
-    ff = 0;
+    ff = {};
     find_string = replace_uid.comboFind->currentText(); 
     if (!find_strings.contains(find_string))
         find_strings.append(find_string);
@@ -461,14 +462,14 @@ void MibEditor::VerifyMIB(void)
 
 void MibEditor::ExtractMIBfromRFC(void)
 {
-    QRegExp module_regexp("^[ \t]*([A-Za-z0-9-]*) *(PIB-)?DEFINITIONS *(::=)? *(BEGIN)? *$");
-    QRegExp page_regexp("\\[[pP]age [iv0-9]*\\] *");
-    QRegExp macro_regexp("^[ \t]*[A-Za-z0-9-]* *MACRO *::=");
-    QRegExp end_regexp("^[ \t]*END[ \t]*$");
-    QRegExp blankline_regexp("^[ \t]*$");
-    QRegExp blank_regexp("[^ \t]");
-    QRegExp leadingspaces_regexp("^([ ]*)");
-    QRegExp draft_regexp("^[ ]*Internet[ \\-]Draft");
+    QRegularExpression module_regexp("^[ \\t]*([A-Za-z0-9-]*) *(PIB-)?DEFINITIONS *(::=)? *(BEGIN)? *$");
+    QRegularExpression page_regexp("\\[[pP]age [iv0-9]*\\] *");
+    QRegularExpression macro_regexp("^[ \\t]*[A-Za-z0-9-]* *MACRO *::=");
+    QRegularExpression end_regexp("^[ \\t]*END[ \\t]*$");
+    QRegularExpression blankline_regexp("^[ \\t]*$");
+    QRegularExpression blank_regexp("[^ \\t]");
+    QRegularExpression leadingspaces_regexp("^([ ]*)");
+    QRegularExpression draft_regexp("^[ ]*Internet[ \\-]Draft");
 
     QFile file_in("empty");
     QFile file_tmpout("empty");
@@ -531,13 +532,14 @@ void MibEditor::ExtractMIBfromRFC(void)
     {
         line = in.readLine();
 
-        if (draft_regexp.indexIn(line) != -1)
+        if (draft_regexp.match(line).hasMatch())
             continue;
 
         // Start of module
-        if (module_regexp.indexIn(line) != -1)
+        const QRegularExpressionMatch module_match = module_regexp.match(line);
+        if (module_match.hasMatch())
         {
-            module = module_regexp.cap(1); 
+            module = module_match.captured(1);
             skip = 9;
             skipped = -1;
             macro = 0;
@@ -604,7 +606,7 @@ void MibEditor::ExtractMIBfromRFC(void)
 
         // At the end of a page we start the counter skipped to skip the
         // next few lines.
-        if (page_regexp.indexIn(line) != -1)
+        if (page_regexp.match(line).hasMatch())
             skipped = 0;
 
         // If we are skipping...
@@ -623,7 +625,7 @@ void MibEditor::ExtractMIBfromRFC(void)
                 // we have skipped four lines. remember the miminum of lines
                 // we have ever skipped to keep empty lines in a modules that
                 // appear near the top of a page.
-                if ((skipped >= 4) && (blank_regexp.indexIn(line) != -1))
+                if ((skipped >= 4) && blank_regexp.match(line).hasMatch())
                 {
                     if (skipped < skip)
                         skip = skipped;
@@ -637,15 +639,15 @@ void MibEditor::ExtractMIBfromRFC(void)
         if ((skipped == -1) && (module.length() > 0))
         {
             n++;
-            tmpout << line << endl;
+            tmpout << line << Qt::endl;
         }
 
         // Remember when we enter a macro definition
-        if (macro_regexp.indexIn(line) != -1)
+        if (macro_regexp.match(line).hasMatch())
             macro = 1;
 
         // End of module
-        if (end_regexp.indexIn(line) != -1)
+        if (end_regexp.match(line).hasMatch())
         {
             if (macro == 0)
             {
@@ -661,11 +663,13 @@ void MibEditor::ExtractMIBfromRFC(void)
                     // Find the minimum column that contains non-blank
                     // characters in order to cut a blank prefix off.
                     // Ignore lines that only contain white spaces.
-                    if (blankline_regexp.indexIn(line) == -1)
+                    if (!blankline_regexp.match(line).hasMatch())
                     {
-                        if (leadingspaces_regexp.indexIn(line) != -1)
+                        const QRegularExpressionMatch leading_match =
+                            leadingspaces_regexp.match(line);
+                        if (leading_match.hasMatch())
                         {
-                            p = leadingspaces_regexp.cap(1).length(); 
+                            p = leading_match.captured(1).length();
                             if ((p < strip) && (line.length() > p))
                                 strip = p;
                         }
@@ -683,7 +687,7 @@ void MibEditor::ExtractMIBfromRFC(void)
                         line = tmpout.readLine();
                         // For each block of consecutive blank lines,
                         // remove all lines but one.
-                        if (blankline_regexp.indexIn(line) != -1)
+                        if (blankline_regexp.match(line).hasMatch())
                         {
                             num_bl++;
                             continue;
@@ -691,11 +695,11 @@ void MibEditor::ExtractMIBfromRFC(void)
                         else
                         {
                             if (num_bl > 0)
-                                out << endl;
+                                out << Qt::endl;
                             num_bl = 0;
                         }
 
-                        out << line.remove(0, strip) << endl;
+                        out << line.remove(0, strip) << Qt::endl;
                     }
 
                     out.flush(); 
@@ -730,9 +734,8 @@ void MibEditor::ExtractMIBfromRFC(void)
 
 void MibEditor::SelectedLogEntry(QListWidgetItem *item)
 {
-    QRegExp expression(" line ([1-9][0-9]*|0): ");
-    expression.indexIn(item->text());
-    int line = expression.capturedTexts()[1].toInt();
+    QRegularExpression expression(" line ([1-9][0-9]*|0): ");
+    int line = expression.match(item->text()).captured(1).toInt();
 
     s->MainUI()->MIBFileMarker->setMarker(line); 
 }
