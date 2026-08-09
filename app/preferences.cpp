@@ -26,6 +26,7 @@
 
 #include "mibmodule.h"
 #include "preferences.h"
+#include "preferencesettings.h"
 
 const char default_mib_config[] = R"(
 IF-MIB
@@ -51,11 +52,11 @@ Preferences::Preferences(Snmpb *snmpb)
 
     // read early settings necessary to decide when to drop root
     QSettings settings;
-    settings.beginGroup("network");
-    enableipv4 = settings.value("enableipv4", true).toBool();
-    trapport4 = settings.value("trapport4", 162).toInt();
-    enableipv6 = settings.value("enableipv6", true).toBool();
-    trapport6 = settings.value("trapport6", 162).toInt();
+    const PreferencesSettings persisted = PreferencesSettings::load(settings);
+    enableipv4 = persisted.enableIpv4;
+    trapport4 = persisted.trapPort4;
+    enableipv6 = persisted.enableIpv6;
+    trapport6 = persisted.trapPort6;
 }
 
 void Preferences::Init(void)
@@ -115,25 +116,26 @@ void Preferences::Init(void)
 
     // Load preferences from the user-scope INI file
     QSettings settings;
-    horizontalsplit = settings.value("ui/horizontalsplit", false).toBool();
+    const PreferencesSettings persisted = PreferencesSettings::load(settings);
+    horizontalsplit = persisted.horizontalSplit;
     p->HorizontalSplit->setChecked(horizontalsplit);
 
     p->EnableIPv4->setChecked(enableipv4);
     p->EnableIPv6->setChecked(enableipv6);
 
-    expandtrapbinding = settings.value("ui/expandtrapbinding", true).toBool();
+    expandtrapbinding = persisted.expandTrapBinding;
     p->ExpandTrapBinding->setChecked(expandtrapbinding);
 
-    showagentname = settings.value("misc/showagentname", false).toBool();
+    showagentname = persisted.showAgentName;
     p->ShowAgentName->setChecked(showagentname);
 
-    automaticloading = settings.value("misc/automaticloading", 2).toInt();
+    automaticloading = persisted.automaticLoading;
     if (automaticloading == 1) p->MibLoadingEnable->setChecked(true);
     else if (automaticloading == 2) p->MibLoadingEnablePrompt->setChecked(true);
     else if (automaticloading == 3) p->MibLoadingDisable->setChecked(true);
 
-    curprofile = settings.value("ui/selectedprofile", "localhost").toString();
-    curproto = settings.value("ui/selectedproto", 0).toInt();
+    curprofile = persisted.selectedProfile;
+    curproto = persisted.selectedProtocol;
 
     // reset to default MIB paths if needed
     if (settings.value("mibpaths/size", 0) == 0) {
@@ -160,10 +162,12 @@ void Preferences::Execute (void)
 
     QSettings settings;
     // Warn if trap port or transport changed ...
-    if (trapport4 != settings.value("trapport", 162).toInt() ||
-        trapport6 != settings.value("trapport6", 162).toInt() ||
-        enableipv4 != settings.value("enableipv4", true).toBool() ||
-        enableipv6 != settings.value("enableipv6", true).toBool() )
+    PreferencesSettings edited;
+    edited.trapPort4 = trapport4;
+    edited.trapPort6 = trapport6;
+    edited.enableIpv4 = enableipv4;
+    edited.enableIpv6 = enableipv6;
+    if (edited.networkRestartRequired(PreferencesSettings::load(settings)))
         QMessageBox::information(NULL,
                                  tr("Restart needed"),
                                  tr("SnmpB transport protocol or trap port has changed.\n"
@@ -177,39 +181,25 @@ void Preferences::Save()
 {
     QSettings settings;
 
-    // Save preferences
-    settings.setValue("network/trapport4", trapport4);
-    settings.setValue("network/trapport6", trapport6);
-    settings.setValue("network/enableipv4", enableipv4);
-    settings.setValue("network/enableipv6", enableipv6);
+    PreferencesSettings values;
+    values.trapPort4 = trapport4;
+    values.trapPort6 = trapport6;
+    values.enableIpv4 = enableipv4;
+    values.enableIpv6 = enableipv6;
+    values.horizontalSplit = horizontalsplit;
+    values.expandTrapBinding = expandtrapbinding;
+    values.showAgentName = showagentname;
+    values.automaticLoading = automaticloading;
+    values.selectedProfile = curprofile;
+    values.selectedProtocol = curproto;
 
-    settings.setValue("ui/horizontalsplit", horizontalsplit);
-    settings.setValue("ui/expandtrapbinding", expandtrapbinding);
-    settings.setValue("misc/showagentname", showagentname);
-    settings.setValue("misc/automaticloading", automaticloading);
-
-    // Store MIB paths in local list
-    QStringList mibpaths;
     QList<QListWidgetItem *> l = p->ModulePaths->findItems("*", Qt::MatchWildcard);
     for (int i = 0; i < l.size(); i++)
-        mibpaths << l[i]->text();
-
-    // Then save MIB paths to config
-    settings.beginWriteArray("mibpaths");
-    for (int i = 0; i < mibpaths.size(); ++i) {
-        settings.setArrayIndex(i);
-        settings.setValue("dir", mibpaths[i]);
-    }
-    settings.endArray();
+        values.mibPaths << l[i]->text();
 
     // Save MIB preload list
-    QStringList preloads = s->MibModuleObj()->GetWantedModules();
-    settings.beginWriteArray("mibpreloads");
-    for (int i = 0; i < preloads.size(); ++i) {
-        settings.setArrayIndex(i);
-        settings.setValue("mib", preloads[i]);
-    }
-    settings.endArray();
+    values.mibPreloads = s->MibModuleObj()->GetWantedModules();
+    values.save(settings);
 
     // Refresh the MIB lists
     s->MibModuleObj()->Refresh();

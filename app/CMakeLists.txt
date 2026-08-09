@@ -20,6 +20,7 @@ set(SNMPB_APP_SOURCES
     mibtextedit.cpp
     mibview.cpp
     preferences.cpp
+    preferencesettings.cpp
     snmpb.cpp
     trap.cpp
     usmprofile.cpp
@@ -42,6 +43,7 @@ set(SNMPB_APP_HEADERS
     mibtextedit.h
     mibview.h
     preferences.h
+    preferencesettings.h
     snmpb.h
     snmpbapp.h
     trap.h
@@ -162,6 +164,22 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_preferences_settings_test
+        preferencesettings.cpp
+        preferencesettings.h
+        preferencesettings_test.cpp
+    )
+    target_link_libraries(snmpb_preferences_settings_test PRIVATE Qt6::Core)
+
+    if(WIN32)
+        add_test(NAME snmpb.preferences-settings COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_preferences_settings_test>)
+    else()
+        add_test(NAME snmpb.preferences-settings
+            COMMAND $<TARGET_FILE:snmpb_preferences_settings_test>)
+    endif()
+
     add_executable(snmpb_agentprofile_repository_test
         agentprofilerepository.cpp
         agentprofilerepository.h
