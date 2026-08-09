@@ -25,6 +25,8 @@ set(SNMPB_APP_SOURCES
     snmprequestconfig.cpp
     snmprequestconfigadapter.cpp
     snmprequestcontext.cpp
+    tablenodevalidation.cpp
+    tabletraversal.cpp
     snmpb.cpp
     trap.cpp
     usmprofile.cpp
@@ -52,6 +54,8 @@ set(SNMPB_APP_HEADERS
     snmprequestconfig.h
     snmprequestconfigadapter.h
     snmprequestcontext.h
+    tablenodevalidation.h
+    tabletraversal.h
     snmpb.h
     snmpbapp.h
     trap.h
@@ -172,6 +176,52 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_table_traversal_test
+        tabletraversal.cpp
+        tabletraversal.h
+        tabletraversal_test.cpp
+    )
+    target_link_libraries(snmpb_table_traversal_test
+        PRIVATE Qt6::Core snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
+    if(WIN32)
+        add_test(NAME snmpb.table-traversal COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_table_traversal_test>)
+    else()
+        add_test(NAME snmpb.table-traversal
+            COMMAND $<TARGET_FILE:snmpb_table_traversal_test>)
+    endif()
+
+    add_executable(snmpb_table_node_validation_test
+        tablenodevalidation.cpp
+        tablenodevalidation.h
+        tablenodevalidation_test.cpp
+    )
+    target_link_libraries(snmpb_table_node_validation_test PRIVATE snmpb_libsmi)
+    add_test(NAME snmpb.table-node-validation
+        COMMAND $<TARGET_FILE:snmpb_table_node_validation_test>)
+
+    add_executable(snmpb_synchronous_config_test
+        agentrequestselection.cpp
+        agentrequestselection.h
+        snmprequestconfig.cpp
+        snmprequestconfig.h
+        snmprequestconfigadapter.cpp
+        snmprequestconfigadapter.h
+        synchronousrequestconfig_test.cpp
+    )
+    target_link_libraries(snmpb_synchronous_config_test
+        PRIVATE Qt6::Core snmpb_snmp_pp snmpb_libtomcrypt)
+
+    if(WIN32)
+        add_test(NAME snmpb.synchronous-config COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_synchronous_config_test>)
+    else()
+        add_test(NAME snmpb.synchronous-config
+            COMMAND $<TARGET_FILE:snmpb_synchronous_config_test>)
+    endif()
+
     add_executable(snmpb_agent_selection_test
         agentrequestselection.cpp
         agentrequestselection.h

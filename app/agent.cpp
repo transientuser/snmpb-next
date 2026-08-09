@@ -28,6 +28,8 @@
 #include "snmp_pp/notifyqueue.h"
 #include "preferences.h"
 #include "snmprequestconfigadapter.h"
+#include "tablenodevalidation.h"
+#include "tabletraversal.h"
 #include "mibselection.h"
 
 #define ASYNC_TIMER_MSEC 5
@@ -1477,6 +1479,10 @@ void Agent::Stop(void)
 /* TODO: make it async */
 void Agent::TableViewFrom(const QString& oid)
 {
+    AgentRequestSelection selection;
+    if (ResolveCurrentSelection(&selection) != AgentSelectionError::None)
+        return;
+
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;
@@ -1484,7 +1490,7 @@ void Agent::TableViewFrom(const QString& oid)
     Oid toid;
     int rows = 0;
     
-    if (SetupFromCurrentSelection(oid, &target, &pdu) < 0)
+    if (Setup(selection, oid, &target, &pdu) < 0)
         return;
     
     // Clear the Query window ...
@@ -1501,10 +1507,13 @@ void Agent::TableViewFrom(const QString& oid)
     /* Set the parent oid & parent node */
     Oid poid(oid.toLatin1().data());
     SmiNode *pnode = GetNodeFromOid(poid);
+    const bool tableNode = pnode && pnode->nodekind == SMI_NODEKIND_TABLE;
+    SmiNode *firstChild = tableNode ? smiGetFirstChildNode(pnode) : nullptr;
+    SmiNode *rowNode = nullptr;
 
     /* Make sure the parent is a table or row entry ... */
-    if ((pnode->nodekind != SMI_NODEKIND_ROW) && 
-        (pnode->nodekind != SMI_NODEKIND_TABLE))
+    if (ResolveTableRowNode(pnode, firstChild, &rowNode) !=
+        TableNodeValidation::Valid)
     {
         delete target;
         delete pdu;
@@ -1513,17 +1522,25 @@ void Agent::TableViewFrom(const QString& oid)
     }
    
     /* If the oid is the table element, get the row entry element */ 
-    if (pnode->nodekind == SMI_NODEKIND_TABLE)
+    if (tableNode)
     {
-        pnode = smiGetFirstChildNode(pnode);
-        poid = Oid (smiRenderOID(pnode->oidlen, pnode->oid, SMI_RENDER_NUMERIC));
+        if (!RenderSmiNodeOid(rowNode, &poid))
+        {
+            delete target;
+            delete pdu;
+            s->MainUI()->Query->append(tr("<font color=red>Abort, not a table or row entry</font>"));
+            return;
+        }
     }
+    pnode = rowNode;
 
     /* Build the table header */
     msg += tr("<table border=\"1\"><tr bgcolor=yellow><td>Instance</td>");
     for (SmiNode *node = smiGetFirstChildNode(pnode); node != NULL;
          node = smiGetNextChildNode(node))
     {
+        if (!HasValidColumnInfo(node))
+            continue;
         msg += QString("<td>%1</td>").arg(node->name);
     }    
     msg += QString("</tr>");
@@ -1538,54 +1555,63 @@ void Agent::TableViewFrom(const QString& oid)
     // Now do a sync get_next
     while (snmp->get_next(*pdu, *target) == SNMP_CLASS_SUCCESS)
     {
+        if (!HasVarbindAt(pdu->get_vb_count(), 0))
+            break;
         pdu->get_vb(tvb, 0);
         toid = tvb.get_oid();
+
+        // look for var bind exception, applies to v2 only
+        if (tvb.get_syntax() == sNMP_SYNTAX_ENDOFMIBVIEW)
+            break;
         
         if (first) /* Get the column id we'll iterate on */
         {
             first = 0; /* reset the flag */
-            roid += toid[poid.len()];
+            if (!BuildFirstColumnRoot(poid, toid, &roid))
+                break;
         }
-
-        // look for var bind exception, applies to v2 only   
-        if ( tvb.get_syntax() == sNMP_SYNTAX_ENDOFMIBVIEW )
-            break;
         
         /* Make sure we dont get out of table scope ... */
-        if (toid.nCompare(roid.len(), roid))
+        if (!IsOidInSubtree(toid, roid))
             break;
         
         /* Get & print the instance part */
-        char *b = (char*)roid.get_printable();
-        char *f = (char*)tvb.get_printable_oid();
-        while ((*b++ == *f++) && (*b != '\0') && (*f != '\0')) ;
-        /* f is now the remaining part */
-        f++; /* skip . */
-        if (*f != '\0') msg += QString("<tr><td bgcolor=pink>%1</td>").arg(f);
+        QString instance;
+        if (!ExtractOidSuffix(roid, toid, &instance))
+            break;
+        if (!instance.isEmpty())
+            msg += QString("<tr><td bgcolor=pink>%1</td>").arg(instance);
         
         /* Loop thru all columns of that instance and build the row */
         for (SmiNode *node = smiGetFirstChildNode(pnode); node != NULL;
              node = smiGetNextChildNode(node))
         {
+            if (!HasValidColumnInfo(node))
+                continue;
             Vb svb;
-            toid = Oid (smiRenderOID(node->oidlen, node->oid, SMI_RENDER_NUMERIC));
-            toid += f;
+            if (!RenderSmiNodeOid(node, &toid))
+            {
+                msg += tr("<td>not available</td>");
+                continue;
+            }
+            toid += instance.toLatin1().constData();
             svb.set_oid(toid);    
             pdu->set_vblist(&svb, 1);
             
             // Now do an sync get
             int status = snmp->get(*pdu, *target);
 
+            if (status != SNMP_CLASS_SUCCESS ||
+                !HasVarbindAt(pdu->get_vb_count(), 0))
+            {
+                msg += tr("<td>not available</td>");
+                continue;
+            }
             pdu->get_vb(svb, 0);
 
             if ((pdu->get_error_status() == SNMP_ERROR_NO_SUCH_NAME) || // For v1
                 (svb.get_syntax() == sNMP_SYNTAX_NOSUCHOBJECT) ||       // For v2
                 (svb.get_syntax() == sNMP_SYNTAX_NOSUCHINSTANCE)) 
-            {
-                msg += tr("<td>not available</td>");
-            }
-            else
-            if (status != SNMP_CLASS_SUCCESS)
             {
                 msg += tr("<td>not available</td>");
             }
@@ -1924,6 +1950,10 @@ void Agent::VarbindsSelected(void)
 
 int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
 {
+    AgentRequestSelection selection;
+    if (ResolveCurrentSelection(&selection) != AgentSelectionError::None)
+        return 0;
+
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;
@@ -1931,7 +1961,7 @@ int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
     Oid toid;
     int res = 0;
 
-    if (SetupFromCurrentSelection(oid, &target, &pdu) < 0)
+    if (Setup(selection, oid, &target, &pdu) < 0)
         return res;
 
     /* Set the oid & node */
@@ -1939,7 +1969,7 @@ int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
     SmiNode *pnode = GetNodeFromOid(roid);
     
     /* Make sure the node is a column entry ... */
-    if (pnode->nodekind != SMI_NODEKIND_COLUMN)
+    if (!IsValidTableColumnNode(pnode))
     {
         delete target;
         delete pdu;
@@ -1975,6 +2005,8 @@ int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
     // Now do a sync get_next
     while (snmp->get_next(*pdu, *target) == SNMP_CLASS_SUCCESS)
     {
+        if (!HasVarbindAt(pdu->get_vb_count(), 0))
+            break;
         pdu->get_vb(tvb, 0);
         toid = tvb.get_oid();
 
@@ -1983,16 +2015,15 @@ int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
             break;
 
         /* Make sure we dont get out of table scope ... */
-        if (toid.nCompare(roid.len(), roid))
+        if (!IsOidInSubtree(toid, roid))
             break;
 
         /* Get & print the instance part */
-        char *b = (char*)roid.get_printable();
-        char *f = (char*)tvb.get_printable_oid();
-        while ((*b++ == *f++) && (*b != '\0') && (*f != '\0')) ;
-        /* f is now the remaining part */
-        if (*++f != '\0')
-            ilist.addItem(f);
+        QString instance;
+        if (!ExtractOidSuffix(roid, toid, &instance))
+            break;
+        if (!instance.isEmpty())
+            ilist.addItem(instance);
         // Next get_next ...
         pdu->set_vblist(&tvb, 1);   
     }
@@ -2090,11 +2121,15 @@ void Agent::GetFromPromptInstance(const QString& oid, int op)
 
 unsigned long Agent::GetSyncValue(const QString& oid)
 {
+    AgentRequestSelection selection;
+    if (ResolveCurrentSelection(&selection) != AgentSelectionError::None)
+        return 0;
+
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;
     Vb vb;
-    if (SetupFromCurrentSelection(oid, &target, &pdu) < 0)
+    if (Setup(selection, oid, &target, &pdu) < 0)
         return 0;
         
     // Now do a sync get
