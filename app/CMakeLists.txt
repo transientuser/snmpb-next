@@ -7,6 +7,7 @@ endif()
 set(SNMPB_APP_SOURCES
     agent.cpp
     agentprofile.cpp
+    agentprofilerepository.cpp
     comboboxes.cpp
     discovery.cpp
     logsnmpb.cpp
@@ -28,6 +29,7 @@ set(SNMPB_APP_SOURCES
 set(SNMPB_APP_HEADERS
     agent.h
     agentprofile.h
+    agentprofilerepository.h
     comboboxes.h
     discovery.h
     logsnmpb.h
@@ -160,6 +162,27 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_agentprofile_repository_test
+        agentprofilerepository.cpp
+        agentprofilerepository.h
+        agentprofilerepository_test.cpp
+    )
+    target_link_libraries(snmpb_agentprofile_repository_test PRIVATE Qt6::Core)
+
+    if(WIN32)
+        add_test(
+            NAME snmpb.agentprofile-repository
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+                $<TARGET_FILE:snmpb_agentprofile_repository_test>
+        )
+    else()
+        add_test(
+            NAME snmpb.agentprofile-repository
+            COMMAND $<TARGET_FILE:snmpb_agentprofile_repository_test>
+        )
+    endif()
+
     add_test(
         NAME snmpb.launch-smoke
         COMMAND ${CMAKE_COMMAND}

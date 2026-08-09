@@ -21,18 +21,19 @@
 #define AGENTPROFILE_H
 
 #include "snmpb.h"
+#include "agentprofilerepository.h"
 #include "ui_agentprofile.h"
 #include <qdialog.h>
 #include <qtreewidget.h>
 #include <qlist.h>
-#include <qsettings.h>
 
 class AgentProfile: public QObject
 {
     Q_OBJECT
     
 public:
-    AgentProfile(Ui_AgentProfile *uiap, QString *n = NULL);
+    AgentProfile(Ui_AgentProfile *uiap, const QString *n = NULL);
+    AgentProfile(Ui_AgentProfile *uiap, const AgentProfileRecord& record);
     ~AgentProfile();
 
     int IsPartOfAgentProfile(QTreeWidgetItem *item);
@@ -51,7 +52,7 @@ public:
     void SetProfileName(void);
 
     void SetAddress(void);
-    void SetAddress(QString a) {address = a;};
+    void SetAddress(QString a) {record.address = a;}
     QString GetAddress(void);
     void ApplyPort(void);
     QString GetPort(void);
@@ -87,6 +88,8 @@ public:
     QString GetContextEngineID(void);
     void SetContext(QString n, QString id);
 
+    const AgentProfileRecord& GetRecord(void) const;
+
 protected:
     Ui_AgentProfile *ap;
 
@@ -95,22 +98,7 @@ protected:
     QTreeWidgetItem *bulk;
     QTreeWidgetItem *v3;
 
-    bool v1support;
-    bool v2support;
-    bool v3support;
-    QString name;
-    QString address;
-    QString port;
-    int retries;
-    int timeout;
-    QString readcomm;
-    QString writecomm;
-    int maxrepetitions;
-    int nonrepeaters;
-    QString secname;
-    int seclevel;
-    QString contextname;
-    QString contextengineid;
+    AgentProfileRecord record;
 };
 
 class AgentProfileManager: public QObject
@@ -164,7 +152,7 @@ private:
     Snmpb *s;
     Ui_AgentProfile ap;
     QDialog apw;
-    QSettings *settings;
+    AgentProfileRepository repository;
 
     AgentProfile* currentprofile;
     QList<AgentProfile *> agents;

@@ -22,10 +22,9 @@
 #include <qmessagebox.h>
 
 AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
+    : repository(snmpb->GetAgentsConfigFile())
 {
     s = snmpb;
-
-    settings = new QSettings(s->GetAgentsConfigFile(), QSettings::IniFormat, this);
 
     ap.setupUi(&apw);
 
@@ -88,22 +87,6 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
     connect( ap.ContextEngineID, SIGNAL( editingFinished() ), 
              this, SLOT ( SetContextEngineID() ) );
 
-    // First time the app is started, populate with a minimum config of localhost
-    if (!QFile::exists(s->GetAgentsConfigFile()))
-    {
-        currentprofile = NULL; 
-        Add();
-        currentprofile = GetAgentProfile("newagent");
-        currentprofile->SetName("localhost");
-        Add();
-        currentprofile = GetAgentProfile("newagent");
-        currentprofile->SetName("localhostipv6");
-        currentprofile->SetAddress("::1");
-        WriteConfigFile();
-        Delete();
-        Delete();
-    }
-
     currentprofile = NULL; 
 
     // Loop & load all stored agent profiles
@@ -115,59 +98,17 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
 
 void AgentProfileManager::ReadConfigFile (void)
 {
-    int size = settings->beginReadArray("agents");
-    for (int i = 0; i < size; i++)
-    {
-        settings->setArrayIndex(i);
-        QString _name = settings->value("name").toString();
-        AgentProfile *newagent = new AgentProfile(&ap, &_name);
-        newagent->SetSupportedProtocol(settings->value("v1").toBool(), 
-                                       settings->value("v2").toBool(), 
-                                       settings->value("v3").toBool());
-        newagent->SetTarget(settings->value("address").toString(),
-                            settings->value("port").toString());
-        newagent->SetRetriesTimeout(settings->value("retries").toInt(),
-                                    settings->value("timeout").toInt());
-        newagent->SetComms(settings->value("readcomm").toString(),
-                           settings->value("writecomm").toString());
-        newagent->SetBulk(settings->value("maxrepetitions").toInt(),
-                          settings->value("nonrepeaters").toInt());
-        newagent->SetUser(settings->value("secname").toString(), 
-                          settings->value("seclevel").toInt());
-        newagent->SetContext(settings->value("contextname").toString(), 
-                             settings->value("contextengineid").toString());
-        agents.append(newagent);
-    }
-    settings->endArray();
+    const QList<AgentProfileRecord> profiles = repository.LoadOrCreateDefaults();
+    for (const AgentProfileRecord& profile : profiles)
+        agents.append(new AgentProfile(&ap, profile));
 }
 
 void AgentProfileManager::WriteConfigFile (void)
 {
-    bool v1, v2, v3;
-    settings->beginWriteArray("agents");
-    settings->remove("");
+    QList<AgentProfileRecord> profiles;
     for (int i = 0; i < agents.size(); i++)
-    {
-        settings->setArrayIndex(i);
-        settings->setValue("name", agents[i]->GetName());
-        agents[i]->GetSupportedProtocol(&v1, &v2, &v3);
-        settings->setValue("v1", v1);
-        settings->setValue("v2", v2);
-        settings->setValue("v3", v3);
-        settings->setValue("address", agents[i]->GetAddress());
-        settings->setValue("port", agents[i]->GetPort());
-        settings->setValue("retries", agents[i]->GetRetries());
-        settings->setValue("timeout", agents[i]->GetTimeout());
-        settings->setValue("readcomm", agents[i]->GetReadComm());
-        settings->setValue("writecomm", agents[i]->GetWriteComm());
-        settings->setValue("maxrepetitions", agents[i]->GetMaxRepetitions());
-        settings->setValue("nonrepeaters", agents[i]->GetNonRepeaters());
-        settings->setValue("secname", agents[i]->GetSecName());
-        settings->setValue("seclevel", agents[i]->GetSecLevel());
-        settings->setValue("contextname", agents[i]->GetContextName());
-        settings->setValue("contextengineid", agents[i]->GetContextEngineID());
-    }
-    settings->endArray();
+        profiles.append(agents[i]->GetRecord());
+    repository.Save(profiles);
 }
 
 void AgentProfileManager::Execute (void)
@@ -434,7 +375,7 @@ QStringList AgentProfileManager::GetAgentsList(void)
     return sl;
 }
 
-AgentProfile::AgentProfile(Ui_AgentProfile *uiap, QString *n)
+AgentProfile::AgentProfile(Ui_AgentProfile *uiap, const QString *n)
 {
     ap = uiap;
 
@@ -457,6 +398,14 @@ AgentProfile::AgentProfile(Ui_AgentProfile *uiap, QString *n)
     bulk->setText(0, "Get-Bulk");
     v3 = new QTreeWidgetItem(general);
     v3->setText(0, "SnmpV3");
+}
+
+AgentProfile::AgentProfile(Ui_AgentProfile *uiap,
+                           const AgentProfileRecord& profile)
+    : AgentProfile(uiap, &profile.name)
+{
+    record = profile;
+    ApplySupportedProtocol();
 }
 
 AgentProfile::~AgentProfile()
@@ -489,7 +438,7 @@ void AgentProfile::ProtocolV1Support(bool checked)
             v1v2c->setHidden(true);
     }
 
-    v1support = checked;
+    record.v1 = checked;
 }
 
 void AgentProfile::ProtocolV2Support(bool checked)
@@ -522,7 +471,7 @@ void AgentProfile::ProtocolV2Support(bool checked)
             bulk->setHidden(true);
     }
 
-    v2support = checked;
+    record.v2 = checked;
 }
 
 void AgentProfile::ProtocolV3Support(bool checked)
@@ -552,7 +501,7 @@ void AgentProfile::ProtocolV3Support(bool checked)
             bulk->setHidden(true);
     }
 
-    v3support = checked;
+    record.v3 = checked;
 }
 
 int AgentProfile::SelectAgentProfile(QTreeWidgetItem * item)
@@ -562,11 +511,11 @@ int AgentProfile::SelectAgentProfile(QTreeWidgetItem * item)
         ap->ProfileProps->setCurrentIndex(0);
 
         ApplySupportedProtocol();
-        ap->ProfileName->setText(name);
-        ap->Address->setText(address);
-        ap->Port->setText(port);
-        ap->Retries->setValue(retries);
-        ap->Timeout->setValue(timeout);
+        ap->ProfileName->setText(record.name);
+        ap->Address->setText(record.address);
+        ap->Port->setText(record.port);
+        ap->Retries->setValue(record.retries);
+        ap->Timeout->setValue(record.timeout);
 
         return 1;
     }
@@ -575,8 +524,8 @@ int AgentProfile::SelectAgentProfile(QTreeWidgetItem * item)
     {
         ap->ProfileProps->setCurrentIndex(1);
 
-        ap->ReadComm->setText(readcomm);
-        ap->WriteComm->setText(writecomm);
+        ap->ReadComm->setText(record.readcomm);
+        ap->WriteComm->setText(record.writecomm);
 
         return 1;
     }
@@ -585,8 +534,8 @@ int AgentProfile::SelectAgentProfile(QTreeWidgetItem * item)
     {
         ap->ProfileProps->setCurrentIndex(2);
 
-        ap->MaxRepetitions->setValue(maxrepetitions);
-        ap->NonRepeaters->setValue(nonrepeaters);
+        ap->MaxRepetitions->setValue(record.maxrepetitions);
+        ap->NonRepeaters->setValue(record.nonrepeaters);
 
         return 1;
     }
@@ -595,10 +544,10 @@ int AgentProfile::SelectAgentProfile(QTreeWidgetItem * item)
     {
         ap->ProfileProps->setCurrentIndex(3);
 
-        ap->SecName->setCurrentIndex(ap->SecName->findText(secname));
-        ap->SecLevel->setCurrentIndex(seclevel);
-        ap->ContextName->setText(contextname);
-        ap->ContextEngineID->setText(contextengineid);
+        ap->SecName->setCurrentIndex(ap->SecName->findText(record.secname));
+        ap->SecLevel->setCurrentIndex(record.seclevel);
+        ap->ContextName->setText(record.contextname);
+        ap->ContextEngineID->setText(record.contextengineid);
 
         return 1;
     }
@@ -609,36 +558,36 @@ int AgentProfile::SelectAgentProfile(QTreeWidgetItem * item)
 void AgentProfile::ApplySupportedProtocol(void)
 {
     // Order is important: first set the ones that are supported ...
-    if (v1support)
+    if (record.v1)
     {
         ap->V1->setCheckState(Qt::Checked); 
-        ProtocolV1Support(v1support);
+        ProtocolV1Support(record.v1);
     }
-    if (v2support)
+    if (record.v2)
     {
         ap->V2->setCheckState(Qt::Checked); 
-        ProtocolV2Support(v2support);
+        ProtocolV2Support(record.v2);
     }
-    if (v3support)
+    if (record.v3)
     {
         ap->V3->setCheckState(Qt::Checked); 
-        ProtocolV3Support(v3support);
+        ProtocolV3Support(record.v3);
     }
     // ... then the ones that are not. This avoids the message box protection
-    if (!v1support)
+    if (!record.v1)
     {
         ap->V1->setCheckState(Qt::Unchecked);
-        ProtocolV1Support(v1support);
+        ProtocolV1Support(record.v1);
     }
-    if (!v2support)
+    if (!record.v2)
     {
         ap->V2->setCheckState(Qt::Unchecked);
-        ProtocolV2Support(v2support);
+        ProtocolV2Support(record.v2);
     }
-    if (!v3support)
+    if (!record.v3)
     {
         ap->V3->setCheckState(Qt::Unchecked);
-        ProtocolV3Support(v3support);
+        ProtocolV3Support(record.v3);
     }
 }
 
@@ -657,190 +606,195 @@ QTreeWidgetItem *AgentProfile::GetGeneralWidgetItem(void)
 
 void AgentProfile::GetSupportedProtocol(bool *v1, bool *v2, bool *v3)
 {
-    if (v1) *v1 = v1support;
-    if (v2) *v2 = v2support;
-    if (v3) *v3 = v3support;
+    if (v1) *v1 = record.v1;
+    if (v2) *v2 = record.v2;
+    if (v3) *v3 = record.v3;
 }
 
 void AgentProfile::SetSupportedProtocol(bool v1, bool v2, bool v3)
 {
-    v1support = v1;
-    v2support = v2;
-    v3support = v3;
+    record.v1 = v1;
+    record.v2 = v2;
+    record.v3 = v3;
 
     ApplySupportedProtocol();
 }
 
 void AgentProfile::SetName(QString n)
 {
-    name = n;
-    ap->ProfileName->setText(name);  
+    record.name = n;
+    ap->ProfileName->setText(record.name);
 }
 
 QString AgentProfile::GetName(void)
 {
-    return name;
+    return record.name;
 }
 
 void AgentProfile::SetProfileName(void)
 {
-    name = ap->ProfileName->text();
-    general->setText(0, name);
+    record.name = ap->ProfileName->text();
+    general->setText(0, record.name);
 }
 
 void AgentProfile::SetAddress(void)
 {
-    address = ap->Address->text();
+    record.address = ap->Address->text();
 }
 
 QString AgentProfile::GetAddress(void)
 {
-    return address;
+    return record.address;
 }
 
 void AgentProfile::ApplyPort(void)
 {
-    port = ap->Port->text();
+    record.port = ap->Port->text();
 }
 
 QString AgentProfile::GetPort(void)
 {
-    return port;
+    return record.port;
 }
 
 void AgentProfile::SetTarget(QString a, QString p)
 {
-    address = a;
-    port = p; 
+    record.address = a;
+    record.port = p;
 }
 
 void AgentProfile::SetRetries(void)
 {
-    retries = ap->Retries->value();
+    record.retries = ap->Retries->value();
 }
 
 int AgentProfile::GetRetries(void)
 {
-    return retries;
+    return record.retries;
 }
 
 void AgentProfile::SetTimeout(void)
 {
-    timeout = ap->Timeout->value();
+    record.timeout = ap->Timeout->value();
 }
 
 int AgentProfile::GetTimeout(void)
 {
-    return timeout;
+    return record.timeout;
 }
 
 void AgentProfile::SetRetriesTimeout(int r, int t)
 {
-    retries = r;
-    timeout = t;
+    record.retries = r;
+    record.timeout = t;
 }
 
 void AgentProfile::SetReadComm(void)
 {
-    readcomm = ap->ReadComm->text();
+    record.readcomm = ap->ReadComm->text();
 }
 
 QString AgentProfile::GetReadComm(void)
 {
-    return readcomm;
+    return record.readcomm;
 }
 
 void AgentProfile::SetWriteComm(void)
 {
-    writecomm = ap->WriteComm->text();
+    record.writecomm = ap->WriteComm->text();
 }
 
 QString AgentProfile::GetWriteComm(void)
 {
-    return writecomm;
+    return record.writecomm;
 }
 
 void AgentProfile::SetComms(QString r, QString w)
 {
-    readcomm = r;
-    writecomm = w;
+    record.readcomm = r;
+    record.writecomm = w;
 }
 
 void AgentProfile::SetMaxRepetitions(void)
 {
-    maxrepetitions = ap->MaxRepetitions->value();
+    record.maxrepetitions = ap->MaxRepetitions->value();
 }
 
 int AgentProfile::GetMaxRepetitions(void)
 {
-    return maxrepetitions;
+    return record.maxrepetitions;
 }
 
 void AgentProfile::SetNonRepeaters(void)
 {
-    nonrepeaters = ap->NonRepeaters->value();
+    record.nonrepeaters = ap->NonRepeaters->value();
 }
 
 int AgentProfile::GetNonRepeaters(void)
 {
-    return nonrepeaters;
+    return record.nonrepeaters;
 }
 
 void AgentProfile::SetBulk(int mr, int nr)
 {
-    maxrepetitions = mr;
-    nonrepeaters = nr;
+    record.maxrepetitions = mr;
+    record.nonrepeaters = nr;
 }
 
 void AgentProfile::SetSecName(void)
 {
-    secname = ap->SecName->itemText(ap->SecName->currentIndex());
+    record.secname = ap->SecName->itemText(ap->SecName->currentIndex());
 }
 
 QString AgentProfile::GetSecName(void)
 {
-    return secname;
+    return record.secname;
 }
 
 void AgentProfile::SetSecLevel(void)
 {
-    seclevel = ap->SecLevel->currentIndex();
+    record.seclevel = ap->SecLevel->currentIndex();
 }
 
 int AgentProfile::GetSecLevel(void)
 {
-    return seclevel;
+    return record.seclevel;
 }
 
 void AgentProfile::SetUser(QString u, int l)
 {
-    secname = u;
-    seclevel = l;
+    record.secname = u;
+    record.seclevel = l;
 }
 
 void AgentProfile::SetContextName(void)
 {
-    contextname = ap->ContextName->text();
+    record.contextname = ap->ContextName->text();
 }
 
 QString AgentProfile::GetContextName(void)
 {
-    return contextname;
+    return record.contextname;
 }
 
 void AgentProfile::SetContextEngineID(void)
 {
-    contextengineid = ap->ContextEngineID->text();
+    record.contextengineid = ap->ContextEngineID->text();
 }
 
 QString AgentProfile::GetContextEngineID(void)
 {
-    return contextengineid;
+    return record.contextengineid;
 }
 
 void AgentProfile::SetContext(QString n, QString id)
 {
-    contextname = n;
-    contextengineid = id;
+    record.contextname = n;
+    record.contextengineid = id;
+}
+
+const AgentProfileRecord& AgentProfile::GetRecord(void) const
+{
+    return record;
 }
 
