@@ -20,6 +20,7 @@
 #ifndef AGENT_H
 #define AGENT_H
 
+#include <memory>
 #include <qtimer.h>
 
 #include "snmpb.h"
@@ -28,6 +29,7 @@
 #include "mibselection.h"
 #include "agentprofile.h"
 #include "snmprequestconfig.h"
+#include "snmprequestcontext.h"
 #include "ui_varbinds.h"
 #include "snmp_pp/snmp_pp.h"
 
@@ -62,7 +64,11 @@ public:
     static SmiNode* GetNodeFromOid(Oid &oid);
 
 protected:
-    int Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist = false);
+    int Setup(const QString& oid, SnmpTarget **t, Pdu **p,
+              bool usevblist = false,
+              SnmpRequestConfig *resolvedConfig = nullptr);
+    void BeginRequest(const SnmpRequestConfig &config,
+                      SnmpRequestOperation operation);
 
 private:
     QString GetValueString(MibSelection &ms, Vb* vb);
@@ -128,6 +134,8 @@ private:
     bool stop;
 
     QVector<Vb> vblist;
+
+    std::unique_ptr<SnmpRequestContext> activeRequestContext;
 
     Ui_Varbinds *vbui;
     QDialog *vbd;

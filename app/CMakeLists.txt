@@ -23,6 +23,7 @@ set(SNMPB_APP_SOURCES
     preferencesettings.cpp
     snmprequestconfig.cpp
     snmprequestconfigadapter.cpp
+    snmprequestcontext.cpp
     snmpb.cpp
     trap.cpp
     usmprofile.cpp
@@ -48,6 +49,7 @@ set(SNMPB_APP_HEADERS
     preferencesettings.h
     snmprequestconfig.h
     snmprequestconfigadapter.h
+    snmprequestcontext.h
     snmpb.h
     snmpbapp.h
     trap.h
@@ -168,6 +170,24 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_request_context_test
+        snmprequestconfig.cpp
+        snmprequestconfig.h
+        snmprequestcontext.cpp
+        snmprequestcontext.h
+        snmprequestcontext_test.cpp
+    )
+    target_link_libraries(snmpb_request_context_test PRIVATE Qt6::Core)
+
+    if(WIN32)
+        add_test(NAME snmpb.request-context COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_request_context_test>)
+    else()
+        add_test(NAME snmpb.request-context
+            COMMAND $<TARGET_FILE:snmpb_request_context_test>)
+    endif()
+
     add_executable(snmpb_request_config_test
         snmprequestconfig.cpp
         snmprequestconfig.h

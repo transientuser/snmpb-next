@@ -433,7 +433,8 @@ void Agent::SelectAgentProfile(QString *prefprofile, int prefproto)
     }
 }
 
-int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
+int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist,
+                 SnmpRequestConfig *resolvedConfig)
 {    
     if (!snmp)
         return -1;
@@ -453,6 +454,8 @@ int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
     if (!SnmpRequestConfig::FromProfile(ap->GetRecord(), selectedProtocol,
                                         &config))
         return -1;
+    if (resolvedConfig)
+        *resolvedConfig = config;
     
     // Create an address object from the entered values
     UdpAddress address(config.endpoint().toLatin1().data());
@@ -494,6 +497,13 @@ int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
     *p = pdu;
     
     return 0;
+}
+
+void Agent::BeginRequest(const SnmpRequestConfig &config,
+                         SnmpRequestOperation operation)
+{
+    activeRequestContext =
+        std::make_unique<SnmpRequestContext>(config, operation);
 }
 
 void Agent::ConfigTargetFromSettings(const SnmpRequestConfig& config,
@@ -999,10 +1009,11 @@ node_restart:
         pdu.set_vblist(&vb, 1);
  
         // Now do an async get_bulk
-        AgentProfile *ap = s->APManagerObj()->GetAgentProfile
-                            (s->MainUI()->AgentProfile->currentText());
-        status = snmp->get_bulk(pdu, target, ap?ap->GetNonRepeaters():0, 
-                                ap?ap->GetMaxRepetitions():10, 
+        if (!activeRequestContext)
+            goto cleanup;
+        status = snmp->get_bulk(pdu, target,
+                                activeRequestContext->nonRepeaters(),
+                                activeRequestContext->maxRepetitions(),
                                 callback_walk, this);
 
         // Could we send it?
@@ -1034,6 +1045,7 @@ cleanup:
     s->MibModuleObj()->SetLoadingPolicy(MibModule::MIBLOAD_DEFAULT);
     emit StartWalk(false);
     s->MainUI()->actionStop->setEnabled(false);
+    activeRequestContext.reset();
 }
 
 void Agent::AsyncCallbackSet(int reason, Pdu &pdu, SnmpTarget &target)
@@ -1181,17 +1193,19 @@ cleanup:
     s->MainUI()->Query->append(msg);
     // Dont stop the timer, but put it back to the lower-rate trap timer value
     timer.start(TRAP_TIMER_MSEC);
+    activeRequestContext.reset();
 }
 
 
 void Agent::WalkFrom(const QString& oid)
 {
     int status;
+    SnmpRequestConfig requestConfig;
     
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;
-    if (Setup(oid, &target, &pdu) < 0)
+    if (Setup(oid, &target, &pdu, false, &requestConfig) < 0)
         return;
     
     // Clear the Query window ...
@@ -1207,10 +1221,10 @@ void Agent::WalkFrom(const QString& oid)
     s->MainUI()->actionStop->setEnabled(true);
  
     // Now do an async get_bulk
-    AgentProfile *ap = s->APManagerObj()->GetAgentProfile
-                        (s->MainUI()->AgentProfile->currentText());
-    status = snmp->get_bulk(*pdu, *target, ap?ap->GetNonRepeaters():0, 
-                            ap?ap->GetMaxRepetitions():10, 
+    BeginRequest(requestConfig, SnmpRequestOperation::Walk);
+    status = snmp->get_bulk(*pdu, *target,
+                            activeRequestContext->nonRepeaters(),
+                            activeRequestContext->maxRepetitions(),
                             callback_walk, this);
 
     // Could we send it?
@@ -1223,6 +1237,7 @@ void Agent::WalkFrom(const QString& oid)
         msg = tr("<font color=red>Could not send GETBULK request: %1</font>")
                        .arg(Snmp::error_msg(status));
         s->MainUI()->Query->append(msg);
+        activeRequestContext.reset();
     }
     
     delete target;
@@ -1250,11 +1265,12 @@ void Agent::GetFrom(const QString& oid, int op)
 void Agent::Get(const QString& oid, bool usevblist)
 {
     int status;
+    SnmpRequestConfig requestConfig;
     
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;
-    if (Setup(oid, &target, &pdu, usevblist) < 0)
+    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
         return;
     
     // Clear the Query window ...
@@ -1268,6 +1284,7 @@ void Agent::Get(const QString& oid, bool usevblist)
     stop = false;
 
     // Now do an async get
+    BeginRequest(requestConfig, SnmpRequestOperation::Get);
     status = snmp->get(*pdu, *target, callback, this);
 
     // Could we send it?
@@ -1280,6 +1297,7 @@ void Agent::Get(const QString& oid, bool usevblist)
         msg = QString(tr("<font color=red>Could not send GET request: %1</font>"))
                        .arg(Snmp::error_msg(status));
         s->MainUI()->Query->append(msg);
+        activeRequestContext.reset();
     }
     
     delete target;
@@ -1289,11 +1307,12 @@ void Agent::Get(const QString& oid, bool usevblist)
 void Agent::GetNext(const QString& oid, bool usevblist)
 {
     int status;
+    SnmpRequestConfig requestConfig;
     
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;    
-    if (Setup(oid, &target, &pdu, usevblist) < 0)
+    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
         return;
         
     // Clear the Query window ...
@@ -1307,6 +1326,7 @@ void Agent::GetNext(const QString& oid, bool usevblist)
     stop = false;
  
     // Now do an async get_next
+    BeginRequest(requestConfig, SnmpRequestOperation::GetNext);
     status = snmp->get_next(*pdu, *target, callback, this);
 
     // Could we send it?
@@ -1319,6 +1339,7 @@ void Agent::GetNext(const QString& oid, bool usevblist)
         msg = QString(tr("<font color=red>Could not send GETNEXT request: %1</font>"))
                        .arg(Snmp::error_msg(status));
         s->MainUI()->Query->append(msg);
+        activeRequestContext.reset();
     }
     
     delete target;
@@ -1328,11 +1349,12 @@ void Agent::GetNext(const QString& oid, bool usevblist)
 void Agent::GetBulk(const QString& oid, bool usevblist)
 {
     int status;
+    SnmpRequestConfig requestConfig;
     
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;    
-    if (Setup(oid, &target, &pdu, usevblist) < 0)
+    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
         return;
         
     // Clear the Query window ...
@@ -1346,10 +1368,10 @@ void Agent::GetBulk(const QString& oid, bool usevblist)
     stop = false;
  
     // Now do an async get_bulk
-    AgentProfile *ap = s->APManagerObj()->GetAgentProfile
-                        (s->MainUI()->AgentProfile->currentText());
-    status = snmp->get_bulk(*pdu, *target, ap?ap->GetNonRepeaters():0, 
-                            ap?ap->GetMaxRepetitions():10, 
+    BeginRequest(requestConfig, SnmpRequestOperation::GetBulk);
+    status = snmp->get_bulk(*pdu, *target,
+                            activeRequestContext->nonRepeaters(),
+                            activeRequestContext->maxRepetitions(),
                             callback, this);
 
     // Could we send it?
@@ -1362,6 +1384,7 @@ void Agent::GetBulk(const QString& oid, bool usevblist)
         msg = tr("<font color=red>Could not send GETBULK request: %1</font>")
                        .arg(Snmp::error_msg(status));
         s->MainUI()->Query->append(msg);
+        activeRequestContext.reset();
     }
     
     delete target;
@@ -1371,11 +1394,12 @@ void Agent::GetBulk(const QString& oid, bool usevblist)
 void Agent::Set(const QString& oid, bool usevblist)
 {
     int status;
+    SnmpRequestConfig requestConfig;
 
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;    
-    if (Setup(oid, &target, &pdu, usevblist) < 0)
+    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
         return;
 
     // Clear the Query window ...
@@ -1389,6 +1413,7 @@ void Agent::Set(const QString& oid, bool usevblist)
     stop = false;
 
     // Now do an async set 
+    BeginRequest(requestConfig, SnmpRequestOperation::Set);
     status = snmp->set(*pdu, *target, callback_set, this);
 
     // Could we send it?
@@ -1401,6 +1426,7 @@ void Agent::Set(const QString& oid, bool usevblist)
         msg = tr("<font color=red>Could not send SET request: %1</font>")
             .arg(Snmp::error_msg(status));
         s->MainUI()->Query->append(msg);
+        activeRequestContext.reset();
     }
 
 
