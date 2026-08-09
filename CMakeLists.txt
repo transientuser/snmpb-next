@@ -6,6 +6,7 @@ project(SnmpBNext
 )
 
 include(CTest)
+include(GNUInstallDirs)
 
 option(SNMPB_ENABLE_QWT "Build SnmpB with bundled Qwt graphing support" OFF)
 

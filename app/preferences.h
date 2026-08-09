@@ -69,6 +69,8 @@ protected slots:
     void MibPreloadsReset();
 
 private:
+    QStringList DefaultMibPaths() const;
+
     Snmpb *s;
     Ui_Preferences *p;
     QDialog *pw;

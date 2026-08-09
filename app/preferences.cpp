@@ -18,16 +18,11 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include <memory>
+#include <QCoreApplication>
+#include <QDir>
 #include <qmessagebox.h> 
 #include <qfileinfo.h>
 #include <qtextstream.h>
-
-// For DEFAULT_SMIPATH
-#ifdef WIN32
-#include "../libsmi/win/config.h"
-#else
-#include "../libsmi/config.h"
-#endif
 
 #include "mibmodule.h"
 #include "preferences.h"
@@ -288,7 +283,7 @@ void Preferences::MibPathRefresh()
 void Preferences::MibPathReset()
 {
     // "Reset to default" for MIB paths
-    QStringList defaultpaths = QString(DEFAULT_SMIPATH).split(SMI_PATH_SEPARATOR);
+    QStringList defaultpaths = DefaultMibPaths();
 
     QSettings settings;
     settings.beginWriteArray("mibpaths");
@@ -299,6 +294,46 @@ void Preferences::MibPathReset()
     settings.endArray();
 
     s->MibModuleObj()->RescanPath();
+}
+
+QStringList Preferences::DefaultMibPaths() const
+{
+    const QDir application_dir(QCoreApplication::applicationDirPath());
+    QStringList data_roots;
+
+#ifdef SNMPB_INSTALL_DATA_RELATIVE_PATH
+    data_roots << QDir::cleanPath(
+        application_dir.filePath(SNMPB_INSTALL_DATA_RELATIVE_PATH));
+#endif
+
+#ifdef Q_OS_MACOS
+    data_roots << QDir::cleanPath(application_dir.filePath("../Resources"));
+#endif
+
+    data_roots << application_dir.absolutePath();
+
+    QStringList paths;
+    for (const QString &data_root : data_roots)
+    {
+        const QDir root(data_root);
+        const QString mib_path = root.absoluteFilePath("mibs");
+        const QString pib_path = root.absoluteFilePath("pibs");
+
+        if (QDir(mib_path).exists() && !paths.contains(mib_path))
+            paths << mib_path;
+        if (QDir(pib_path).exists() && !paths.contains(pib_path))
+            paths << pib_path;
+    }
+
+    // Keep a deterministic executable-relative default even when a damaged or
+    // incomplete installation is missing its data directories.
+    if (paths.isEmpty())
+    {
+        paths << application_dir.absoluteFilePath("mibs")
+              << application_dir.absoluteFilePath("pibs");
+    }
+
+    return paths;
 }
 
 void Preferences::MibPreloadsReset()
