@@ -36,3 +36,30 @@ set_source_files_properties(
     PROPERTIES
         COMPILE_DEFINITIONS "_Win32;__STDC__;YY_NEVER_INTERACTIVE"
 )
+
+# Build libsmi's native MIB validation utility.
+# This gives SnmpB Next a regression tool for verifying that the
+# patched MIB parser continues to behave correctly during modernization.
+
+add_executable(snmpb_smilint
+    tools/smilint.c
+    tools/shhopt.c
+)
+
+target_include_directories(snmpb_smilint
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/win
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools
+)
+
+target_compile_definitions(snmpb_smilint
+    PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        _CRT_NONSTDC_NO_WARNINGS
+)
+
+target_link_libraries(snmpb_smilint
+    PRIVATE
+        snmpb_libsmi
+)
