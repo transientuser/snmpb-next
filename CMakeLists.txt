@@ -12,3 +12,5 @@ find_package(Qt6 6.11 REQUIRED COMPONENTS Core Widgets)
 
 message(STATUS "Qt version: ${Qt6_VERSION}")
 message(STATUS "SnmpB Next Qt/CMake environment configured successfully")
+
+add_subdirectory(libsmi)
