@@ -35,7 +35,7 @@ class Agent: public QObject
     Q_OBJECT
     
 public:
-    Agent(Snmpb *snmpb);
+    Agent(Snmpb *snmpb, bool offline = false);
     bool GetStartupResult(QString &Err);
     void StartTrapTimer(void);
     void Init(void);
@@ -108,6 +108,7 @@ signals:
 private:
     Snmpb *s;
     bool start_result;
+    bool offline;
     QString start_err;
  
     Snmp *snmp;

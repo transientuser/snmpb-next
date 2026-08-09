@@ -108,3 +108,16 @@ qt_add_translations(snmpb
     RESOURCE_PREFIX
         /i18n
 )
+
+if(BUILD_TESTING)
+    add_test(
+        NAME snmpb.launch-smoke
+        COMMAND ${CMAKE_COMMAND}
+            -DSNMPB_EXECUTABLE=$<TARGET_FILE:snmpb>
+            -DSNMPB_QT_BIN_DIR=$<TARGET_FILE_DIR:Qt6::Core>
+            -DSNMPB_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+            -DSNMPB_SMOKE_DIR=${CMAKE_CURRENT_BINARY_DIR}/launch-smoke-config
+            -P ${PROJECT_SOURCE_DIR}/cmake/RunSnmpbLaunchSmoke.cmake
+    )
+    set_tests_properties(snmpb.launch-smoke PROPERTIES TIMEOUT 60)
+endif()

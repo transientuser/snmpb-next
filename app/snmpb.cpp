@@ -64,7 +64,7 @@
 #endif
 
 
-Snmpb::Snmpb(void)
+Snmpb::Snmpb(bool offline)
 {
     // First thing to do is to give up root privileges that allow permission to
     // bind on privileged ports (<1024). This is needed to bind on 
@@ -77,7 +77,7 @@ Snmpb::Snmpb(void)
         setuid(getuid());
     }
 #endif
-    agent = new Agent(this);
+    agent = new Agent(this, offline);
     start_issuccess = agent->GetStartupResult(start_msg);    
 #ifndef WIN32 
     // Drop root privileges

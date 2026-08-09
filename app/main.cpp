@@ -21,38 +21,173 @@
 #include <qmainwindow.h>
 #include <QTranslator>
 #include <QLibraryInfo>
+#include <QDialog>
+#include <QDir>
+#include <QFile>
+#include <QSettings>
+#include <QTextStream>
+#include <QTimer>
 #include "snmpb.h"
+#include "agentprofile.h"
 #include "mibeditor.h"
+#include "mibview.h"
+#include "preferences.h"
 #include "snmpbapp.h"
 
 QString file_to_open;
 
 int main( int argc, char ** argv )
 {
-    Snmpb snmpb;
+    bool launch_smoke_test = false;
+    QString smoke_config_dir;
+    QString smoke_mib_file;
+    for (int i = 1; i < argc; ++i)
+    {
+        const QString argument = QString::fromLocal8Bit(argv[i]);
+        if (argument == "--launch-smoke-test" && i + 1 < argc)
+        {
+            launch_smoke_test = true;
+            smoke_config_dir = QString::fromLocal8Bit(argv[++i]);
+        }
+        else if (argument == "--smoke-mib" && i + 1 < argc)
+        {
+            smoke_mib_file = QString::fromLocal8Bit(argv[++i]);
+        }
+    }
+
+    if (launch_smoke_test)
+    {
+        QDir().mkpath(smoke_config_dir);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                           smoke_config_dir);
+    }
+
+    Snmpb snmpb(launch_smoke_test);
     SnmpBApplication app( argc, argv );
 
     // Qt translations
     QTranslator l10n_qt;
-    l10n_qt.load("qt_" + QLocale::system().name(),
-                 QLibraryInfo::location(QLibraryInfo::TranslationsPath));
+    const bool qt_translation_loaded =
+        l10n_qt.load("qt_" + QLocale::system().name(),
+                     QLibraryInfo::location(QLibraryInfo::TranslationsPath));
+    Q_UNUSED(qt_translation_loaded);
     app.installTranslator(&l10n_qt);
 
     // SnmpB translations
     QTranslator l10n_app;
-    l10n_app.load(":/i18n/snmpb." + QLocale::system().name());
+    const bool app_translation_loaded =
+        l10n_app.load(":/i18n/snmpb." + QLocale::system().name());
+    Q_UNUSED(app_translation_loaded);
     app.installTranslator(&l10n_app);
 
     QMainWindow mw;
+    const auto close_visible_dialogs = []() {
+        const auto top_level_widgets = QApplication::topLevelWidgets();
+        for (QWidget *widget : top_level_widgets)
+        {
+            if (QDialog *dialog = qobject_cast<QDialog *>(widget);
+                dialog && dialog->isVisible())
+                dialog->accept();
+        }
+    };
+    QTimer startup_dialog_closer;
+    if (launch_smoke_test)
+    {
+        QObject::connect(&startup_dialog_closer, &QTimer::timeout,
+                         close_visible_dialogs);
+        startup_dialog_closer.start(10);
+    }
     snmpb.BindToGUI(&mw);
+    startup_dialog_closer.stop();
     mw.show();
     app.connect(&app, SIGNAL( lastWindowClosed() ), &app, SLOT( quit() ));
 
     // Load a file specified as argument in the Mib Editor
-    if (!file_to_open.isEmpty() || QCoreApplication::arguments().count() > 1)
+    if (!launch_smoke_test &&
+        (!file_to_open.isEmpty() || QCoreApplication::arguments().count() > 1))
     {
         snmpb.MibEditorObj()->MibFileOpen(file_to_open.isEmpty()?QCoreApplication::arguments().at(1):file_to_open);
         snmpb.MainUI()->TabW->setCurrentIndex(2); // Select the Editor Tab
+    }
+
+    if (launch_smoke_test)
+    {
+        QTimer::singleShot(0, &app, [&]() {
+            bool passed = true;
+            QFile smoke_log(QDir(smoke_config_dir).filePath("launch-smoke.log"));
+            if (!smoke_log.open(QIODevice::WriteOnly | QIODevice::Text))
+            {
+                app.exit(1);
+                return;
+            }
+            QTextStream smoke_output(&smoke_log);
+            const auto check = [&](bool condition, const char *description) {
+                smoke_output << "launch-smoke: "
+                             << (condition ? "PASS" : "FAIL") << ": "
+                             << description << Qt::endl;
+                passed = passed && condition;
+            };
+
+            QSettings settings;
+            check(QFileInfo(settings.fileName()).absoluteFilePath().startsWith(
+                      QFileInfo(smoke_config_dir).absoluteFilePath()),
+                  "QSettings uses the isolated directory");
+            check(mw.isVisible(), "main window is visible");
+            check(snmpb.MainUI()->LoadedModules->topLevelItemCount() > 0,
+                  "bundled MIB modules loaded");
+            check(snmpb.MainUI()->MIBTree->topLevelItemCount() > 0,
+                  "MIB tree populated");
+
+            snmpb.MainUI()->MIBTree->SelectFromOid("1.3.6.1.2.1.1");
+            check(snmpb.MainUI()->MIBTree->currentItem() != nullptr,
+                  "MIB OID selection works");
+
+            if (!smoke_mib_file.isEmpty())
+            {
+                snmpb.MibEditorObj()->MibFileOpen(smoke_mib_file);
+                snmpb.MibEditorObj()->VerifyMIB();
+                check(!snmpb.MainUI()->MIBFile->toPlainText().isEmpty(),
+                      "MIB editor opened and verified a local module");
+                check(snmpb.MainUI()->MIBLog->count() >= 2 &&
+                      snmpb.MainUI()->MIBLog->item(
+                          snmpb.MainUI()->MIBLog->count() - 1)->text()
+                          .startsWith("Verification complete."),
+                      "MIB editor parsing completed");
+            }
+
+            const QString smoke_profile = "ctest-local-profile";
+            snmpb.APManagerObj()->Add(smoke_profile, "127.0.0.1", "161",
+                                     true, false, false, "localhost");
+            check(snmpb.APManagerObj()->GetAgentProfile(smoke_profile) != nullptr,
+                  "Agent Profile load/save works");
+
+            QTimer dialog_closer;
+            QObject::connect(&dialog_closer, &QTimer::timeout,
+                             close_visible_dialogs);
+            dialog_closer.start(10);
+            snmpb.ManageAgentProfiles(false);
+            dialog_closer.stop();
+            check(QFileInfo::exists(snmpb.GetAgentsConfigFile()),
+                  "Agent Profile Manager opened and persisted configuration");
+
+            snmpb.PreferencesObj()->Save();
+            settings.sync();
+            check(settings.contains("network/enableipv4") &&
+                  settings.contains("mibpaths/size"),
+                  "preferences saved to isolated configuration");
+
+            QTranslator translation_probe;
+            check(translation_probe.load(":/i18n/snmpb.uk_UA"),
+                  "bundled application translation loads");
+            check(QFileInfo::exists(snmpb.GetSmiConfigFile()),
+                  "loaded-MIB state file initialized");
+            check(QFileInfo::exists(snmpb.GetBootCounterConfigFile()),
+                  "SNMPv3 boot counter initialized locally");
+
+            mw.close();
+            smoke_log.close();
+            app.exit(passed ? 0 : 1);
+        });
     }
 
     return app.exec();

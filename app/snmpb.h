@@ -42,7 +42,7 @@ class Snmpb: public QObject
     Q_OBJECT
     
 public:
-    Snmpb(void);
+    Snmpb(bool offline = false);
     void BindToGUI(QMainWindow *mw);
     Ui_MainW* MainUI(void);
     Agent* AgentObj(void);

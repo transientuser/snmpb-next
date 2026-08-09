@@ -78,9 +78,11 @@ void callback(int reason, Snmp *, Pdu &pdu, SnmpTarget &target, void *cd)
     }
 }
 
-Agent::Agent(Snmpb *snmpb)
+Agent::Agent(Snmpb *snmpb, bool offline_mode)
 {
     s = snmpb;
+    offline = offline_mode;
+    snmp = NULL;
 
     int status, status2;
 
@@ -93,6 +95,9 @@ Agent::Agent(Snmpb *snmpb)
 
     start_err = ""; 
     start_result = true;
+
+    if (offline)
+        return;
 
     // Create our SNMP session object
     if (v4 && v6)
@@ -183,6 +188,9 @@ bool Agent::GetStartupResult(QString &err)
 
 void Agent::StartTrapTimer(void)
 {
+    if (offline)
+        return;
+
     // Start the timer
     timer.start(TRAP_TIMER_MSEC);
 }
