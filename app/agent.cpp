@@ -27,6 +27,7 @@
 #include "mibmodule.h"
 #include "snmp_pp/notifyqueue.h"
 #include "preferences.h"
+#include "snmprequestconfigadapter.h"
 #include "mibselection.h"
 
 #define ASYNC_TIMER_MSEC 5
@@ -441,10 +442,20 @@ int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
                         (s->MainUI()->AgentProfile->currentText());
     if (!ap)
         return -1;
+
+    int selectedProtocol = 0;
+    if (s->MainUI()->AgentProtoV3->isChecked())
+        selectedProtocol = 2;
+    else if (s->MainUI()->AgentProtoV2->isChecked())
+        selectedProtocol = 1;
+
+    SnmpRequestConfig config;
+    if (!SnmpRequestConfig::FromProfile(ap->GetRecord(), selectedProtocol,
+                                        &config))
+        return -1;
     
     // Create an address object from the entered values
-    QString address_str(ap->GetAddress() + "/" + ap->GetPort());
-    UdpAddress address(address_str.toLatin1().data());
+    UdpAddress address(config.endpoint().toLatin1().data());
     
     // check if the address is valid
     // One problem here: if a hostname is entered, a blocking DNS lookup
@@ -452,7 +463,7 @@ int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
     if (!address.valid())
     {
         QString err = tr("Invalid Address or DNS Name: %1\n")
-                              .arg(ap->GetAddress());
+                              .arg(config.address);
         QMessageBox::warning ( NULL, "SnmpB", err, 
                                QMessageBox::Ok, Qt::NoButton);
         return -1;
@@ -460,13 +471,13 @@ int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
 
     Pdu *pdu = new Pdu();
 
-    if (s->MainUI()->AgentProtoV3->isChecked())
+    if (config.version == SnmpRequestVersion::V3)
     {
         // For SNMPv3 we need a UTarget object
         UTarget *utarget = new UTarget(address);
 
-        ConfigTargetFromSettings(version3, utarget, ap);
-        theoid = ConfigPduFromSettings(version3, oid, pdu, ap, usevblist);
+        ConfigTargetFromSettings(config, utarget);
+        theoid = ConfigPduFromSettings(config, oid, pdu, usevblist);
         *t = utarget;
     }
     else
@@ -474,16 +485,8 @@ int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
         // For SNMPv1/v2c we need a CTarget
         CTarget *ctarget = new CTarget(address);
 
-        if (s->MainUI()->AgentProtoV2->isChecked())
-        {
-            ConfigTargetFromSettings(version2c, ctarget, ap);
-            theoid = ConfigPduFromSettings(version2c, oid, pdu, ap, usevblist);
-        }
-        else
-        {
-            ConfigTargetFromSettings(version1, ctarget, ap);
-            theoid = ConfigPduFromSettings(version1, oid, pdu, ap, usevblist);
-        }
+        ConfigTargetFromSettings(config, ctarget);
+        theoid = ConfigPduFromSettings(config, oid, pdu, usevblist);
 
         *t = ctarget;
     }
@@ -493,33 +496,14 @@ int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist)
     return 0;
 }
 
-void Agent::ConfigTargetFromSettings(snmp_version v, SnmpTarget *t, 
-                                     AgentProfile *ap)
+void Agent::ConfigTargetFromSettings(const SnmpRequestConfig& config,
+                                     SnmpTarget *t)
 {
-    if (v == version3)
-    {
-        UTarget *utarget = (UTarget *)t;
-        utarget->set_security_model(SNMP_SECURITY_MODEL_USM);
-        utarget->set_security_name(ap->GetSecName().toLatin1().data());
-    }
-    else if ((v == version1) || (v == version2c))
-    {
-        CTarget *ctarget = (CTarget *)t;
-        // set the community
-        ctarget->set_readcommunity( ap->GetReadComm().toLatin1().data());
-        ctarget->set_writecommunity( ap->GetWriteComm().toLatin1().data());
-    }
-
-    // Set the version
-    t->set_version(v);
-
-    // Set retries and timeout values
-    t->set_retry(ap->GetRetries());
-    t->set_timeout(100 * ap->GetTimeout());
+    ApplySnmpRequestConfig(config, *t);
 }
 
-Oid Agent::ConfigPduFromSettings(snmp_version v, const QString& oid, 
-                                 Pdu *p, AgentProfile *ap, bool usevblist)
+Oid Agent::ConfigPduFromSettings(const SnmpRequestConfig& config,
+                                 const QString& oid, Pdu *p, bool usevblist)
 {
     Vb vb;
     Oid oidobj(oid.toLatin1().data());
@@ -537,20 +521,7 @@ Oid Agent::ConfigPduFromSettings(snmp_version v, const QString& oid,
         *p += vb;
     }
 
-    if (v == version3)
-    {
-        // set the security level to use
-        if (ap->GetSecLevel() == 0/*"noAuthNoPriv"*/)
-            p->set_security_level(SNMP_SECURITY_LEVEL_NOAUTH_NOPRIV);
-        else if (ap->GetSecLevel() == 1/*"authNoPriv"*/)
-            p->set_security_level(SNMP_SECURITY_LEVEL_AUTH_NOPRIV);
-        else
-            p->set_security_level(SNMP_SECURITY_LEVEL_AUTH_PRIV);
-
-        // Not needed, as snmp++ will set it, if the user does not set it
-        p->set_context_name(ap->GetContextName().toLatin1().data());
-        p->set_context_engine_id(ap->GetContextEngineID().toLatin1().data());
-    }
+    ApplySnmpV3PduConfig(config, *p);
 
     return oidobj;
 }

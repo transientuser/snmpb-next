@@ -21,6 +21,8 @@ set(SNMPB_APP_SOURCES
     mibview.cpp
     preferences.cpp
     preferencesettings.cpp
+    snmprequestconfig.cpp
+    snmprequestconfigadapter.cpp
     snmpb.cpp
     trap.cpp
     usmprofile.cpp
@@ -44,6 +46,8 @@ set(SNMPB_APP_HEADERS
     mibview.h
     preferences.h
     preferencesettings.h
+    snmprequestconfig.h
+    snmprequestconfigadapter.h
     snmpb.h
     snmpbapp.h
     trap.h
@@ -164,6 +168,25 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_request_config_test
+        snmprequestconfig.cpp
+        snmprequestconfig.h
+        snmprequestconfigadapter.cpp
+        snmprequestconfigadapter.h
+        snmprequestconfig_test.cpp
+    )
+    target_link_libraries(snmpb_request_config_test
+        PRIVATE Qt6::Core snmpb_snmp_pp snmpb_libtomcrypt)
+
+    if(WIN32)
+        add_test(NAME snmpb.request-config COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_request_config_test>)
+    else()
+        add_test(NAME snmpb.request-config
+            COMMAND $<TARGET_FILE:snmpb_request_config_test>)
+    endif()
+
     add_executable(snmpb_preferences_settings_test
         preferencesettings.cpp
         preferencesettings.h

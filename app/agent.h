@@ -27,6 +27,7 @@
 #include "trap.h"
 #include "mibselection.h"
 #include "agentprofile.h"
+#include "snmprequestconfig.h"
 #include "ui_varbinds.h"
 #include "snmp_pp/snmp_pp.h"
 
@@ -45,10 +46,11 @@ public:
     void AsyncCallbackSet(int reason, Pdu &pdu, SnmpTarget &target);
     
     static char *GetPrintableValue(SmiNode *node, Vb *vb);
-    void ConfigTargetFromSettings(snmp_version v,
-                                  SnmpTarget *t, AgentProfile *ap);
-    Oid ConfigPduFromSettings(snmp_version v, const QString& oid, 
-                              Pdu *p, AgentProfile *ap, bool usevblist = false);
+    void ConfigTargetFromSettings(const SnmpRequestConfig& config,
+                                  SnmpTarget *target);
+    Oid ConfigPduFromSettings(const SnmpRequestConfig& config,
+                              const QString& oid, Pdu *p,
+                              bool usevblist = false);
     
     // Used by graph update timer
     unsigned long GetSyncValue(const QString& oid);
