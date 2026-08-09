@@ -63,3 +63,30 @@ target_link_libraries(snmpb_smilint
     PRIVATE
         snmpb_libsmi
 )
+
+if(BUILD_TESTING)
+
+    set(SMILINT_REGRESSION_MIBS
+        SNMPv2-MIB
+        IF-MIB
+        MAU-MIB
+        RMON2-MIB
+        BRIDGE-MIB
+    )
+
+    foreach(MIB IN LISTS SMILINT_REGRESSION_MIBS)
+
+        add_test(
+            NAME "libsmi.smilint.${MIB}"
+
+            COMMAND
+                ${CMAKE_COMMAND}
+                "-DSMILINT=$<TARGET_FILE:snmpb_smilint>"
+                "-DLIBSMI_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "-DMIB=${MIB}"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunSmilintRegression.cmake"
+        )
+
+    endforeach()
+
+endif()
