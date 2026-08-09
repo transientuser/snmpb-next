@@ -16,3 +16,5 @@ message(STATUS "Qt version: ${Qt6_VERSION}")
 message(STATUS "SnmpB Next Qt/CMake environment configured successfully")
 
 add_subdirectory(libsmi)
+add_subdirectory(libtomcrypt)
+add_subdirectory(snmp++)
