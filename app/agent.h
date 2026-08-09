@@ -28,6 +28,7 @@
 #include "trap.h"
 #include "mibselection.h"
 #include "agentprofile.h"
+#include "agentrequestselection.h"
 #include "snmprequestconfig.h"
 #include "snmprequestcontext.h"
 #include "ui_varbinds.h"
@@ -64,9 +65,14 @@ public:
     static SmiNode* GetNodeFromOid(Oid &oid);
 
 protected:
-    int Setup(const QString& oid, SnmpTarget **t, Pdu **p,
+    int SetupFromCurrentSelection(const QString& oid, SnmpTarget **t, Pdu **p,
               bool usevblist = false,
               SnmpRequestConfig *resolvedConfig = nullptr);
+    int Setup(const AgentRequestSelection &selection, const QString& oid,
+              SnmpTarget **t, Pdu **p, bool usevblist = false,
+              SnmpRequestConfig *resolvedConfig = nullptr);
+    AgentSelectionError ResolveCurrentSelection(
+        AgentRequestSelection *selection) const;
     void BeginRequest(const SnmpRequestConfig &config,
                       SnmpRequestOperation operation);
 

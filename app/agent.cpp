@@ -433,26 +433,39 @@ void Agent::SelectAgentProfile(QString *prefprofile, int prefproto)
     }
 }
 
-int Agent::Setup(const QString& oid, SnmpTarget **t, Pdu **p, bool usevblist,
-                 SnmpRequestConfig *resolvedConfig)
-{    
-    if (!snmp)
-        return -1;
-
-    AgentProfile *ap = s->APManagerObj()->GetAgentProfile
-                        (s->MainUI()->AgentProfile->currentText());
-    if (!ap)
-        return -1;
-
+AgentSelectionError Agent::ResolveCurrentSelection(
+    AgentRequestSelection *selection) const
+{
     int selectedProtocol = 0;
     if (s->MainUI()->AgentProtoV3->isChecked())
         selectedProtocol = 2;
     else if (s->MainUI()->AgentProtoV2->isChecked())
         selectedProtocol = 1;
 
+    return AgentSelectionResolver::Resolve(
+        s->APManagerObj()->GetAgentProfileRecords(),
+        s->MainUI()->AgentProfile->currentText(), selectedProtocol, selection);
+}
+
+int Agent::SetupFromCurrentSelection(const QString& oid, SnmpTarget **t,
+                                     Pdu **p, bool usevblist,
+                                     SnmpRequestConfig *resolvedConfig)
+{
+    AgentRequestSelection selection;
+    if (ResolveCurrentSelection(&selection) != AgentSelectionError::None)
+        return -1;
+    return Setup(selection, oid, t, p, usevblist, resolvedConfig);
+}
+
+int Agent::Setup(const AgentRequestSelection &selection, const QString& oid,
+                 SnmpTarget **t, Pdu **p, bool usevblist,
+                 SnmpRequestConfig *resolvedConfig)
+{
+    if (!snmp)
+        return -1;
+
     SnmpRequestConfig config;
-    if (!SnmpRequestConfig::FromProfile(ap->GetRecord(), selectedProtocol,
-                                        &config))
+    if (!selection.requestConfig(&config))
         return -1;
     if (resolvedConfig)
         *resolvedConfig = config;
@@ -1205,7 +1218,8 @@ void Agent::WalkFrom(const QString& oid)
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;
-    if (Setup(oid, &target, &pdu, false, &requestConfig) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu, false,
+                                  &requestConfig) < 0)
         return;
     
     // Clear the Query window ...
@@ -1270,7 +1284,8 @@ void Agent::Get(const QString& oid, bool usevblist)
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;
-    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu, usevblist,
+                                  &requestConfig) < 0)
         return;
     
     // Clear the Query window ...
@@ -1312,7 +1327,8 @@ void Agent::GetNext(const QString& oid, bool usevblist)
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;    
-    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu, usevblist,
+                                  &requestConfig) < 0)
         return;
         
     // Clear the Query window ...
@@ -1354,7 +1370,8 @@ void Agent::GetBulk(const QString& oid, bool usevblist)
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;    
-    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu, usevblist,
+                                  &requestConfig) < 0)
         return;
         
     // Clear the Query window ...
@@ -1399,7 +1416,8 @@ void Agent::Set(const QString& oid, bool usevblist)
     // Initialize agent & pdu objects
     SnmpTarget *target;
     Pdu *pdu;    
-    if (Setup(oid, &target, &pdu, usevblist, &requestConfig) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu, usevblist,
+                                  &requestConfig) < 0)
         return;
 
     // Clear the Query window ...
@@ -1466,7 +1484,7 @@ void Agent::TableViewFrom(const QString& oid)
     Oid toid;
     int rows = 0;
     
-    if (Setup(oid, &target, &pdu) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu) < 0)
         return;
     
     // Clear the Query window ...
@@ -1913,7 +1931,7 @@ int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
     Oid toid;
     int res = 0;
 
-    if (Setup(oid, &target, &pdu) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu) < 0)
         return res;
 
     /* Set the oid & node */
@@ -2076,7 +2094,7 @@ unsigned long Agent::GetSyncValue(const QString& oid)
     SnmpTarget *target;
     Pdu *pdu;
     Vb vb;
-    if (Setup(oid, &target, &pdu) < 0)
+    if (SetupFromCurrentSelection(oid, &target, &pdu) < 0)
         return 0;
         
     // Now do a sync get

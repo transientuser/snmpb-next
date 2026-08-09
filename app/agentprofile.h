@@ -109,6 +109,7 @@ public:
     AgentProfileManager(Snmpb *snmpb);
     void Execute(void);
     QStringList GetAgentsList(void);
+    QList<AgentProfileRecord> GetAgentProfileRecords(void) const;
     void SetSelectedAgent(QString a);
     AgentProfile *GetAgentProfile(QString a);
     void Add(QString name, QString address, QString port,

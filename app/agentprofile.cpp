@@ -156,6 +156,14 @@ AgentProfile *AgentProfileManager::GetAgentProfile(QString a)
     return NULL;
 }
 
+QList<AgentProfileRecord> AgentProfileManager::GetAgentProfileRecords(void) const
+{
+    QList<AgentProfileRecord> records;
+    for (AgentProfile *agent : agents)
+        records.append(agent->GetRecord());
+    return records;
+}
+
 void AgentProfileManager::ProtocolV1Support(bool checked)
 {
     if (currentprofile)

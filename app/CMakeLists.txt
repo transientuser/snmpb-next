@@ -6,6 +6,7 @@ endif()
 
 set(SNMPB_APP_SOURCES
     agent.cpp
+    agentrequestselection.cpp
     agentprofile.cpp
     agentprofilerepository.cpp
     comboboxes.cpp
@@ -32,6 +33,7 @@ set(SNMPB_APP_SOURCES
 
 set(SNMPB_APP_HEADERS
     agent.h
+    agentrequestselection.h
     agentprofile.h
     agentprofilerepository.h
     comboboxes.h
@@ -170,6 +172,24 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_agent_selection_test
+        agentrequestselection.cpp
+        agentrequestselection.h
+        snmprequestconfig.cpp
+        snmprequestconfig.h
+        agentrequestselection_test.cpp
+    )
+    target_link_libraries(snmpb_agent_selection_test PRIVATE Qt6::Core)
+
+    if(WIN32)
+        add_test(NAME snmpb.agent-selection COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_agent_selection_test>)
+    else()
+        add_test(NAME snmpb.agent-selection
+            COMMAND $<TARGET_FILE:snmpb_agent_selection_test>)
+    endif()
+
     add_executable(snmpb_request_context_test
         snmprequestconfig.cpp
         snmprequestconfig.h
