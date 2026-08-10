@@ -9,6 +9,17 @@ bool SnmpRequestConfig::FromProfile(const AgentProfileRecord &profile,
                                     int selectedProtocol,
                                     SnmpRequestConfig *config)
 {
+    return FromProfile(profile, selectedProtocol,
+                       CredentialResolver::inlineValues(
+                           profile.readcomm, profile.writecomm,
+                           profile.secname, profile.seclevel), config);
+}
+
+bool SnmpRequestConfig::FromProfile(const AgentProfileRecord &profile,
+                                    int selectedProtocol,
+                                    const EffectiveCredentialValues &credentials,
+                                    SnmpRequestConfig *config)
+{
     if (!config)
         return false;
 
@@ -27,10 +38,10 @@ bool SnmpRequestConfig::FromProfile(const AgentProfileRecord &profile,
     config->port = profile.port;
     config->retries = profile.retries;
     config->timeout = profile.timeout;
-    config->readCommunity = profile.readcomm;
-    config->writeCommunity = profile.writecomm;
-    config->securityName = profile.secname;
-    config->securityLevel = profile.seclevel;
+    config->readCommunity = credentials.readCommunity;
+    config->writeCommunity = credentials.writeCommunity;
+    config->securityName = credentials.securityName;
+    config->securityLevel = credentials.securityLevel;
     config->contextName = profile.contextname;
     config->contextEngineId = profile.contextengineid;
     config->maxRepetitions = profile.maxrepetitions;

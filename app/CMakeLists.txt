@@ -12,6 +12,7 @@ set(SNMPB_APP_SOURCES
     agentprofilerepository.cpp
     agentprofileservice.cpp
     comboboxes.cpp
+    credentialrecords.cpp
     discovery.cpp
     discoverydestination.cpp
     devicepane.cpp
@@ -41,6 +42,9 @@ set(SNMPB_APP_SOURCES
     snmpb.cpp
     trap.cpp
     usmprofile.cpp
+    usmcredentialrepository.cpp
+    usmcredentialruntime.cpp
+    usmcredentialservice.cpp
     main.cpp
 )
 
@@ -52,6 +56,7 @@ set(SNMPB_APP_HEADERS
     agentprofilerepository.h
     agentprofileservice.h
     comboboxes.h
+    credentialrecords.h
     discovery.h
     discoverydestination.h
     devicepane.h
@@ -82,6 +87,9 @@ set(SNMPB_APP_HEADERS
     snmpbapp.h
     trap.h
     usmprofile.h
+    usmcredentialrepository.h
+    usmcredentialruntime.h
+    usmcredentialservice.h
 )
 
 set(SNMPB_APP_FORMS
@@ -198,6 +206,23 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_credential_architecture_test
+        agentprofilerepository.cpp agentprofilerepository.h
+        credentialrecords.cpp credentialrecords.h
+        snmprequestconfig.cpp snmprequestconfig.h
+        usmcredentialrepository.cpp usmcredentialrepository.h
+        usmcredentialservice.cpp usmcredentialservice.h
+        credentialarchitecture_test.cpp)
+    target_link_libraries(snmpb_credential_architecture_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.credential-architecture COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_credential_architecture_test>)
+    else()
+        add_test(NAME snmpb.credential-architecture COMMAND
+            $<TARGET_FILE:snmpb_credential_architecture_test>)
+    endif()
+
     add_executable(snmpb_discovery_destination_test
         agentprofilerepository.cpp agentprofilerepository.h
         devicetree.cpp devicetree.h devicetreerepository.cpp devicetreerepository.h

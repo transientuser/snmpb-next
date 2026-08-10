@@ -19,6 +19,7 @@
 */
 #include "usmprofile.h"
 #include "agent.h"
+#include "usmcredentialruntime.h"
 
 USMProfileManager::USMProfileManager(Snmpb *snmpb)
 {
@@ -68,23 +69,20 @@ USMProfileManager::USMProfileManager(Snmpb *snmpb)
 
     USM* usm = s->AgentObj()->GetUSMObj();
     int numusers = 0;
-    const UsmUserNameTableEntry * v3user = usm->peek_first_user();
-    while (v3user)
+    const QList<UsmCredentialRecord> storedUsers =
+        UsmCredentialRuntimeRepository::snapshot(usm);
+    for (const UsmCredentialRecord &record : storedUsers)
     {
-        QString _name(v3user->usmUserSecurityName.get_printable());
+        QString _name = record.securityName;
         USMProfile *newuser = new USMProfile(&up, &_name);
-
-        QString ap = QString::fromLatin1((const char*)v3user->authPassword, 
-                                         v3user->authPasswordLength);
-        QString pp = QString::fromLatin1((const char*)v3user->privPassword, 
-                                         v3user->privPasswordLength);
-        newuser->SetSecurity(LibAuthToUiAuth(v3user->usmUserAuthProtocol), ap,
-                             LibPrivToUiPriv(v3user->usmUserPrivProtocol), pp);
+        newuser->SetSecurity(
+            LibAuthToUiAuth(record.authProtocol),
+            QString::fromLatin1(record.authSecret.bytes()),
+            LibPrivToUiPriv(record.privacyProtocol),
+            QString::fromLatin1(record.privacySecret.bytes()));
 
         users.append(newuser);
         numusers++;
-
-        v3user = usm->peek_next_user(v3user);
     }
 
     if (numusers != 0)
@@ -97,31 +95,20 @@ void USMProfileManager::Execute (void)
     {
         USM* usm = s->AgentObj()->GetUSMObj();
 
-        // First, loop & delete the entire user table
-        const UsmUserNameTableEntry * v3user = usm->peek_first_user();
-        while (v3user)
-        {
-            const UsmUserNameTableEntry *v3temp = v3user;
-
-            v3user = usm->peek_next_user(v3temp);
-
-            usm->delete_usm_user(v3temp->usmUserSecurityName);
-        }
-
-        // ... then rebuild it, using the stored profiles
+        QList<UsmCredentialRecord> records;
         for (int i = 0; i < users.size(); i++)
         {
-            usm->add_usm_user(OctetStr(users[i]->GetName().toLatin1().data()),
-                              UiAuthToLibAuth(users[i]->GetAuthProto()),
-                              UiPrivToLibPriv(users[i]->GetPrivProto()),
-                              OctetStr((const unsigned char *)users[i]->GetAuthPass().toLatin1().data(), 
-                                       users[i]->GetAuthPass().toLatin1().length()), 
-                              OctetStr((const unsigned char *)users[i]->GetPrivPass().toLatin1().data(), 
-                                       users[i]->GetPrivPass().toLatin1().length()));
+            UsmCredentialRecord record;
+            record.securityName = users[i]->GetName();
+            record.displayName = record.securityName;
+            record.authProtocol = UiAuthToLibAuth(users[i]->GetAuthProto());
+            record.authSecret = CredentialSecret(users[i]->GetAuthPass().toLatin1());
+            record.privacyProtocol = UiPrivToLibPriv(users[i]->GetPrivProto());
+            record.privacySecret = CredentialSecret(users[i]->GetPrivPass().toLatin1());
+            records.append(record);
         }
-
-        // ... then save it to file.    
-        usm->save_users(s->GetUsmUsersConfigFile().toLatin1().data());
+        UsmCredentialRuntimeRepository::replaceAndSave(
+            usm, records, s->GetUsmUsersConfigFile());
     }
 }
 

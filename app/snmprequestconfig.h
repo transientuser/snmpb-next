@@ -4,6 +4,7 @@
 #include <QString>
 
 #include "agentprofilerepository.h"
+#include "credentialrecords.h"
 
 enum class SnmpRequestVersion
 {
@@ -35,6 +36,10 @@ struct SnmpRequestConfig
     // while resolving the UI selection and do not override that selection.
     static bool FromProfile(const AgentProfileRecord &profile,
                             int selectedProtocol,
+                            SnmpRequestConfig *config);
+    static bool FromProfile(const AgentProfileRecord &profile,
+                            int selectedProtocol,
+                            const EffectiveCredentialValues &credentials,
                             SnmpRequestConfig *config);
 };
 

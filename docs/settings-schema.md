@@ -33,6 +33,7 @@ directories relative to the executable (with platform install-layout handling).
 
 The application also derives sibling files (`smi.conf`, `boot_counter.conf`,
 `usm_users.conf`, `agents.conf`, `device-tree.conf`, `profile-metadata.conf`,
+`credential-identities.conf`,
 `log.conf`, and `graphs.conf`) from the INI
 file's directory. Those files have independent schemas and are not Preferences
 keys.
