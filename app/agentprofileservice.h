@@ -25,6 +25,9 @@ public:
     QString createFromTemplate(const QString &templateId, const QString &name,
                                const QString &address, const QString &port,
                                bool v1, bool v2c, bool v3);
+    QStringList securityNameReferenceIds(const QString &securityName) const;
+    bool renameSecurityNameReferences(const QString &oldName,
+                                      const QString &newName);
     void reload();
 
 signals:

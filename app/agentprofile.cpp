@@ -23,6 +23,7 @@
 #include "profilemetadataservice.h"
 #include "mibmodule.h"
 #include "usmprofile.h"
+#include "usmcredentialservice.h"
 #include <qhash.h>
 #include <qmessagebox.h>
 #include <QSignalBlocker>
@@ -59,6 +60,11 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
     metadataForm->addRow(tr("Preferred MIB modules"), mibsEdit);
     metadataLayout->addLayout(metadataForm);
     ap.ProfileProps->addWidget(metadataPage);
+    credentialStatus = new QLabel(ap.SecName->parentWidget());
+    credentialStatus->setObjectName("CredentialStatus");
+    credentialStatus->setWordWrap(true);
+    if (ap.SecName->parentWidget()->layout())
+        ap.SecName->parentWidget()->layout()->addWidget(credentialStatus);
 
     // Set some properties for the Agent Profile TreeView
     ap.ProfileTree->header()->hide();
@@ -208,13 +214,22 @@ void AgentProfileManager::Execute (bool reload)
     QString cpn;
     if (currentprofile)
         cpn = currentprofile->GetSecName();
-    ap.SecName->clear();
-    ap.SecName->addItems(s->UPManagerObj()->GetUsersList());
-    if (currentprofile)
     {
-        int idx = ap.SecName->findText(cpn);
-        ap.SecName->setCurrentIndex(idx>0?idx:0);
+        const QSignalBlocker blocker(ap.SecName);
+        ap.SecName->clear();
+        ap.SecName->addItems(s->UPManagerObj()->GetUsersList());
+        if (currentprofile)
+        {
+            int idx = ap.SecName->findText(cpn);
+            if (idx < 0 && !cpn.isEmpty())
+            {
+                ap.SecName->addItem(cpn);
+                idx = ap.SecName->count() - 1;
+            }
+            ap.SecName->setCurrentIndex(idx);
+        }
     }
+    UpdateCredentialStatus();
 
     if(apw.exec() == QDialog::Accepted)
     {
@@ -256,6 +271,46 @@ AgentProfile *AgentProfileManager::GetAgentProfile(QString a)
             return agents[i];
     }
     return NULL;
+}
+
+void AgentProfileManager::RefreshCredentialChoices(void)
+{
+    const QString selected = ap.SecName->currentText();
+    const QSignalBlocker blocker(ap.SecName);
+    ap.SecName->clear();
+    if (s->UPManagerObj()) ap.SecName->addItems(s->UPManagerObj()->GetUsersList());
+    int index = ap.SecName->findText(selected);
+    if (index < 0 && !selected.isEmpty())
+    {
+        ap.SecName->addItem(selected);
+        index = ap.SecName->count() - 1;
+    }
+    ap.SecName->setCurrentIndex(index);
+    UpdateCredentialStatus();
+}
+
+void AgentProfileManager::UpdateCredentialStatus(void)
+{
+    if (!credentialStatus) return;
+    if (!currentprofile || !s->UsmCredentials())
+    {
+        credentialStatus->clear();
+        return;
+    }
+    const UsmReferenceResult result =
+        s->UsmCredentials()->validate(currentprofile->GetRecord());
+    QString text;
+    switch (result.status)
+    {
+        case UsmReferenceStatus::Valid: text = tr("Credential status: Available"); break;
+        case UsmReferenceStatus::Missing: text = tr("Credential status: Credential not found"); break;
+        case UsmReferenceStatus::Ambiguous: text = tr("Credential status: Ambiguous security name"); break;
+        case UsmReferenceStatus::IncompatibleSecurityLevel:
+            text = tr("Credential status: Security level is not supported by this credential"); break;
+        case UsmReferenceStatus::Empty: text = tr("Credential status: No security name selected"); break;
+        default: break;
+    }
+    credentialStatus->setText(text);
 }
 
 AgentProfile *AgentProfileManager::GetAgentProfileById(const QString &profileId)
@@ -405,12 +460,14 @@ void AgentProfileManager::SetSecName(void)
 {
     if (currentprofile)
         currentprofile->SetSecName();
+    UpdateCredentialStatus();
 }
 
 void AgentProfileManager::SetSecLevel(void)
 {
     if (currentprofile)
         currentprofile->SetSecLevel();
+    UpdateCredentialStatus();
 }
 
 void AgentProfileManager::SetContextName(void)

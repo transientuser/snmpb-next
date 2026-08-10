@@ -43,6 +43,7 @@ set(SNMPB_APP_SOURCES
     trap.cpp
     usmprofile.cpp
     usmcredentialrepository.cpp
+    usmcredentialcoordinator.cpp
     usmcredentialruntime.cpp
     usmcredentialservice.cpp
     main.cpp
@@ -88,6 +89,7 @@ set(SNMPB_APP_HEADERS
     trap.h
     usmprofile.h
     usmcredentialrepository.h
+    usmcredentialcoordinator.h
     usmcredentialruntime.h
     usmcredentialservice.h
 )
@@ -207,12 +209,16 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 
 if(BUILD_TESTING)
     add_executable(snmpb_credential_architecture_test
+        agentprofileoperations.cpp agentprofileoperations.h
         agentprofilerepository.cpp agentprofilerepository.h
+        agentprofileservice.cpp agentprofileservice.h
         credentialrecords.cpp credentialrecords.h
         snmprequestconfig.cpp snmprequestconfig.h
         usmcredentialrepository.cpp usmcredentialrepository.h
+        usmcredentialcoordinator.cpp usmcredentialcoordinator.h
         usmcredentialservice.cpp usmcredentialservice.h
         credentialarchitecture_test.cpp)
+    set_target_properties(snmpb_credential_architecture_test PROPERTIES AUTOMOC ON)
     target_link_libraries(snmpb_credential_architecture_test PRIVATE Qt6::Core)
     if(WIN32)
         add_test(NAME snmpb.credential-architecture COMMAND ${CMAKE_COMMAND} -E env

@@ -62,6 +62,7 @@
 #define GRAPHS_CONFIG_FILE       "graphs.conf"
 #define DEVICE_TREE_CONFIG_FILE  "device-tree.conf"
 #define PROFILE_METADATA_CONFIG_FILE "profile-metadata.conf"
+#define CREDENTIAL_IDENTITIES_CONFIG_FILE "credential-identities.conf"
 
 #if SNMPB_ENABLE_QWT
 #define SNMPB_QWT_ABOUT_LINE \
@@ -142,6 +143,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     trap = new Trap(this);
     agent->Init();
     upm = new USMProfileManager(this);
+    connect(upm, &USMProfileManager::CredentialsChanged,
+            apm, &AgentProfileManager::RefreshCredentialChoices);
 #if SNMPB_ENABLE_QWT
     gm = new GraphManager(this);
 #else
@@ -346,6 +349,11 @@ DeviceTreePlacementService* Snmpb::DevicePlacements(void)
 USMProfileManager* Snmpb::UPManagerObj(void)
 {
     return (upm);
+}
+
+UsmCredentialService* Snmpb::UsmCredentials(void)
+{
+    return upm ? upm->Credentials() : nullptr;
 }
 
 Preferences* Snmpb::PreferencesObj(void)
@@ -562,5 +570,12 @@ QString Snmpb::GetProfileMetadataConfigFile(void)
     QSettings settings;
     QDir cfgdir = QFileInfo(settings.fileName()).dir();
     return cfgdir.filePath(PROFILE_METADATA_CONFIG_FILE);
+}
+
+QString Snmpb::GetCredentialIdentitiesConfigFile(void)
+{
+    QSettings settings;
+    QDir cfgdir = QFileInfo(settings.fileName()).dir();
+    return cfgdir.filePath(CREDENTIAL_IDENTITIES_CONFIG_FILE);
 }
 

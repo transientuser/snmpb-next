@@ -25,13 +25,14 @@
 #include <qdialog.h>
 #include <qtreewidget.h>
 #include <qlist.h>
+#include "credentialrecords.h"
 
 class USMProfile: public QObject
 {
     Q_OBJECT
     
 public:
-    USMProfile(Ui_USMProfile *uiup, QString *n = NULL);
+    USMProfile(Ui_USMProfile *uiup, const UsmCredentialRecord &record);
     ~USMProfile();
 
     int IsPartOfUSMProfile(QTreeWidgetItem *item);
@@ -51,17 +52,14 @@ public:
     void SetPrivPass(void);
     QString GetPrivPass(void);
     void SetSecurity(int aprot, QString apass, int pprot, QString ppass);
+    const UsmCredentialRecord &GetRecord() const { return record; }
 
 protected:
     Ui_USMProfile *up;
 
     QTreeWidgetItem *user;
 
-    QString name;
-    int authproto;
-    QString authpass;
-    int privproto;
-    QString privpass;
+    UsmCredentialRecord record;
 };
 
 class USMProfileManager: public QObject
@@ -73,6 +71,10 @@ public:
     void Execute(void);
 
     QStringList GetUsersList(void);
+    class UsmCredentialService *Credentials() const;
+
+signals:
+    void CredentialsChanged();
 
 protected:
     QAction *addAct;
@@ -97,12 +99,15 @@ protected slots:
     int LibPrivToUiPriv(int prot);
 
 private:
+    void RebuildEditor();
+    QList<UsmCredentialRecord> EditorRecords();
     Snmpb *s;
     Ui_USMProfile up;
     QDialog upw;
 
     USMProfile* currentprofile;
     QList<USMProfile *> users;
+    class UsmCredentialService *credentialService;
 };
 
 #endif /* USMPROFILE_H */

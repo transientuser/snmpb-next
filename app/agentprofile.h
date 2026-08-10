@@ -128,6 +128,7 @@ public:
     void PersistProfiles(void);
     void Add(QString name, QString address, QString port,
              bool isv1, bool isv2c, bool isv3, QString clonefrom);
+    void RefreshCredentialChoices(void);
 
 signals:
     void AgentProfileListChanged(void);
@@ -161,6 +162,7 @@ protected slots:
     void SetNotes(void);
     void SetTags(void);
     void SetPreferredMibs(void);
+    void UpdateCredentialStatus(void);
     void SelectedAgentProfile( QTreeWidgetItem * item, QTreeWidgetItem * old);
     void AgentProfileNameChange(QTreeWidgetItem * item, int column);
     void Add(void);
@@ -186,6 +188,7 @@ private:
     class QTextEdit *notesEdit;
     class QLineEdit *tagsEdit;
     class QListWidget *mibsEdit;
+    class QLabel *credentialStatus;
 };
 
 #endif /* AGENTPROFILE_H */

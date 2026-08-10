@@ -4,6 +4,7 @@
 #include "credentialrecords.h"
 #include "usmcredentialrepository.h"
 #include "agentprofilerepository.h"
+#include <QObject>
 
 enum class UsmReferenceStatus
 {
@@ -21,17 +22,38 @@ struct UsmReferenceResult
     QString credentialId;
 };
 
-class UsmCredentialService
+enum class UsmDeleteAssessment { NotFound, Unreferenced, Referenced, Ambiguous };
+
+class UsmCredentialService : public QObject
 {
+    Q_OBJECT
 public:
     UsmCredentialService(const QList<UsmCredentialRecord> &legacyRecords,
-                         const UsmCredentialRepository &repository);
+                         const UsmCredentialRepository &repository,
+                         QObject *parent = nullptr);
 
     const QList<UsmCredentialRecord> &records() const;
     bool saveIdentities() const;
     bool rename(const QString &credentialId, const QString &securityName);
     bool remove(const QString &credentialId);
     UsmReferenceResult validate(const AgentProfileRecord &profile) const;
+    UsmCredentialRecord createWorkingRecord(const QString &securityName) const;
+    bool validateWorkingCopy(const QList<UsmCredentialRecord> &records) const;
+    void applyCommitted(const QList<UsmCredentialRecord> &records);
+    UsmDeleteAssessment assessDelete(
+        const QString &credentialId,
+        const QList<AgentProfileRecord> &profiles,
+        int *referenceCount = nullptr) const;
+    bool isSecurityNameUnambiguous(const QString &securityName) const;
+
+signals:
+    void credentialCreated(const QString &credentialId);
+    void credentialUpdated(const QString &credentialId);
+    void credentialRenamed(const QString &credentialId,
+                           const QString &oldName, const QString &newName);
+    void credentialDeleted(const QString &credentialId);
+    void credentialsReloaded();
+    void credentialsChanged();
 
 private:
     static QString createId();

@@ -76,10 +76,10 @@ canonical editor/runtime adapter for this milestone.
 
 ## Next migration
 
-The next workstream should convert `USMProfileManager` to service-backed
-working copies carrying stable IDs, add coordinated save/error handling, and
-surface non-secret missing-reference status. Agent Profiles should initially
-retain legacy inline communities and `secname`. Later schemas may add optional
+USM Credential Management v2 converts `USMProfileManager` to service-backed
+working copies carrying stable IDs, adds coordinated save/error handling, and
+surfaces non-secret missing-reference status. Agent Profiles retain legacy
+inline communities and `secname`. Later schemas may add optional
 credential IDs: an explicit ID resolves a reusable credential, while absent IDs
 continue using legacy inline/name behavior. Migration must be user initiated,
 never an automatic startup rewrite.

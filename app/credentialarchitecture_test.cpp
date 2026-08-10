@@ -1,6 +1,8 @@
 #include "credentialrecords.h"
 #include "snmprequestconfig.h"
 #include "usmcredentialservice.h"
+#include "usmcredentialcoordinator.h"
+#include "agentprofileservice.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -48,8 +50,11 @@ int main(int argc, char **argv)
     const QString stableId = first.records().first().identity.credentialId;
     ok &= check(!stableId.isEmpty() && first.saveIdentities(), "identity save");
     QFile identityContents(identityFile);
-    ok &= check(identityContents.open(QIODevice::ReadOnly) &&
-                !identityContents.readAll().contains("auth-value"),
+    const bool identityOpened = identityContents.open(QIODevice::ReadOnly);
+    const QByteArray identityBytes = identityOpened ? identityContents.readAll()
+                                                    : QByteArray();
+    ok &= check(identityOpened && !identityBytes.contains("auth-value") &&
+                !identityBytes.contains("privacy-value"),
                 "identity sidecar contains no secrets");
     identityContents.close();
 
@@ -81,12 +86,116 @@ int main(int argc, char **argv)
     ok &= check(renamedReload.records().first().identity.credentialId == stableId,
                 "rename remains stable across save/load");
 
+    QList<UsmCredentialRecord> working = renamedReload.records();
+    working.first().authProtocol = 2;
+    working.first().authSecret = CredentialSecret("changed-working-secret");
+    const UsmCredentialRecord added = renamedReload.createWorkingRecord("new-user");
+    working.append(added);
+    ok &= check(renamedReload.records().size() == 1 &&
+                renamedReload.records().first().authSecret.bytes() !=
+                    working.first().authSecret.bytes() &&
+                !added.identity.credentialId.isEmpty() &&
+                added.identity.credentialId != stableId,
+                "cancelled existing/new working records do not mutate service");
+
+    QList<UsmCredentialRecord> runtimeState = renamedReload.records();
+    QList<UsmCredentialRecord> identityState = renamedReload.records();
+    auto runtimeWriter = [&runtimeState](const QList<UsmCredentialRecord> &records) {
+        runtimeState = records; return true;
+    };
+    auto identityWriter = [&identityState](const QList<UsmCredentialRecord> &records) {
+        identityState = records; return true;
+    };
+    ok &= check(UsmCredentialCoordinator::apply(
+                    renamedReload.records(), working, runtimeWriter,
+                    identityWriter).status == UsmCommitStatus::Success &&
+                runtimeState.size() == 2 && identityState.size() == 2,
+                "coordinated save");
+    runtimeState = renamedReload.records(); identityState = renamedReload.records();
+    bool failRuntimeOnce = true;
+    auto failingRuntime = [&runtimeState, &failRuntimeOnce](
+                              const QList<UsmCredentialRecord> &records) {
+        if (failRuntimeOnce) { failRuntimeOnce = false; return false; }
+        runtimeState = records; return true;
+    };
+    ok &= check(UsmCredentialCoordinator::apply(
+                    renamedReload.records(), working, failingRuntime,
+                    identityWriter).status ==
+                    UsmCommitStatus::RuntimePersistenceFailed &&
+                runtimeState.size() == 1,
+                "runtime failure rollback");
+    runtimeState = renamedReload.records(); identityState = renamedReload.records();
+    bool failIdentityOnce = true;
+    auto failingIdentity = [&identityState, &failIdentityOnce](
+                               const QList<UsmCredentialRecord> &records) {
+        if (failIdentityOnce) { failIdentityOnce = false; return false; }
+        identityState = records; return true;
+    };
+    ok &= check(UsmCredentialCoordinator::apply(
+                    renamedReload.records(), working, runtimeWriter,
+                    failingIdentity).status ==
+                    UsmCommitStatus::IdentityPersistenceFailed &&
+                runtimeState.size() == 1 && identityState.size() == 1,
+                "identity failure rolls back both boundaries");
+    QList<UsmCredentialRecord> failedRename = renamedReload.records();
+    failedRename.first().securityName = "must-not-commit";
+    runtimeState = renamedReload.records(); identityState = renamedReload.records();
+    failIdentityOnce = true;
+    ok &= check(UsmCredentialCoordinator::apply(
+                    renamedReload.records(), failedRename, runtimeWriter,
+                    failingIdentity).status ==
+                    UsmCommitStatus::IdentityPersistenceFailed &&
+                runtimeState.first().securityName == "renamed" &&
+                identityState.first().securityName == "renamed" &&
+                renamedReload.records().first().securityName == "renamed",
+                "rename failure rollback");
+
+    int createdSignals = 0, updatedSignals = 0, renamedSignals = 0,
+        deletedSignals = 0;
+    QObject::connect(&renamedReload, &UsmCredentialService::credentialCreated,
+                     [&createdSignals](const QString &) { ++createdSignals; });
+    QObject::connect(&renamedReload, &UsmCredentialService::credentialUpdated,
+                     [&updatedSignals](const QString &) { ++updatedSignals; });
+    QObject::connect(&renamedReload, &UsmCredentialService::credentialRenamed,
+                     [&renamedSignals](const QString &, const QString &,
+                                       const QString &) { ++renamedSignals; });
+    QObject::connect(&renamedReload, &UsmCredentialService::credentialDeleted,
+                     [&deletedSignals](const QString &) { ++deletedSignals; });
+    working.first().securityName = "renamed-again";
+    renamedReload.applyCommitted(working);
+    ok &= check(createdSignals == 1 && updatedSignals == 1 &&
+                renamedSignals == 1 &&
+                renamedReload.records().first().identity.credentialId == stableId,
+                "identity-based create/update/rename notifications");
+
+    const QString agentsFile = dir.filePath("agents.conf");
+    AgentProfileRepository(agentsFile).Save(
+        {profile("renamed-again"), profile("renamed-again")});
+    AgentProfileService profiles(agentsFile);
+    int references = 0;
+    ok &= check(renamedReload.assessDelete(
+                    stableId, profiles.profiles(), &references) ==
+                    UsmDeleteAssessment::Referenced && references == 2,
+                "referenced delete assessment");
+    ok &= check(profiles.renameSecurityNameReferences(
+                    "renamed-again", "propagated") &&
+                profiles.securityNameReferenceIds("propagated").size() == 2,
+                "rename propagates to multiple Agent Profiles");
+    QList<UsmCredentialRecord> afterDelete = working;
+    afterDelete.removeFirst();
+    renamedReload.applyCommitted(afterDelete);
+    ok &= check(deletedSignals == 1 && profiles.profiles().size() == 2 &&
+                profiles.securityNameReferenceIds("propagated").size() == 2,
+                "confirmed delete notification preserves Agent Profiles");
+
     UsmCredentialService ambiguous({usm("duplicate"), usm("duplicate")}, repository);
     ok &= check(ambiguous.validate(profile("duplicate")).status ==
                     UsmReferenceStatus::Ambiguous &&
                 ambiguous.records()[0].identity.credentialId !=
                     ambiguous.records()[1].identity.credentialId,
                 "ambiguous names are not merged");
+    ok &= check(!ambiguous.isSecurityNameUnambiguous("duplicate"),
+                "ambiguous rename references are not eligible for propagation");
     UsmCredentialService incompatible({usm("noauth", 0, 0)}, repository);
     ok &= check(incompatible.validate(profile("noauth", 1)).status ==
                     UsmReferenceStatus::IncompatibleSecurityLevel,

@@ -109,6 +109,33 @@ QString AgentProfileService::createFromTemplate(
     return create(record);
 }
 
+QStringList AgentProfileService::securityNameReferenceIds(
+    const QString &securityName) const
+{
+    QStringList ids;
+    for (const AgentProfileRecord &record : records)
+        if (record.v3 && record.secname == securityName)
+            ids.append(record.profileId);
+    return ids;
+}
+
+bool AgentProfileService::renameSecurityNameReferences(
+    const QString &oldName, const QString &newName)
+{
+    if (oldName == newName) return true;
+    bool changed = false;
+    for (AgentProfileRecord &record : records)
+        if (record.v3 && record.secname == oldName)
+        {
+            record.secname = newName;
+            changed = true;
+        }
+    if (!changed) return true;
+    save();
+    emit profilesChanged();
+    return true;
+}
+
 void AgentProfileService::reload()
 {
     records = repository.LoadOrCreateDefaults();

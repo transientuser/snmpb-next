@@ -38,6 +38,7 @@ class AgentProfileService;
 class ProfileMetadataService;
 class DeviceTreePlacementService;
 class USMProfileManager;
+class UsmCredentialService;
 class Preferences;
 class DevicePane;
 class QDockWidget;
@@ -60,6 +61,7 @@ public:
     ProfileMetadataService* ProfileMetadata(void);
     DeviceTreePlacementService* DevicePlacements(void);
     USMProfileManager* UPManagerObj(void);
+    UsmCredentialService* UsmCredentials(void);
     Preferences* PreferencesObj(void);
 
     void CheckForConfigFiles(void);
@@ -71,6 +73,7 @@ public:
     QString GetGraphsConfigFile(void);
     QString GetDeviceTreeConfigFile(void);
     QString GetProfileMetadataConfigFile(void);
+    QString GetCredentialIdentitiesConfigFile(void);
 
 public slots:
     void TabSelected(void);

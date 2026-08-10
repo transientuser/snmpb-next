@@ -18,6 +18,7 @@ public:
 
     QList<UsmCredentialIdentityRecord> load() const;
     bool save(const QList<UsmCredentialIdentityRecord> &records) const;
+    QString path() const { return fileName; }
 
 private:
     QString fileName;

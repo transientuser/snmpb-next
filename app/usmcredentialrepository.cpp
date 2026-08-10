@@ -1,9 +1,7 @@
 #include "usmcredentialrepository.h"
 
 #include <QFile>
-#include <QSaveFile>
 #include <QSettings>
-#include <QTemporaryFile>
 
 UsmCredentialRepository::UsmCredentialRepository(const QString &name)
     : fileName(name) {}
