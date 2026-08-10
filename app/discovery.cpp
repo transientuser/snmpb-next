@@ -24,6 +24,7 @@
 #include <QLabel>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <functional>
 
 #include "discovery.h"
 #include "communitycredentialservice.h"
@@ -37,6 +38,22 @@
 #define DISC_SNMP_V1  "V1"
 #define DISC_SNMP_V2C "V2c"
 #define DISC_SNMP_V3  "V3"
+
+namespace {
+class FunctionalDiscoveryExecutor final : public IDiscoveryProbeExecutor
+{
+public:
+    using Function = std::function<DiscoveryProbeResult(
+        const DiscoveryProbePlan &, int)>;
+    explicit FunctionalDiscoveryExecutor(Function function)
+        : function(std::move(function)) {}
+    DiscoveryProbeResult execute(const DiscoveryProbePlan &probe,
+                                 int waitTime) override
+    { return function(probe, waitTime); }
+private:
+    Function function;
+};
+}
 
 /* Conversion routines to/from bytes array to integer value for IP addresses */
 #define IPV4_FROM_UCHAR(array, integer)                         \
@@ -161,6 +178,12 @@ Discovery::Discovery(Snmpb *snmpb)
     connect(addAgentAct, SIGNAL(triggered()), this, SLOT(AddAgentToProfiles()));
 }
 
+Discovery::~Discovery()
+{
+    dt->Abort();
+    dt->wait();
+}
+
 void Discovery::RefreshDestinationFolders(void)
 {
     QSettings settings;
@@ -203,23 +226,21 @@ void Discovery::AgentProfileListChange(void)
 
 DiscoveryThread::DiscoveryThread(QObject *parent):QThread(parent)
 {
-    s = (Snmpb*)parent;
-
-    // Create our SNMP session object
-    bool v4 = s->PreferencesObj()->GetEnableIPv4();
-    bool v6 = s->PreferencesObj()->GetEnableIPv6();
-
-    if (v4 && v6)
-        snmp = new DiscoverySnmp(status, UdpAddress("0.0.0.0"), UdpAddress("::"));
-    else if (v4)
-        snmp = new DiscoverySnmp(status, UdpAddress("0.0.0.0"));
-    else if (v6)
-        snmp = new DiscoverySnmp(status, UdpAddress("::"));
-    else
-        status = SNMP_CLASS_ERROR;
-
-    snmp->aborting = false;
+    snmp = nullptr;
+    status = SNMP_CLASS_ERROR;
 };
+
+DiscoveryThread::~DiscoveryThread()
+{
+    Abort();
+    wait();
+}
+
+void DiscoveryThread::Configure(const DiscoveryScanPlan &plan)
+{
+    scanPlan = plan;
+    cancellation = std::make_shared<SnmpCancellationToken>();
+}
 
 void DiscoveryThread::SendAgentInfo(Pdu pdu, UdpAddress a, snmp_version v)
 {
@@ -279,7 +300,7 @@ void DiscoveryThread::Progress(void)
 
 void DiscoveryThread::Abort(void)
 {
-    snmp->aborting = true;
+    if (cancellation) cancellation->cancel();
 }
 
 DiscoverySnmp::DiscoverySnmp(int &status, const UdpAddress &addr)
@@ -294,9 +315,9 @@ DiscoverySnmp::DiscoverySnmp(int &status, const UdpAddress& addr_v4,
 
 void DiscoverySnmp::discover(const UdpAddress &start_addr, unsigned long long num_addr,
                              const int timeout_sec, const snmp_version version,
-                             QString readcomm, QString secname, int seclevel, 
-                             QString ctxname, QString ctxengineid, 
-                             bool use_snmpv3_probe, DiscoveryThread* thread)
+                             const SnmpRequestConfig &config,
+                             bool use_snmpv3_probe, DiscoveryThread* thread,
+                             const SnmpCancellationToken &cancellation)
 {
     unsigned char *message = NULL;
     int message_length = 0;
@@ -323,20 +344,20 @@ void DiscoverySnmp::discover(const UdpAddress &start_addr, unsigned long long nu
 
         if (version != version3)
         {
-            get_community = readcomm.toLatin1().data();
+            get_community = config.readCommunity.toLatin1().data();
         }
         else
         {
             // set the security level to use
-            if (seclevel == 0/*"noAuthNoPriv"*/)
+            if (config.securityLevel == 0/*"noAuthNoPriv"*/)
                 pdu.set_security_level(SNMP_SECURITY_LEVEL_NOAUTH_NOPRIV);
-            else if (seclevel == 1/*"authNoPriv"*/)
+            else if (config.securityLevel == 1/*"authNoPriv"*/)
                 pdu.set_security_level(SNMP_SECURITY_LEVEL_AUTH_NOPRIV);
             else
                 pdu.set_security_level(SNMP_SECURITY_LEVEL_AUTH_PRIV);
 
-            pdu.set_context_name(ctxname.toLatin1().data());
-            pdu.set_context_engine_id(ctxengineid.toLatin1().data());
+            pdu.set_context_name(config.contextName.toLatin1().data());
+            pdu.set_context_engine_id(config.contextEngineId.toLatin1().data());
         }
     }
 
@@ -386,7 +407,7 @@ void DiscoverySnmp::discover(const UdpAddress &start_addr, unsigned long long nu
                                                   cur_address.get_printable());
 
                 snmpmsg = new SnmpMessage();
-                if (snmpmsg->loadv3( pdu, engine_id, secname.toLatin1().data(),
+                if (snmpmsg->loadv3( pdu, engine_id, config.securityName.toLatin1().data(),
                                      SNMP_SECURITY_MODEL_USM, 
                                      version) != SNMP_CLASS_SUCCESS)
                     goto next_addr;
@@ -423,7 +444,7 @@ next_addr:
             IPV6_TO_UCHAR(cur_address, hicuraddr, locuraddr);
         }
 
-        if (aborting == true)
+        if (cancellation.isCancelled())
             return;
     }
 
@@ -461,7 +482,7 @@ new_loop:
                 thread->SendAgentInfo(in_pdu, from, version);
         }
 
-        if (aborting == true)
+        if (cancellation.isCancelled())
         {
             unlock();
             return;
@@ -485,93 +506,41 @@ new_loop:
 
 void DiscoveryThread::run(void)
 {
-    snmp_version cur_version  = version1;
-    const AgentProfileRecord *ap = s->APManagerObj()->GetAgentProfileRecord(
-        s->MainUI()->DiscoveryAgentProfile->currentData().toString());
-
-    if (!ap)
-        return;
-
-    if (status != SNMP_CLASS_SUCCESS)
-        return;
-
-    emit SignalStartStop(1);
-
-    bool v4 = s->PreferencesObj()->GetEnableIPv4();
-    bool v6 = s->PreferencesObj()->GetEnableIPv6();
-
-    current_progress = 0;
-
-    for (int t = 0; t < 2; t++) // for all transports
+    if (scanPlan.enableIpv4 && scanPlan.enableIpv6)
+        snmp = new DiscoverySnmp(status, UdpAddress("0.0.0.0"), UdpAddress("::"));
+    else if (scanPlan.enableIpv4)
+        snmp = new DiscoverySnmp(status, UdpAddress("0.0.0.0"));
+    else if (scanPlan.enableIpv6)
+        snmp = new DiscoverySnmp(status, UdpAddress("::"));
+    else
+        status = SNMP_CLASS_ERROR;
+    if (!snmp || status != SNMP_CLASS_SUCCESS)
     {
-        QString address_str;
-
-        if (s->MainUI()->DiscoveryLocal->isChecked())
-        {
-            if ((t == 0) && (v4 == true))
-                address_str = "255.255.255.255/";
-            else if ((t == 1) && (v6 == true))
-                address_str = "ff02::1/";
-            else 
-                continue;
-            address_str += ap->port;
-        }
-        else
-        {
-            address_str = s->MainUI()->DiscoveryFrom->text() + "/" + ap->port;
-
-            Address::version_type v = 
-                UdpAddress(address_str.toLatin1().data()).get_ip_version(); 
-            if (!(((t == 0) && (v == Address::version_ipv4) && (v4 == true)) ||
-                  ((t == 1) && (v == Address::version_ipv6) && (v6 == true))))
-                continue;
-        }
-
-        UdpAddress start_address(address_str.toLatin1().data());
-
-        for (int i = 0; i < 3; i++) // For all SNMP protocols
-        {
-            switch(i)
-            {
-                case 0:
-                    if (s->MainUI()->DiscoveryV1->isChecked())
-                    {
-                        cur_version  = version1;
-                        break;
-                    }
-                    else
-                        continue;
-                case 1:
-                    if (s->MainUI()->DiscoveryV2c->isChecked())
-                    {
-                        cur_version  = version2c;
-                        break;
-                    }
-                    else
-                        continue;
-                case 2:
-                    if (s->MainUI()->DiscoveryV3->isChecked())
-                    {
-                        cur_version  = version3;
-                        break;
-                    }
-                    else
-                        continue;
-                default:
-                    break;
-            }
-
-            snmp->aborting = false;
-            snmp->discover(start_address, num_addresses, 
-                    wait_time, cur_version, ap->readcomm,
-                    ap->secname, ap->seclevel,
-                    ap->contextname, ap->contextengineid,
-                    s->MainUI()->DiscoverySNMPv3Probe->isChecked(), this);
-            if (snmp->aborting == true) goto discover_end;
-        }
+        delete snmp; snmp = nullptr;
+        emit SignalStartStop(0);
+        return;
     }
-
-discover_end:
+    emit SignalStartStop(1);
+    current_progress = 0;
+    FunctionalDiscoveryExecutor executor([this](const DiscoveryProbePlan &probe,
+                                                 int waitTime) {
+        snmp_version version = version1;
+        if (probe.requestConfig.version == SnmpRequestVersion::V2c) version = version2c;
+        else if (probe.requestConfig.version == SnmpRequestVersion::V3) version = version3;
+        snmp->discover(UdpAddress(probe.startEndpoint.toLatin1().constData()),
+                       probe.addressCount, waitTime, version,
+                       probe.requestConfig, probe.useSnmpV3Probe, this,
+                       *cancellation);
+        return DiscoveryProbeResult{
+            cancellation->isCancelled() ? DiscoveryCompletion::Cancelled
+                                        : DiscoveryCompletion::Complete,
+            cancellation->isCancelled() ? SnmpOperationStatus::Cancelled
+                                        : SnmpOperationStatus::Complete,
+            {}, waitTime};
+    });
+    DiscoveryOperation(scanPlan).execute(executor, *cancellation);
+    delete snmp;
+    snmp = nullptr;
     emit SignalStartStop(0);
 }
 
@@ -598,6 +567,8 @@ void Discovery::DisplayAgent(QStringList agent_info)
         // Else add the new agent to the list, as is.
         QTreeWidgetItem *val = new QTreeWidgetItem(s->MainUI()->DiscoveryOutput,
                                                    agent_info);
+        val->setData(0, Qt::UserRole, activePlan.templateProfileId);
+        val->setData(0, Qt::UserRole + 1, activePlan.destinationFolderId);
         s->MainUI()->DiscoveryOutput->addTopLevelItem(val);
     }
 }
@@ -641,11 +612,11 @@ void Discovery::AddAgentToProfiles(void)
                              s->MainUI()->DiscoveryOutput->selectedItems();
     char buf[52]; // for IPv6 addr/port = 45+/+5+NULL
 
-    const QString destinationId = destinationFolder->currentData().toString();
-    const QString templateId =
-        s->MainUI()->DiscoveryAgentProfile->currentData().toString();
     for (int i = 0; i < item_list.size(); i++)
     {
+        const QString templateId = item_list[i]->data(0, Qt::UserRole).toString();
+        const QString destinationId = item_list[i]->data(
+            0, Qt::UserRole + 1).toString();
         strcpy(buf, item_list[i]->text(1).toLatin1().data());
         QString address(strtok(buf, "/"));
 
@@ -668,18 +639,19 @@ void Discovery::AddAgentToProfiles(void)
 
 void Discovery::Discover(void)
 {
+    if (dt->isRunning()) return;
     int num_transport = 0;
-    dt->num_proto = 0;
-    dt->num_addresses = 0;
+    int num_proto = 0;
+    unsigned long long num_addresses = 0;
 
-    if (s->MainUI()->DiscoveryV1->isChecked()) dt->num_proto++;
-    if (s->MainUI()->DiscoveryV2c->isChecked()) dt->num_proto++;
-    if (s->MainUI()->DiscoveryV3->isChecked()) dt->num_proto++;
+    if (s->MainUI()->DiscoveryV1->isChecked()) num_proto++;
+    if (s->MainUI()->DiscoveryV2c->isChecked()) num_proto++;
+    if (s->MainUI()->DiscoveryV3->isChecked()) num_proto++;
 
-    if (dt->num_proto < 1)
+    if (num_proto < 1)
         return;
 
-    dt->wait_time = s->MainUI()->DiscoveryWaitTime->value();
+    const int wait_time = s->MainUI()->DiscoveryWaitTime->value();
 
     s->MainUI()->DiscoveryProgress->reset();
     s->MainUI()->DiscoveryOutput->clear();
@@ -688,7 +660,7 @@ void Discovery::Discover(void)
     {
         if (s->PreferencesObj()->GetEnableIPv4()) num_transport++;
         if (s->PreferencesObj()->GetEnableIPv6()) num_transport++;
-        dt->num_addresses = 1;
+        num_addresses = 1;
     }
     else
     {
@@ -751,7 +723,7 @@ void Discovery::Discover(void)
             IPV4_FROM_UCHAR(addr_to, to);
 
             if (from <= to)
-                dt->num_addresses = to - from + 1;
+                num_addresses = to - from + 1;
             else
             {
                 QMessageBox::critical(nullptr,
@@ -780,9 +752,9 @@ void Discovery::Discover(void)
             IPV6_FROM_UCHAR(addr_to, hito, loto);
 
             if (((hito - hifrom) == 0) && (lofrom <= loto))
-                dt->num_addresses = loto - lofrom + 1;
+                num_addresses = loto - lofrom + 1;
             else if (((hito - hifrom) == 1) && (lofrom > loto))
-                dt->num_addresses = ~lofrom + loto + 1;
+                num_addresses = ~lofrom + loto + 1;
             else
             {
                 QMessageBox::critical(nullptr,
@@ -805,9 +777,45 @@ void Discovery::Discover(void)
         num_transport = 1;
     }
 
-    s->MainUI()->DiscoveryProgress->setRange(0, 
-        num_transport*dt->num_proto*dt->wait_time);
-
+    activePlan = {};
+    activePlan.templateProfileId =
+        s->MainUI()->DiscoveryAgentProfile->currentData().toString();
+    const AgentProfileRecord *profile = s->AgentProfiles()->findById(
+        activePlan.templateProfileId);
+    if (!profile) return;
+    activePlan.templateProfile = *profile;
+    activePlan.destinationFolderId = destinationFolder->currentData().toString();
+    activePlan.waitTimeSeconds = wait_time;
+    activePlan.enableIpv4 = s->PreferencesObj()->GetEnableIPv4();
+    activePlan.enableIpv6 = s->PreferencesObj()->GetEnableIPv6();
+    QStringList endpoints;
+    if (s->MainUI()->DiscoveryLocal->isChecked())
+    {
+        if (activePlan.enableIpv4) endpoints.append("255.255.255.255/" + profile->port);
+        if (activePlan.enableIpv6) endpoints.append("ff02::1/" + profile->port);
+    }
+    else
+        endpoints.append(s->MainUI()->DiscoveryFrom->text() + "/" + profile->port);
+    const EffectiveCredentialValues effective =
+        s->CommunityCredentials()->resolve(*profile).values;
+    const bool protocols[] = {s->MainUI()->DiscoveryV1->isChecked(),
+                              s->MainUI()->DiscoveryV2c->isChecked(),
+                              s->MainUI()->DiscoveryV3->isChecked()};
+    for (const QString &endpoint : endpoints)
+        for (int protocol = 0; protocol < 3; ++protocol)
+            if (protocols[protocol])
+            {
+                SnmpRequestConfig config;
+                if (protocol < 2)
+                    SnmpRequestConfig::FromProfile(*profile, protocol, effective, &config);
+                else
+                    SnmpRequestConfig::FromProfile(*profile, protocol, &config);
+                activePlan.probes.append({endpoint, num_addresses, config,
+                    protocol == 2 && s->MainUI()->DiscoverySNMPv3Probe->isChecked()});
+            }
+    s->MainUI()->DiscoveryProgress->setRange(0,
+        num_transport * num_proto * wait_time);
+    dt->Configure(activePlan);
     dt->start();
 }
 

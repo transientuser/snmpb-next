@@ -1,4 +1,5 @@
 #include "snmptableasyncrunner.h"
+#include "snmpinstanceoperation.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -184,6 +185,52 @@ bool tableCoverage()
     return ok;
 }
 
+bool instanceCoverage()
+{
+    const SnmpRequestContext context(config(), SnmpRequestOperation::Walk);
+    const Oid root("1.3.6.1.4.1.999.1.1");
+    ScriptedSnmpTransport fake(config());
+    fake.append(response("1.3.6.1.4.1.999.1.1.10"));
+    fake.append(response("1.3.6.1.4.1.999.1.1.11"));
+    fake.append(response("1.3.6.1.4.1.999.2.1"));
+    SnmpCancellationToken token;
+    const SnmpInstanceResult normal = SnmpInstanceOperation(context, root).execute(
+        fake, token);
+    bool ok = check(normal.status == SnmpOperationStatus::Complete &&
+                    normal.instances == QStringList({"10", "11"}) &&
+                    fake.requests().size() == 3,
+                    "instance enumeration/order/subtree exit") &&
+              check(fake.requests().first().maxRepetitions == 19 &&
+                    fake.config().readCommunity == "captured-read",
+                    "instance captured context");
+    ScriptedSnmpTransport empty(config());
+    SnmpTransportResult zero; zero.status = SnmpOperationStatus::Success;
+    zero.transportStatus = SNMP_CLASS_SUCCESS; empty.append(zero);
+    ok &= check(SnmpInstanceOperation(context, root).execute(empty, token).instances.isEmpty(),
+                "empty instance response");
+    ScriptedSnmpTransport malformed(config());
+    malformed.append(response("1.3.6.1.4.1.998.1"));
+    ok &= check(SnmpInstanceOperation(context, root).execute(malformed, token).status ==
+                    SnmpOperationStatus::Complete,
+                "malformed instance response");
+    ScriptedSnmpTransport timed(config());
+    timed.append(status(SnmpOperationStatus::Timeout, SNMP_CLASS_TIMEOUT));
+    ok &= check(SnmpInstanceOperation(context, root).execute(timed, token).status ==
+                    SnmpOperationStatus::Timeout,
+                "instance timeout");
+    ScriptedSnmpTransport errored(config());
+    errored.append(status(SnmpOperationStatus::SnmpError));
+    ok &= check(SnmpInstanceOperation(context, root).execute(errored, token).status ==
+                    SnmpOperationStatus::SnmpError,
+                "instance SNMP error");
+    SnmpCancellationToken cancelled; cancelled.cancel();
+    ScriptedSnmpTransport unused(config());
+    ok &= check(SnmpInstanceOperation(context, root).execute(unused, cancelled).status ==
+                    SnmpOperationStatus::Cancelled && unused.requests().isEmpty(),
+                "instance cancellation stops requests");
+    return ok;
+}
+
 bool asyncCoverage(QCoreApplication &application)
 {
     Q_UNUSED(application)
@@ -248,6 +295,7 @@ bool asyncCoverage(QCoreApplication &application)
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
-    return transportCoverage() && tableCoverage() && asyncCoverage(application)
+    return transportCoverage() && tableCoverage() && instanceCoverage() &&
+                   asyncCoverage(application)
                ? 0 : 1;
 }

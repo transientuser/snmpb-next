@@ -21,7 +21,9 @@
 #define DISCOVERY_H
 
 #include <qthread.h>
+#include <memory>
 #include "snmpb.h"
+#include "discoveryscanplan.h"
 #include "snmp_pp/snmp_pp.h"
 
 class DiscoveryThread;
@@ -33,11 +35,9 @@ public:
     DiscoverySnmp(int &status,  const UdpAddress& addr_v4, const UdpAddress& addr_v6);
     void discover(const UdpAddress &start_addr, unsigned long long num_addr,
                   const int timeout_sec, const snmp_version version,
-                  QString readcomm, QString secname, int seclevel, 
-                  QString cxtname, QString ctxengineid, bool use_snmpv3_probe,
-                  DiscoveryThread* thread);
-
-    bool aborting;
+                  const SnmpRequestConfig &config, bool use_snmpv3_probe,
+                  DiscoveryThread* thread,
+                  const SnmpCancellationToken &cancellation);
 };
 
 class DiscoveryThread: public QThread
@@ -46,26 +46,25 @@ class DiscoveryThread: public QThread
 
 public:
     DiscoveryThread(QObject *parent);
+    ~DiscoveryThread() override;
+    void Configure(const DiscoveryScanPlan &plan);
     void run();
     void SendAgentInfo(Pdu pdu, UdpAddress a, snmp_version v);
     void Progress(void);
     void Abort(void);
 
 public:
-    int num_proto;
-    unsigned long long num_addresses;
-    int wait_time;
-
 signals:
     void SendAgent(QStringList agent_info);
     void SignalStartStop(int isstart);
     void SignalProgress(int value);
 
 protected:
-    Snmpb *s;
     DiscoverySnmp *snmp;
     int status;
     int current_progress;
+    DiscoveryScanPlan scanPlan;
+    std::shared_ptr<SnmpCancellationToken> cancellation;
 };
 
 class Discovery: public QObject
@@ -74,6 +73,7 @@ class Discovery: public QObject
     
 public:
     Discovery(Snmpb *snmpb);
+    ~Discovery() override;
 
 public slots:
     void RefreshDestinationFolders(void);
@@ -94,6 +94,7 @@ private:
     DiscoveryThread *dt;
     QAction *addAgentAct;
     class QComboBox *destinationFolder;
+    DiscoveryScanPlan activePlan;
 };
 
 #endif /* DISCOVERY_H */

@@ -32,6 +32,7 @@
 #include "snmprequestconfig.h"
 #include "snmprequestcontext.h"
 #include "snmptableasyncrunner.h"
+#include "snmpinstanceasyncrunner.h"
 #include "ui_varbinds.h"
 #include "snmp_pp/snmp_pp.h"
 
@@ -60,9 +61,9 @@ public:
     // Used by graph update timer
     unsigned long GetSyncValue(const QString& oid);
 
-    inline USM *GetUSMObj(void) { return v3mp->get_usm(); }
-
     int SelectTableInstance(const QString& oid, QString& outinstance);
+
+    inline USM *GetUSMObj(void) { return v3mp->get_usm(); }
 
     static SmiNode* GetNodeFromOid(Oid &oid);
 
@@ -82,6 +83,7 @@ private:
     QString GetValueString(MibSelection &ms, Vb* vb);
     void VarbindsBuildList(void);
     void PresentTableResult(const SnmpTableResult &result);
+    void PresentInstanceResult(const SnmpInstanceResult &result);
 
 public slots:
     void SelectProfileByName(const QString &profileName);
@@ -149,6 +151,9 @@ private:
 
     std::unique_ptr<SnmpRequestContext> activeRequestContext;
     SnmpTableAsyncRunner *tableRunner = nullptr;
+    SnmpInstanceAsyncRunner *instanceRunner = nullptr;
+    QString pendingInstanceOid;
+    int pendingInstanceOperation = 0;
 
     Ui_Varbinds *vbui;
     QDialog *vbd;

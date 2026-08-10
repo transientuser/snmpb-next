@@ -18,6 +18,7 @@ set(SNMPB_APP_SOURCES
     communitycredentialmanager.cpp
     credentialrecords.cpp
     discovery.cpp
+    discoveryscanplan.cpp
     discoverydestination.cpp
     devicepane.cpp
     devicetree.cpp
@@ -41,6 +42,8 @@ set(SNMPB_APP_SOURCES
     snmprequestconfig.cpp
     snmprequestconfigadapter.cpp
     snmprequestcontext.cpp
+    snmpinstanceoperation.cpp
+    snmpinstanceasyncrunner.cpp
     snmptransport.cpp
     snmptableoperation.cpp
     snmptableasyncrunner.cpp
@@ -70,6 +73,7 @@ set(SNMPB_APP_HEADERS
     communitycredentialmanager.h
     credentialrecords.h
     discovery.h
+    discoveryscanplan.h
     discoverydestination.h
     devicepane.h
     devicetree.h
@@ -93,6 +97,8 @@ set(SNMPB_APP_HEADERS
     snmprequestconfig.h
     snmprequestconfigadapter.h
     snmprequestcontext.h
+    snmpinstanceoperation.h
+    snmpinstanceasyncrunner.h
     snmptransport.h
     snmptableoperation.h
     snmptableasyncrunner.h
@@ -222,10 +228,27 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_discovery_operation_test
+        discoveryscanplan.cpp discoveryscanplan.h
+        snmprequestconfig.cpp snmprequestconfig.h
+        snmptableoperation.cpp snmptableoperation.h
+        snmptransport.cpp snmptransport.h
+        snmprequestconfigadapter.cpp snmprequestconfigadapter.h
+        snmprequestcontext.cpp snmprequestcontext.h
+        tabletraversal.cpp tabletraversal.h
+        discoveryoperation_test.cpp)
+    target_link_libraries(snmpb_discovery_operation_test PRIVATE
+        Qt6::Core snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
+    add_test(NAME snmpb.discovery-operation COMMAND ${CMAKE_COMMAND} -E env
+        "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+        $<TARGET_FILE:snmpb_discovery_operation_test>)
+
     add_executable(snmpb_snmp_operations_test
         snmprequestconfig.cpp snmprequestconfig.h
         snmprequestconfigadapter.cpp snmprequestconfigadapter.h
         snmprequestcontext.cpp snmprequestcontext.h
+        snmpinstanceoperation.cpp snmpinstanceoperation.h
+        snmpinstanceasyncrunner.cpp snmpinstanceasyncrunner.h
         snmptransport.cpp snmptransport.h
         snmptableoperation.cpp snmptableoperation.h
         snmptableasyncrunner.cpp snmptableasyncrunner.h

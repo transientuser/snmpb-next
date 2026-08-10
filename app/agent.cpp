@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <QDate>
 #include <QDialog>
+#include <QEventLoop>
+#include <QVBoxLayout>
 
 #include "mibview.h"
 #include "agent.h"
@@ -90,6 +92,9 @@ Agent::Agent(Snmpb *snmpb, bool offline_mode)
     tableRunner = new SnmpTableAsyncRunner(this);
     connect(tableRunner, &SnmpTableAsyncRunner::completed,
             this, &Agent::PresentTableResult);
+    instanceRunner = new SnmpInstanceAsyncRunner(this);
+    connect(instanceRunner, &SnmpInstanceAsyncRunner::completed,
+            this, &Agent::PresentInstanceResult);
 
     int status, status2;
 
@@ -482,6 +487,8 @@ Agent::~Agent()
 {
     tableRunner->cancel();
     tableRunner->wait();
+    instanceRunner->cancel();
+    instanceRunner->wait();
 }
 
 void Agent::SelectProfileByName(const QString &profileName)
@@ -1525,6 +1532,8 @@ void Agent::Stop(void)
     stop = true;
     if (tableRunner)
         tableRunner->cancel();
+    if (instanceRunner)
+        instanceRunner->cancel();
 }
 
 void Agent::TableViewFrom(const QString& oid)
@@ -1945,37 +1954,12 @@ void Agent::VarbindsSelected(void)
     }
 }
 
-int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
+void Agent::PresentInstanceResult(const SnmpInstanceResult &result)
 {
-    AgentRequestSelection selection;
-    if (ResolveCurrentSelection(&selection) != AgentSelectionError::None)
-        return 0;
-
-    // Initialize agent & pdu objects
-    SnmpTarget *target;
-    Pdu *pdu;
-    Vb tvb;
-    Oid toid;
-    int res = 0;
-
-    if (Setup(selection, oid, &target, &pdu) < 0)
-        return res;
-
-    /* Set the oid & node */
-    Oid roid(oid.toLatin1().data());
-    SmiNode *pnode = GetNodeFromOid(roid);
-    
-    /* Make sure the node is a column entry ... */
-    if (!IsValidTableColumnNode(pnode))
-    {
-        delete target;
-        delete pdu;
-        return res;
-    }
-
-    /* Get next on the parent to get the first entry ... */
-    tvb.set_oid(roid);
-    pdu->set_vblist(&tvb, 1);
+    s->MainUI()->actionStop->setEnabled(false);
+    emit StartWalk(false);
+    if (result.status != SnmpOperationStatus::Complete || result.instances.isEmpty())
+        return;
 
     // Build the instance selection dialog and show it ...
     QDialog dlist(s->MainUI()->MIBTree, Qt::WindowTitleHint);
@@ -1999,75 +1983,73 @@ int Agent::SelectTableInstance(const QString& oid, QString& outinstance)
     dlist.raise();
     dlist.activateWindow();
 
-    // Now do a sync get_next
-    while (snmp->get_next(*pdu, *target) == SNMP_CLASS_SUCCESS)
-    {
-        if (!HasVarbindAt(pdu->get_vb_count(), 0))
-            break;
-        pdu->get_vb(tvb, 0);
-        toid = tvb.get_oid();
-
-        // look for var bind exception, applies to v2 only   
-        if ( tvb.get_syntax() == sNMP_SYNTAX_ENDOFMIBVIEW )
-            break;
-
-        /* Make sure we dont get out of table scope ... */
-        if (!IsOidInSubtree(toid, roid))
-            break;
-
-        /* Get & print the instance part */
-        QString instance;
-        if (!ExtractOidSuffix(roid, toid, &instance))
-            break;
-        if (!instance.isEmpty())
-            ilist.addItem(instance);
-        // Next get_next ...
-        pdu->set_vblist(&tvb, 1);   
-    }
-
-    // Wait for the result
+    ilist.addItems(result.instances);
     dlist.exec();
 
-    if (ilist.selectedItems().size() != 0)
-    {
-        outinstance = ilist.selectedItems().at(0)->text();
-        res = 1;
-    }
-    else
-    {
-        outinstance = "";
-        res = 0;
-    }
+    if (ilist.selectedItems().isEmpty()) return;
+    const QString requestOid = pendingInstanceOid + "." +
+                               ilist.selectedItems().at(0)->text();
+    if (pendingInstanceOperation == 0) Get(requestOid);
+    else if (pendingInstanceOperation == 1) GetNext(requestOid);
+    else if (pendingInstanceOperation == 2) GetBulk(requestOid);
+}
 
+int Agent::SelectTableInstance(const QString &oid, QString &outinstance)
+{
+    AgentRequestSelection selection;
+    if (ResolveCurrentSelection(&selection) != AgentSelectionError::None) return 0;
+    SnmpTarget *target;
+    Pdu *pdu;
+    SnmpRequestConfig config;
+    if (Setup(selection, oid, &target, &pdu, false, &config) < 0) return 0;
     delete target;
     delete pdu;
-
-    return res;
+    Oid root(oid.toLatin1().constData());
+    if (!IsValidTableColumnNode(GetNodeFromOid(root))) return 0;
+    SnmpInstanceAsyncRunner runner;
+    QEventLoop loop;
+    SnmpInstanceResult result;
+    connect(&runner, &SnmpInstanceAsyncRunner::completed, &loop,
+            [&](const SnmpInstanceResult &value) { result = value; loop.quit(); });
+    runner.start(SnmpRequestContext(config, SnmpRequestOperation::Walk), root,
+                 std::make_unique<SnmpPlusTransport>(config));
+    loop.exec();
+    runner.wait();
+    if (result.status != SnmpOperationStatus::Complete || result.instances.isEmpty())
+        return 0;
+    QDialog dialog(s->MainUI()->MIBTree, Qt::WindowTitleHint);
+    QVBoxLayout layout(&dialog);
+    QListWidget list(&dialog);
+    list.addItems(result.instances);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok, &dialog);
+    layout.addWidget(&list);
+    layout.addWidget(&buttons);
+    connect(&buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(&list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+    if (dialog.exec() != QDialog::Accepted || list.selectedItems().isEmpty()) return 0;
+    outinstance = list.selectedItems().first()->text();
+    return 1;
 }
 
 void Agent::GetFromSelectInstance(const QString& oid, int op)
 {
-    int res = 0;
-    QString inst;
-
-    // Pop-up the selection dialog
-    res = SelectTableInstance(oid, inst);
-
-    // Then query the proper instance
-    switch(op)
-    {
-    case 0:
-        Get(oid + (res?("." + inst):".0"));
-        break;
-    case 1:
-        GetNext(oid + (res?("." + inst):".0"));
-        break;
-    case 2:
-        GetBulk(oid + (res?("." + inst):".0"));
-        break;
-    default:
-        break;
-    }
+    if (instanceRunner->isRunning()) return;
+    AgentRequestSelection selection;
+    if (ResolveCurrentSelection(&selection) != AgentSelectionError::None) return;
+    SnmpTarget *target;
+    Pdu *pdu;
+    SnmpRequestConfig config;
+    if (Setup(selection, oid, &target, &pdu, false, &config) < 0) return;
+    delete target;
+    delete pdu;
+    Oid root(oid.toLatin1().constData());
+    if (!IsValidTableColumnNode(GetNodeFromOid(root))) return;
+    pendingInstanceOid = oid;
+    pendingInstanceOperation = op;
+    s->MainUI()->actionStop->setEnabled(true);
+    emit StartWalk(true);
+    instanceRunner->start(SnmpRequestContext(config, SnmpRequestOperation::Walk),
+                          root, std::make_unique<SnmpPlusTransport>(config));
 }
 
 // Callback when the linedit edition is finished in the prompt dialog.
