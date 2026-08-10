@@ -20,18 +20,41 @@
 #include "agentprofile.h"
 #include "agentprofileoperations.h"
 #include "agentprofileservice.h"
+#include "profilemetadataservice.h"
 #include "usmprofile.h"
 #include <qhash.h>
 #include <qmessagebox.h>
 #include <QSignalBlocker>
+#include <QFormLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QTextEdit>
+#include <QVBoxLayout>
 
 AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
-                                         AgentProfileService *profileService)
-    : service(profileService)
+                                         AgentProfileService *profileService,
+                                         ProfileMetadataService *profileMetadata)
+    : service(profileService), metadataService(profileMetadata)
 {
     s = snmpb;
 
     ap.setupUi(&apw);
+    auto *metadataPage = new QWidget(ap.ProfileProps);
+    auto *metadataLayout = new QVBoxLayout(metadataPage);
+    auto *metadataTitle = new QLabel(tr("Profile Information"), metadataPage);
+    QFont titleFont = metadataTitle->font();
+    titleFont.setPointSize(18);
+    titleFont.setBold(true);
+    metadataTitle->setFont(titleFont);
+    metadataLayout->addWidget(metadataTitle);
+    auto *metadataForm = new QFormLayout;
+    tagsEdit = new QLineEdit(metadataPage);
+    tagsEdit->setPlaceholderText(tr("datacenter, core, customer"));
+    notesEdit = new QTextEdit(metadataPage);
+    metadataForm->addRow(tr("Tags"), tagsEdit);
+    metadataForm->addRow(tr("Notes"), notesEdit);
+    metadataLayout->addLayout(metadataForm);
+    ap.ProfileProps->addWidget(metadataPage);
 
     // Set some properties for the Agent Profile TreeView
     ap.ProfileTree->header()->hide();
@@ -93,6 +116,10 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
              this, SLOT ( SetContextName() ) );
     connect( ap.ContextEngineID, SIGNAL( editingFinished() ), 
              this, SLOT ( SetContextEngineID() ) );
+    connect(notesEdit, &QTextEdit::textChanged,
+            this, &AgentProfileManager::SetNotes);
+    connect(tagsEdit, &QLineEdit::textChanged,
+            this, &AgentProfileManager::SetTags);
 
     currentprofile = NULL; 
 
@@ -167,6 +194,10 @@ void AgentProfileManager::Execute (bool reload)
         if (!selectedId.isEmpty())
             SetSelectedAgentById(selectedId);
     }
+    workingMetadata.clear();
+    for (const AgentProfileRecord &record : EditorRecords())
+        workingMetadata.insert(record.profileId,
+                               metadataService->metadataForProfile(record.profileId));
     // Fill-in loaded user names
     QString cpn;
     if (currentprofile)
@@ -182,6 +213,15 @@ void AgentProfileManager::Execute (bool reload)
     if(apw.exec() == QDialog::Accepted)
     {
         WriteConfigFile();
+        QStringList retainedIds;
+        for (const AgentProfileRecord &record : service->profiles())
+        {
+            retainedIds.append(record.profileId);
+            ProfileMetadataRecord metadata = workingMetadata.value(record.profileId);
+            metadata.profileId = record.profileId;
+            metadataService->update(metadata);
+        }
+        metadataService->reconcile(retainedIds, true);
         ReplaceRecords(service->profiles());
     }
     else
@@ -379,6 +419,21 @@ void AgentProfileManager::SetContextEngineID(void)
         currentprofile->SetContextEngineID();
 }
 
+void AgentProfileManager::SetNotes(void)
+{
+    if (currentprofile)
+        workingMetadata[currentprofile->GetRecord().profileId].notes =
+            notesEdit->toPlainText();
+}
+
+void AgentProfileManager::SetTags(void)
+{
+    if (currentprofile)
+        workingMetadata[currentprofile->GetRecord().profileId].tags =
+            ProfileMetadataRepository::normalizeTags(
+                tagsEdit->text().split(',', Qt::KeepEmptyParts));
+}
+
 void AgentProfileManager::ContextMenu ( const QPoint &pos )
 {    
     QMenu menu(tr("Actions"), ap.ProfileTree);
@@ -403,6 +458,9 @@ void AgentProfileManager::Add(void)
     newagent->SetContext("", "");
 
     agents.append(newagent);
+    ProfileMetadataRecord metadata;
+    metadata.profileId = newagent->GetRecord().profileId;
+    workingMetadata.insert(metadata.profileId, metadata);
 
     // Select the new item and change the focus to change its name ...
     ap.ProfileTree->setCurrentItem(newagent->GetGeneralWidgetItem());
@@ -465,6 +523,15 @@ void AgentProfileManager::SelectedAgentProfile(QTreeWidgetItem * item, QTreeWidg
         {
             currentprofile = agents[i];
             agents[i]->SelectAgentProfile(item);
+            if (agents[i]->IsMetadataItem(item))
+            {
+                const QSignalBlocker notesBlock(notesEdit);
+                const QSignalBlocker tagsBlock(tagsEdit);
+                const ProfileMetadataRecord metadata = workingMetadata.value(
+                    agents[i]->GetRecord().profileId);
+                notesEdit->setPlainText(metadata.notes);
+                tagsEdit->setText(metadata.tags.join(", "));
+            }
             return;
         }
     }
@@ -519,6 +586,8 @@ AgentProfile::AgentProfile(Ui_AgentProfile *uiap, const QString *n)
     bulk->setText(0, "Get-Bulk");
     v3 = new QTreeWidgetItem(general);
     v3->setText(0, "SnmpV3");
+    metadata = new QTreeWidgetItem(general);
+    metadata->setText(0, "Information");
 }
 
 void AgentProfileManager::DuplicateCurrent(void)
@@ -531,6 +600,10 @@ void AgentProfileManager::DuplicateCurrent(void)
                                               &duplicate))
         {
             agents.append(new AgentProfile(&ap, duplicate));
+            ProfileMetadataRecord copied = workingMetadata.value(
+                currentprofile->GetRecord().profileId);
+            copied.profileId = duplicate.profileId;
+            workingMetadata.insert(duplicate.profileId, copied);
             ap.ProfileTree->setCurrentItem(agents.last()->GetGeneralWidgetItem());
         }
     }
@@ -549,6 +622,7 @@ AgentProfile::~AgentProfile()
     delete v1v2c;
     delete bulk;
     delete v3;
+    delete metadata;
     delete general;
 }
 
@@ -656,6 +730,12 @@ int AgentProfile::SelectAgentProfile(QTreeWidgetItem * item)
         return 1;
     }
     else
+    if (item == metadata)
+    {
+        ap->ProfileProps->setCurrentIndex(4);
+        return 1;
+    }
+    else
     if (item == v1v2c)
     {
         ap->ProfileProps->setCurrentIndex(1);
@@ -738,6 +818,11 @@ int AgentProfile::IsPartOfAgentProfile(QTreeWidgetItem * item)
 QTreeWidgetItem *AgentProfile::GetGeneralWidgetItem(void)
 {
     return general;
+}
+
+bool AgentProfile::IsMetadataItem(QTreeWidgetItem *item) const
+{
+    return item == metadata;
 }
 
 void AgentProfile::GetSupportedProtocol(bool *v1, bool *v2, bool *v3)

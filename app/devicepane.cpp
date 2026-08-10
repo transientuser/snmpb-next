@@ -12,8 +12,9 @@
 
 DevicePane::DevicePane(const QString &sidecarFile,
                        const QList<AgentProfileRecord> &profiles,
+                       const QList<ProfileMetadataRecord> &metadata,
                        QWidget *parent)
-    : QWidget(parent), deviceModel(new DeviceTreeModel(sidecarFile, profiles, this)),
+    : QWidget(parent), deviceModel(new DeviceTreeModel(sidecarFile, profiles, metadata, this)),
       filterModel(new QSortFilterProxyModel(this)), tree(new QTreeView(this)),
       filter(new QLineEdit(this))
 {
@@ -25,9 +26,13 @@ DevicePane::DevicePane(const QString &sidecarFile,
     toolbar->setIconSize(QSize(16, 16));
     QAction *newFolder = toolbar->addAction(QIcon::fromTheme("folder-new"),
                                             tr("New Folder"));
+    QAction *importAction = toolbar->addAction(tr("Import"));
+    QAction *exportAction = toolbar->addAction(tr("Export All"));
     QAction *expand = toolbar->addAction(tr("Expand All"));
     QAction *collapse = toolbar->addAction(tr("Collapse All"));
     connect(newFolder, &QAction::triggered, this, &DevicePane::createFolder);
+    connect(importAction, &QAction::triggered, this, &DevicePane::importProfiles);
+    connect(exportAction, &QAction::triggered, this, &DevicePane::exportAll);
     connect(expand, &QAction::triggered, tree, &QTreeView::expandAll);
     connect(collapse, &QAction::triggered, tree, &QTreeView::collapseAll);
     layout->addWidget(toolbar);
@@ -74,6 +79,14 @@ void DevicePane::setProfiles(const QList<AgentProfileRecord> &profiles)
     selectProfile(selectedId);
 }
 
+void DevicePane::setMetadata(const QList<ProfileMetadataRecord> &metadata)
+{
+    const QString selectedId = deviceModel->profileId(sourceIndex(selectedIndex()));
+    deviceModel->setMetadata(metadata);
+    tree->expandAll();
+    selectProfile(selectedId);
+}
+
 void DevicePane::renameProfile(const QString &profileId, const QString &newName)
 {
     deviceModel->renameProfile(profileId, newName);
@@ -93,6 +106,17 @@ void DevicePane::placeCreatedProfile(const QString &profileId)
     pendingFolderId = QString();
     tree->expandAll();
     selectProfile(profileId);
+}
+
+bool DevicePane::importTreeState(const DeviceTreeState &state)
+{
+    return deviceModel->importState(state);
+}
+
+void DevicePane::reloadTree()
+{
+    deviceModel->reload();
+    tree->expandAll();
 }
 
 void DevicePane::activate(const QModelIndex &index)
@@ -116,17 +140,32 @@ void DevicePane::showContextMenu(const QPoint &position)
     }
     if (deviceModel->isFolder(source))
     {
+        menu.addAction(tr("Export Folder"), this, &DevicePane::exportFolder);
         menu.addAction(tr("Rename Folder"), this, &DevicePane::renameFolder);
         menu.addAction(tr("Delete Folder"), this, &DevicePane::deleteFolder);
     }
     if (deviceModel->isProfile(source))
     {
+        menu.addAction(tr("Export Selected Profile"), this,
+                       &DevicePane::exportSelectedProfile);
         menu.addAction(tr("Edit Profile"), this, &DevicePane::editProfile);
         menu.addAction(tr("Duplicate Profile"), this, &DevicePane::duplicateProfile);
         menu.addAction(tr("Delete Profile"), this, &DevicePane::deleteProfile);
     }
     if (!menu.isEmpty())
         menu.exec(tree->viewport()->mapToGlobal(position));
+}
+
+void DevicePane::importProfiles() { emit importRequested(); }
+void DevicePane::exportAll() { emit exportRequested(0, {}); }
+void DevicePane::exportSelectedProfile()
+{
+    emit exportRequested(1, deviceModel->profileId(sourceIndex(selectedIndex())));
+}
+void DevicePane::exportFolder()
+{
+    const QModelIndex source = sourceIndex(selectedIndex());
+    emit exportRequested(2, source.data(DeviceTreeModel::FolderIdRole).toString());
 }
 
 void DevicePane::createFolder()

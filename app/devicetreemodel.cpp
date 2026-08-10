@@ -13,9 +13,11 @@ constexpr auto ProfileMimeType = "application/x-snmpb-profile-name";
 
 DeviceTreeModel::DeviceTreeModel(const QString &sidecarFile,
                                  const QList<AgentProfileRecord> &profiles,
+                                 const QList<ProfileMetadataRecord> &metadata,
                                  QObject *parent)
     : QAbstractItemModel(parent), repository(sidecarFile),
-      treeState(DeviceTree::Reconcile(repository.Load(), profiles)), profiles(profiles)
+      treeState(DeviceTree::Reconcile(repository.Load(), profiles)), profiles(profiles),
+      profileMetadata(metadata)
 {
     rebuild();
 }
@@ -72,8 +74,11 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
         if (node->type != NodeType::Profile)
             return node->text;
         const AgentProfileRecord *record = profile(node->profileId);
-        return record ? record->name + QLatin1Char(' ') + record->address
-                      : node->text;
+        if (!record) return node->text;
+        const ProfileMetadataRecord *details = metadata(node->profileId);
+        return record->name + QLatin1Char(' ') + record->address + QLatin1Char(' ') +
+               (details ? details->tags.join(' ') + QLatin1Char(' ') + details->notes
+                        : QString());
     }
     if (role == Qt::DecorationRole)
         return QIcon::fromTheme(node->type == NodeType::Profile ?
@@ -87,7 +92,13 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
         if (record->v1) protocols.append("SNMPv1");
         if (record->v2) protocols.append("SNMPv2c");
         if (record->v3) protocols.append("SNMPv3");
-        return QString("%1\n%2").arg(record->address, protocols.join(", "));
+        QString tooltip = QString("%1\n%2").arg(record->address, protocols.join(", "));
+        const ProfileMetadataRecord *details = metadata(node->profileId);
+        if (details && !details->tags.isEmpty())
+            tooltip += QString("\n%1").arg(details->tags.join(", "));
+        if (details && !details->notes.trimmed().isEmpty())
+            tooltip += QString("\n%1").arg(details->notes.simplified().left(120));
+        return tooltip;
     }
     return {};
 }
@@ -270,11 +281,37 @@ bool DeviceTreeModel::moveProfileToFolderId(const QString &id,
     return folder.isValid() && moveProfile(id, folder);
 }
 
+bool DeviceTreeModel::importState(const DeviceTreeState &state)
+{
+    DeviceTreeState merged = treeState;
+    merged.folders.append(state.folders);
+    merged.placements.append(state.placements);
+    if (!repository.Save(merged)) return false;
+    treeState = DeviceTree::Reconcile(merged, profiles);
+    beginResetModel(); rebuild(); endResetModel();
+    emit organizationPersisted();
+    return true;
+}
+
+void DeviceTreeModel::reload()
+{
+    treeState = DeviceTree::Reconcile(repository.Load(), profiles);
+    beginResetModel(); rebuild(); endResetModel();
+}
+
 void DeviceTreeModel::setProfiles(const QList<AgentProfileRecord> &newProfiles)
 {
     profiles = newProfiles;
     treeState = DeviceTree::Reconcile(treeState, profiles);
     persist();
+    beginResetModel();
+    rebuild();
+    endResetModel();
+}
+
+void DeviceTreeModel::setMetadata(const QList<ProfileMetadataRecord> &metadataRecords)
+{
+    profileMetadata = metadataRecords;
     beginResetModel();
     rebuild();
     endResetModel();
@@ -459,5 +496,12 @@ const AgentProfileRecord *DeviceTreeModel::profile(const QString &id) const
     for (const AgentProfileRecord &record : profiles)
         if (record.profileId == id)
             return &record;
+    return nullptr;
+}
+
+const ProfileMetadataRecord *DeviceTreeModel::metadata(const QString &id) const
+{
+    for (const ProfileMetadataRecord &record : profileMetadata)
+        if (record.profileId == id) return &record;
     return nullptr;
 }

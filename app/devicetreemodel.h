@@ -3,6 +3,7 @@
 
 #include "agentprofilerepository.h"
 #include "devicetreerepository.h"
+#include "profilemetadatarepository.h"
 
 #include <QAbstractItemModel>
 #include <memory>
@@ -25,6 +26,7 @@ public:
 
     DeviceTreeModel(const QString &sidecarFile,
                     const QList<AgentProfileRecord> &profiles,
+                    const QList<ProfileMetadataRecord> &metadata = {},
                     QObject *parent = nullptr);
 
     QModelIndex index(int row, int column,
@@ -51,7 +53,10 @@ public:
     bool moveProfile(const QString &profileId,
                      const QModelIndex &destinationFolder);
     bool moveProfileToFolderId(const QString &profileId, const QString &folderId);
+    bool importState(const DeviceTreeState &state);
+    void reload();
     void setProfiles(const QList<AgentProfileRecord> &profiles);
+    void setMetadata(const QList<ProfileMetadataRecord> &metadata);
     void renameProfile(const QString &profileId, const QString &newName);
     void placeDuplicate(const QString &sourceId, const QString &newId);
     QString profileId(const QModelIndex &index) const;
@@ -81,10 +86,12 @@ private:
     void rebuild();
     bool persist();
     const AgentProfileRecord *profile(const QString &profileId) const;
+    const ProfileMetadataRecord *metadata(const QString &profileId) const;
 
     DeviceTreeRepository repository;
     DeviceTreeState treeState;
     QList<AgentProfileRecord> profiles;
+    QList<ProfileMetadataRecord> profileMetadata;
     std::unique_ptr<Node> root;
 };
 

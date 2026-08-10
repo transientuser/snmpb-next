@@ -16,14 +16,18 @@ class DevicePane : public QWidget
 public:
     DevicePane(const QString &sidecarFile,
                const QList<AgentProfileRecord> &profiles,
+               const QList<ProfileMetadataRecord> &metadata = {},
                QWidget *parent = nullptr);
     DeviceTreeModel *model() const;
     QTreeView *treeView() const;
     QLineEdit *filterEdit() const;
     void setProfiles(const QList<AgentProfileRecord> &profiles);
+    void setMetadata(const QList<ProfileMetadataRecord> &metadata);
     void renameProfile(const QString &profileId, const QString &newName);
     void placeDuplicate(const QString &sourceId, const QString &newId);
     void placeCreatedProfile(const QString &profileId);
+    bool importTreeState(const DeviceTreeState &state);
+    void reloadTree();
 
 signals:
     void profileSelected(const QString &profileId);
@@ -32,6 +36,8 @@ signals:
     void newProfileRequested(const QString &folderId);
     void deleteProfileRequested(const QString &profileId);
     void organizationPersisted();
+    void importRequested();
+    void exportRequested(int scope, const QString &id);
 
 private slots:
     void activate(const QModelIndex &index);
@@ -43,6 +49,10 @@ private slots:
     void duplicateProfile();
     void newProfile();
     void deleteProfile();
+    void importProfiles();
+    void exportAll();
+    void exportSelectedProfile();
+    void exportFolder();
 
 private:
     QModelIndex selectedIndex() const;

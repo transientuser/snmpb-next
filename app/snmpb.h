@@ -35,6 +35,7 @@ class LogSnmpb;
 class Discovery;
 class AgentProfileManager;
 class AgentProfileService;
+class ProfileMetadataService;
 class USMProfileManager;
 class Preferences;
 class DevicePane;
@@ -55,6 +56,7 @@ public:
     MibEditor* MibEditorObj(void);
     AgentProfileManager* APManagerObj(void);
     AgentProfileService* AgentProfiles(void);
+    ProfileMetadataService* ProfileMetadata(void);
     USMProfileManager* UPManagerObj(void);
     Preferences* PreferencesObj(void);
 
@@ -66,6 +68,7 @@ public:
     QString GetLogConfigFile(void);
     QString GetGraphsConfigFile(void);
     QString GetDeviceTreeConfigFile(void);
+    QString GetProfileMetadataConfigFile(void);
 
 public slots:
     void TabSelected(void);
@@ -81,6 +84,7 @@ private:
     Ui_MainW w;
     AgentProfileManager *apm;
     AgentProfileService *profileService;
+    ProfileMetadataService *profileMetadataService;
     USMProfileManager *upm;
     Preferences *prefs;
 

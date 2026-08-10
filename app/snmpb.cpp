@@ -22,6 +22,8 @@
 #include <qfileinfo.h>
 #include <qdir.h>
 #include <qmessagebox.h>
+#include <QFileDialog>
+#include <QFile>
 #include <qdockwidget.h>
 #include <qmenu.h>
 #include "snmpb.h"
@@ -38,6 +40,8 @@
 
 #include "agentprofile.h"
 #include "agentprofileservice.h"
+#include "profilemetadataservice.h"
+#include "profiletransfer.h"
 #include "usmprofile.h"
 #include "preferences.h"
 
@@ -56,6 +60,7 @@
 #define LOG_CONFIG_FILE          "log.conf"
 #define GRAPHS_CONFIG_FILE       "graphs.conf"
 #define DEVICE_TREE_CONFIG_FILE  "device-tree.conf"
+#define PROFILE_METADATA_CONFIG_FILE "profile-metadata.conf"
 
 #if SNMPB_ENABLE_QWT
 #define SNMPB_QWT_ABOUT_LINE \
@@ -127,7 +132,9 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     logsnmpb = new LogSnmpb(this);
     modules = new MibModule(this);
     profileService = new AgentProfileService(GetAgentsConfigFile(), this);
-    apm = new AgentProfileManager(this, profileService);
+    profileMetadataService = new ProfileMetadataService(
+        GetProfileMetadataConfigFile(), this);
+    apm = new AgentProfileManager(this, profileService, profileMetadataService);
     prefs->Init();
     trap = new Trap(this);
     agent->Init();
@@ -144,7 +151,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     devicesDock->setObjectName("DevicesDock");
     devicesDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     devicePane = new DevicePane(GetDeviceTreeConfigFile(),
-                                apm->GetAgentProfileRecords(), devicesDock);
+                                apm->GetAgentProfileRecords(),
+                                profileMetadataService->allMetadata(), devicesDock);
     devicesDock->setWidget(devicePane);
     devicesDock->setMinimumWidth(190);
     mw->addDockWidget(Qt::LeftDockWidgetArea, devicesDock);
@@ -176,6 +184,73 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             });
     connect(apm, &AgentProfileManager::AgentProfileDuplicated,
             devicePane, &DevicePane::placeDuplicate);
+    connect(profileService, &AgentProfileService::profileDuplicated,
+            profileMetadataService, &ProfileMetadataService::copy);
+    connect(profileService, &AgentProfileService::profileDeleted,
+            profileMetadataService, &ProfileMetadataService::remove);
+    connect(profileMetadataService, &ProfileMetadataService::metadataChanged,
+            devicePane, [this](const QString &) {
+                devicePane->setMetadata(profileMetadataService->allMetadata());
+            });
+    connect(devicePane, &DevicePane::exportRequested, this,
+            [this](int scope, const QString &id) {
+        ProfileTransferDocument document;
+        document.profiles = profileService->profiles();
+        document.metadata = profileMetadataService->allMetadata();
+        document.tree = devicePane->model()->state();
+        if (scope == 1)
+            document = ProfileTransfer::selectProfiles(document, {id});
+        else if (scope == 2)
+            document = ProfileTransfer::selectFolder(document, id);
+        const QString fileName = QFileDialog::getSaveFileName(
+            nullptr, tr("Export Device Profiles"), QString(), tr("JSON files (*.json)"));
+        if (fileName.isEmpty()) return;
+        QFile file(fileName);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            file.write(ProfileTransfer::exportJson(document)) < 0)
+            QMessageBox::warning(nullptr, tr("Export Failed"),
+                                 tr("The profile export could not be written."));
+    });
+    connect(devicePane, &DevicePane::importRequested, this, [this]() {
+        const QString fileName = QFileDialog::getOpenFileName(
+            nullptr, tr("Import Device Profiles"), QString(), tr("JSON files (*.json)"));
+        if (fileName.isEmpty()) return;
+        QFile file(fileName);
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            QMessageBox::warning(nullptr, tr("Import Failed"),
+                                 tr("The selected import file could not be read."));
+            return;
+        }
+        ProfileImportPlan plan;
+        QString detail;
+        const ProfileTransferError error = ProfileTransfer::planImport(
+            file.readAll(), profileService->profiles(), devicePane->model()->state(),
+            &plan, &detail);
+        if (error != ProfileTransferError::None)
+        {
+            QMessageBox::warning(nullptr, tr("Import Failed"),
+                                 tr("The import file is invalid or unsupported. No profiles were imported."));
+            return;
+        }
+        QString applyError;
+        if (!ProfileImportStorage::apply(plan, GetAgentsConfigFile(),
+                                         GetProfileMetadataConfigFile(),
+                                         GetDeviceTreeConfigFile(),
+                                         profileService->profiles(),
+                                         profileMetadataService->allMetadata(),
+                                         devicePane->model()->state(), &applyError))
+        {
+            QMessageBox::warning(nullptr, tr("Import Failed"),
+                                 tr("The import could not be saved. Existing configuration was restored."));
+            return;
+        }
+        profileService->reload();
+        profileMetadataService->reload();
+        devicePane->setProfiles(profileService->profiles());
+        devicePane->setMetadata(profileMetadataService->allMetadata());
+        devicePane->reloadTree();
+    });
 
     QSettings windowSettings;
     if (windowSettings.contains("mainwindow/state"))
@@ -244,6 +319,11 @@ AgentProfileManager* Snmpb::APManagerObj(void)
 AgentProfileService* Snmpb::AgentProfiles(void)
 {
     return profileService;
+}
+
+ProfileMetadataService* Snmpb::ProfileMetadata(void)
+{
+    return profileMetadataService;
 }
 
 USMProfileManager* Snmpb::UPManagerObj(void)
@@ -458,5 +538,12 @@ QString Snmpb::GetDeviceTreeConfigFile(void)
     QSettings settings;
     QDir cfgdir = QFileInfo(settings.fileName()).dir();
     return cfgdir.filePath(DEVICE_TREE_CONFIG_FILE);
+}
+
+QString Snmpb::GetProfileMetadataConfigFile(void)
+{
+    QSettings settings;
+    QDir cfgdir = QFileInfo(settings.fileName()).dir();
+    return cfgdir.filePath(PROFILE_METADATA_CONFIG_FILE);
 }
 

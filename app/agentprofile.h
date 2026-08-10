@@ -22,10 +22,12 @@
 
 #include "snmpb.h"
 #include "agentprofilerepository.h"
+#include "profilemetadatarepository.h"
 #include "ui_agentprofile.h"
 #include <qdialog.h>
 #include <qtreewidget.h>
 #include <qlist.h>
+#include <qhash.h>
 
 class AgentProfile: public QObject
 {
@@ -39,6 +41,7 @@ public:
     int IsPartOfAgentProfile(QTreeWidgetItem *item);
     int SelectAgentProfile(QTreeWidgetItem * item);
     QTreeWidgetItem *GetGeneralWidgetItem(void);
+    bool IsMetadataItem(QTreeWidgetItem *item) const;
     void ProtocolV1Support(bool checked);
     void ProtocolV2Support(bool checked);
     void ProtocolV3Support(bool checked);
@@ -97,6 +100,7 @@ protected:
     QTreeWidgetItem *v1v2c;
     QTreeWidgetItem *bulk;
     QTreeWidgetItem *v3;
+    QTreeWidgetItem *metadata;
 
     AgentProfileRecord record;
 };
@@ -106,7 +110,8 @@ class AgentProfileManager: public QObject
     Q_OBJECT
 
 public:
-    AgentProfileManager(Snmpb *snmpb, class AgentProfileService *service);
+    AgentProfileManager(Snmpb *snmpb, class AgentProfileService *service,
+                        class ProfileMetadataService *metadataService);
     void Execute(bool reload = true);
     QStringList GetAgentsList(void);
     QList<AgentProfileRecord> GetAgentProfileRecords(void) const;
@@ -153,6 +158,8 @@ protected slots:
     void SetSecLevel(void);
     void SetContextName(void);
     void SetContextEngineID(void);
+    void SetNotes(void);
+    void SetTags(void);
     void SelectedAgentProfile( QTreeWidgetItem * item, QTreeWidgetItem * old);
     void AgentProfileNameChange(QTreeWidgetItem * item, int column);
     void Add(void);
@@ -169,10 +176,14 @@ private:
 private:
     Snmpb *s;
     AgentProfileService *service;
+    ProfileMetadataService *metadataService;
     Ui_AgentProfile ap;
     QDialog apw;
     AgentProfile* currentprofile;
     QList<AgentProfile *> agents;
+    QHash<QString, ProfileMetadataRecord> workingMetadata;
+    class QTextEdit *notesEdit;
+    class QLineEdit *tagsEdit;
 };
 
 #endif /* AGENTPROFILE_H */

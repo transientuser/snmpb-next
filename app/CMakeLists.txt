@@ -28,6 +28,9 @@ set(SNMPB_APP_SOURCES
     mibview.cpp
     preferences.cpp
     preferencesettings.cpp
+    profilemetadatarepository.cpp
+    profilemetadataservice.cpp
+    profiletransfer.cpp
     snmprequestconfig.cpp
     snmprequestconfigadapter.cpp
     snmprequestcontext.cpp
@@ -63,6 +66,9 @@ set(SNMPB_APP_HEADERS
     mibview.h
     preferences.h
     preferencesettings.h
+    profilemetadatarepository.h
+    profilemetadataservice.h
+    profiletransfer.h
     snmprequestconfig.h
     snmprequestconfigadapter.h
     snmprequestcontext.h
@@ -188,6 +194,36 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_profile_transfer_test
+        agentprofilerepository.cpp agentprofilerepository.h
+        devicetreerepository.cpp devicetreerepository.h
+        profilemetadatarepository.cpp profilemetadatarepository.h
+        profiletransfer.cpp profiletransfer.h profiletransfer_test.cpp)
+    target_link_libraries(snmpb_profile_transfer_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.profile-transfer COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_profile_transfer_test>)
+    else()
+        add_test(NAME snmpb.profile-transfer COMMAND
+            $<TARGET_FILE:snmpb_profile_transfer_test>)
+    endif()
+
+    add_executable(snmpb_profile_metadata_test
+        profilemetadatarepository.cpp profilemetadatarepository.h
+        profilemetadataservice.cpp profilemetadataservice.h
+        profilemetadata_test.cpp)
+    set_target_properties(snmpb_profile_metadata_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_profile_metadata_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.profile-metadata COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_profile_metadata_test>)
+    else()
+        add_test(NAME snmpb.profile-metadata COMMAND
+            $<TARGET_FILE:snmpb_profile_metadata_test>)
+    endif()
+
     add_executable(snmpb_agentprofile_service_test
         agentprofileoperations.cpp
         agentprofileoperations.h
