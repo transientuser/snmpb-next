@@ -485,10 +485,16 @@ AgentSelectionError Agent::ResolveCurrentSelection(
 
 Agent::~Agent()
 {
+    timer.stop();
+    if (snmp)
+        snmp->notify_unregister();
     tableRunner->cancel();
     tableRunner->wait();
     instanceRunner->cancel();
     instanceRunner->wait();
+    delete snmp;
+    snmp = nullptr;
+    Snmp::socket_cleanup();
 }
 
 void Agent::SelectProfileByName(const QString &profileName)
@@ -843,19 +849,20 @@ void Agent::AsyncCallbackTrap(int reason, Pdu &pdu, SnmpTarget &target)
         }
     }
 
-    // Add the trap ...
-    QStringList values;
-    values << no << date << time << timestamp << nottype 
-           << msgtype << version << agtaddr << agtport;
-    TrapItem *ti = s->TrapObj()->Add(id, values, community, seclevel, 
-                                     ctxname, ctxid, msgid);
- 
-    // Now, loop thru all varbinds and extract info ...
-    for (int i=0; i < pdu.get_vb_count(); i++)
-    {
-        pdu.get_vb(vb, i);
-        ti->AddVarBind(vb);
-    }
+    TrapEndpoint endpoint;
+    endpoint.address = agtaddr;
+    endpoint.port = agentUDP.get_port();
+    endpoint.community = community;
+    if (target.get_version() == version1)
+        endpoint.version = TrapSnmpVersion::V1;
+    else if (target.get_version() == version2c)
+        endpoint.version = TrapSnmpVersion::V2c;
+    else if (target.get_version() == version3)
+        endpoint.version = TrapSnmpVersion::V3;
+    if (target.get_type() == SnmpTarget::type_utarget)
+        endpoint.securityName = ((UTarget*)&target)->get_security_name().get_printable();
+    if (s->TrapObj())
+        s->TrapObj()->Receive(pdu, endpoint);
   
     // If its an inform, we have to reply ...
     if (pdu.get_type() == sNMP_PDU_INFORM)

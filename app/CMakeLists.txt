@@ -51,6 +51,10 @@ set(SNMPB_APP_SOURCES
     tabletraversal.cpp
     snmpb.cpp
     trap.cpp
+    trapdecoder.cpp
+    traphistorystore.cpp
+    trappresenter.cpp
+    trapservice.cpp
     usmprofile.cpp
     usmcredentialrepository.cpp
     usmcredentialcoordinator.cpp
@@ -107,6 +111,11 @@ set(SNMPB_APP_HEADERS
     snmpb.h
     snmpbapp.h
     trap.h
+    trapdecoder.h
+    traphistorystore.h
+    trappresenter.h
+    traprecord.h
+    trapservice.h
     usmprofile.h
     usmcredentialrepository.h
     usmcredentialcoordinator.h
@@ -228,6 +237,25 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_trap_pipeline_test
+        trapdecoder.cpp trapdecoder.h
+        traphistorystore.cpp traphistorystore.h traprecord.h
+        trappresenter.cpp trappresenter.h
+        trapservice.cpp trapservice.h
+        trap_pipeline_test.cpp)
+    set_target_properties(snmpb_trap_pipeline_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_trap_pipeline_test PRIVATE
+        Qt6::Core snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
+    target_compile_definitions(snmpb_trap_pipeline_test PRIVATE
+        SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    if(WIN32)
+        add_test(NAME snmpb.trap-pipeline COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_trap_pipeline_test>)
+    else()
+        add_test(NAME snmpb.trap-pipeline COMMAND $<TARGET_FILE:snmpb_trap_pipeline_test>)
+    endif()
+
     add_executable(snmpb_discovery_operation_test
         discoveryscanplan.cpp discoveryscanplan.h
         snmprequestconfig.cpp snmprequestconfig.h

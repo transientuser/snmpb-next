@@ -43,6 +43,7 @@ public:
     bool ShouldListenStdTrapPort6();
     bool GetExpandTrapBinding(void);
     bool GetShowAgentName(void);
+    int GetTrapHistoryLimit(void) const;
     int GetAutomaticLoading(void);
     void SaveCurrentProfile(QString &name, int proto);
     void SaveCurrentProfile(const QString &name, const QString &profileId,
@@ -90,6 +91,7 @@ private:
     bool enableipv6;
     bool expandtrapbinding;
     bool showagentname;
+    int traphistorylimit;
     int automaticloading;
     QString curprofile;
     QString curprofileid;

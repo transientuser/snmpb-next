@@ -37,6 +37,7 @@ PreferencesSettings PreferencesSettings::load(QSettings &settings)
     result.horizontalSplit = settings.value("ui/horizontalsplit", false).toBool();
     result.expandTrapBinding = settings.value("ui/expandtrapbinding", true).toBool();
     result.showAgentName = settings.value("misc/showagentname", false).toBool();
+    result.trapHistoryLimit = qBound(1, settings.value("ui/traphistorylimit", 1000).toInt(), 100000);
     result.automaticLoading = settings.value("misc/automaticloading", 2).toInt();
     result.selectedProfile = settings.value("ui/selectedprofile", "localhost").toString();
     result.selectedProfileId = settings.value("ui/selectedprofileid").toString();
@@ -57,6 +58,7 @@ void PreferencesSettings::save(QSettings &settings) const
     settings.setValue("ui/horizontalsplit", horizontalSplit);
     settings.setValue("ui/expandtrapbinding", expandTrapBinding);
     settings.setValue("misc/showagentname", showAgentName);
+    settings.setValue("ui/traphistorylimit", qBound(1, trapHistoryLimit, 100000));
     settings.setValue("misc/automaticloading", automaticLoading);
     settings.setValue("ui/selectedprofile", selectedProfile);
     if (!selectedProfileId.isEmpty())

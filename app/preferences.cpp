@@ -129,6 +129,9 @@ void Preferences::Init(void)
     showagentname = persisted.showAgentName;
     p->ShowAgentName->setChecked(showagentname);
 
+    traphistorylimit = persisted.trapHistoryLimit;
+    p->TrapHistoryLimit->setValue(traphistorylimit);
+
     automaticloading = persisted.automaticLoading;
     if (automaticloading == 1) p->MibLoadingEnable->setChecked(true);
     else if (automaticloading == 2) p->MibLoadingEnablePrompt->setChecked(true);
@@ -190,6 +193,8 @@ void Preferences::Save()
     values.horizontalSplit = horizontalsplit;
     values.expandTrapBinding = expandtrapbinding;
     values.showAgentName = showagentname;
+    traphistorylimit = p->TrapHistoryLimit->value();
+    values.trapHistoryLimit = traphistorylimit;
     values.automaticLoading = automaticloading;
     values.selectedProfile = curprofile;
     values.selectedProfileId = curprofileid;
@@ -454,6 +459,11 @@ bool Preferences::ShouldListenStdTrapPort6()
 void Preferences::SaveCurrentProfile(QString &name, int proto)
 {
     SaveCurrentProfile(name, QString(), proto);
+}
+
+int Preferences::GetTrapHistoryLimit(void) const
+{
+    return traphistorylimit;
 }
 
 void Preferences::SaveCurrentProfile(const QString &name,

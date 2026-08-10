@@ -35,6 +35,8 @@ int main(int argc, char **argv)
               "UI defaults preserved");
         check(!defaults.showAgentName && defaults.automaticLoading == 2,
               "trap display and automatic loading defaults preserved");
+        check(defaults.trapHistoryLimit == 1000,
+              "trap history has a bounded default");
         check(defaults.selectedProfile == "localhost" &&
               defaults.selectedProfileId.isEmpty() &&
               defaults.selectedProtocol == 0, "agent selection defaults preserved");
@@ -50,6 +52,7 @@ int main(int argc, char **argv)
     expected.horizontalSplit = true;
     expected.expandTrapBinding = false;
     expected.showAgentName = true;
+    expected.trapHistoryLimit = 250;
     expected.automaticLoading = 3;
     expected.selectedProfile = "router-lab";
     expected.selectedProfileId = "11111111-2222-4333-8444-555555555555";
@@ -98,7 +101,8 @@ int main(int argc, char **argv)
         check(actual.selectedProtocol == expected.selectedProtocol,
               "selected SNMP protocol round-trips");
         check(actual.expandTrapBinding == expected.expandTrapBinding &&
-              actual.showAgentName == expected.showAgentName,
+              actual.showAgentName == expected.showAgentName &&
+              actual.trapHistoryLimit == expected.trapHistoryLimit,
               "trap-display settings round-trip");
         check(actual.horizontalSplit == expected.horizontalSplit,
               "splitter orientation round-trips");
@@ -136,6 +140,8 @@ int main(int argc, char **argv)
         check(loaded.selectedProfile == "legacy-router" &&
               loaded.selectedProfileId.isEmpty() &&
               loaded.selectedProtocol == 1, "existing selection is compatible");
+        check(loaded.trapHistoryLimit == 1000,
+              "legacy settings receive bounded trap-history default");
         check(loaded.mibPaths == QStringList{"C:/legacy/mibs"} &&
               loaded.mibPreloads == QStringList{"IF-MIB"},
               "existing MIB arrays are compatible");

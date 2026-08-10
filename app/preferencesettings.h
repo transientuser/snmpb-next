@@ -15,6 +15,7 @@ struct PreferencesSettings
     bool horizontalSplit = false;
     bool expandTrapBinding = true;
     bool showAgentName = false;
+    int trapHistoryLimit = 1000;
     int automaticLoading = 2;
     QString selectedProfile = QStringLiteral("localhost");
     QString selectedProfileId;
