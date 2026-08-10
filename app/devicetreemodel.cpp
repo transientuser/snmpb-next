@@ -77,7 +77,8 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
         if (!record) return node->text;
         const ProfileMetadataRecord *details = metadata(node->profileId);
         return record->name + QLatin1Char(' ') + record->address + QLatin1Char(' ') +
-               (details ? details->tags.join(' ') + QLatin1Char(' ') + details->notes
+               (details ? details->tags.join(' ') + QLatin1Char(' ') + details->notes +
+                              QLatin1Char(' ') + details->preferredMibs.join(' ')
                         : QString());
     }
     if (role == Qt::DecorationRole)
@@ -98,6 +99,8 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
             tooltip += QString("\n%1").arg(details->tags.join(", "));
         if (details && !details->notes.trimmed().isEmpty())
             tooltip += QString("\n%1").arg(details->notes.simplified().left(120));
+        if (details && !details->preferredMibs.isEmpty())
+            tooltip += QString("\nMIBs: %1").arg(details->preferredMibs.join(", "));
         return tooltip;
     }
     return {};

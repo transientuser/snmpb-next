@@ -13,6 +13,7 @@ set(SNMPB_APP_SOURCES
     agentprofileservice.cpp
     comboboxes.cpp
     discovery.cpp
+    discoverydestination.cpp
     devicepane.cpp
     devicetree.cpp
     devicetreemodel.cpp
@@ -31,6 +32,7 @@ set(SNMPB_APP_SOURCES
     profilemetadatarepository.cpp
     profilemetadataservice.cpp
     profiletransfer.cpp
+    preferredmibresolver.cpp
     snmprequestconfig.cpp
     snmprequestconfigadapter.cpp
     snmprequestcontext.cpp
@@ -51,6 +53,7 @@ set(SNMPB_APP_HEADERS
     agentprofileservice.h
     comboboxes.h
     discovery.h
+    discoverydestination.h
     devicepane.h
     devicetree.h
     devicetreemodel.h
@@ -69,6 +72,7 @@ set(SNMPB_APP_HEADERS
     profilemetadatarepository.h
     profilemetadataservice.h
     profiletransfer.h
+    preferredmibresolver.h
     snmprequestconfig.h
     snmprequestconfigadapter.h
     snmprequestcontext.h
@@ -194,6 +198,33 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_discovery_destination_test
+        agentprofilerepository.cpp agentprofilerepository.h
+        devicetree.cpp devicetree.h devicetreerepository.cpp devicetreerepository.h
+        discoverydestination.cpp discoverydestination.h discoverydestination_test.cpp)
+    set_target_properties(snmpb_discovery_destination_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_discovery_destination_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.discovery-destination COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_discovery_destination_test>)
+    else()
+        add_test(NAME snmpb.discovery-destination COMMAND $<TARGET_FILE:snmpb_discovery_destination_test>)
+    endif()
+
+    add_executable(snmpb_preferred_mib_test
+        preferredmibresolver.cpp preferredmibresolver.h
+        profilemetadatarepository.cpp profilemetadatarepository.h
+        preferredmibresolver_test.cpp)
+    target_link_libraries(snmpb_preferred_mib_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.preferred-mib COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_preferred_mib_test>)
+    else()
+        add_test(NAME snmpb.preferred-mib COMMAND $<TARGET_FILE:snmpb_preferred_mib_test>)
+    endif()
+
     add_executable(snmpb_profile_transfer_test
         agentprofilerepository.cpp agentprofilerepository.h
         devicetreerepository.cpp devicetreerepository.h

@@ -53,10 +53,17 @@ int main(int argc, char **argv)
     const QString copy = service.duplicate(first);
     ok &= check(!copy.isEmpty() && copy != first && service.findById(copy),
                 "duplicate gets new ID");
+    const QString discoveredA = service.createFromTemplate(
+        first, "same-discovered", "192.0.2.40", "161", true, true, false);
+    const QString discoveredB = service.createFromTemplate(
+        first, "same-discovered", "192.0.2.41", "161", true, false, false);
+    ok &= check(!discoveredA.isEmpty() && !discoveredB.isEmpty() &&
+                discoveredA != discoveredB,
+                "Discovery same-name profiles retain distinct IDs");
     ok &= check(service.remove(second) && !service.findById(second), "delete by ID");
 
     AgentProfileService reloaded(file);
-    ok &= check(reloaded.profiles().size() == defaults + 2 &&
+    ok &= check(reloaded.profiles().size() == defaults + 4 &&
                 reloaded.findById(first) && reloaded.findById(copy),
                 "repository persistence");
     return ok ? 0 : 1;

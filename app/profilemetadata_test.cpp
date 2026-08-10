@@ -37,10 +37,13 @@ int main(int argc, char **argv)
                 "missing sidecar is empty and not created by reading");
     ProfileMetadataRecord first{"id-a", "Core router notes",
                                 {" core ", "LAB", "Core", ""}};
+    first.preferredMibs = {" IF-MIB ", "SNMPv2-MIB", "IF-MIB"};
     ok &= check(service.update(first), "metadata update");
     const ProfileMetadataRecord normalized = service.metadataForProfile("id-a");
     ok &= check(normalized.tags == QStringList({"core", "LAB"}),
                 "case-insensitive first-spelling tag normalization");
+    ok &= check(normalized.preferredMibs == QStringList({"IF-MIB", "SNMPv2-MIB"}),
+                "preferred MIB normalization");
     ok &= check(contents(agentsFile) == agentsBefore && contents(treeFile) == treeBefore,
                 "metadata operations changed another configuration file");
 
@@ -48,19 +51,26 @@ int main(int argc, char **argv)
     ok &= check(reloaded.metadataForProfile("id-a").notes == "Core router notes" &&
                 reloaded.metadataForProfile("id-a").tags == QStringList({"core", "LAB"}),
                 "notes and tags round-trip");
+    ok &= check(reloaded.metadataForProfile("id-a").preferredMibs ==
+                    QStringList({"IF-MIB", "SNMPv2-MIB"}),
+                "preferred MIBs round-trip");
     const QByteArray beforeCancel = contents(metadataFile);
     ProfileMetadataRecord cancelled = reloaded.metadataForProfile("id-a");
     cancelled.notes = "cancelled edit";
+    cancelled.preferredMibs = {"CANCELLED-MIB"};
     ProfileMetadataRecord cancelledNew{"new-draft", "not persisted", {"draft"}};
     ok &= check(contents(metadataFile) == beforeCancel &&
-                reloaded.metadataForProfile("new-draft").notes.isEmpty(),
+                reloaded.metadataForProfile("new-draft").notes.isEmpty() &&
+                !reloaded.metadataForProfile("id-a").preferredMibs.contains("CANCELLED-MIB"),
                 "profile/metadata working copies or new-profile Cancel mutated storage");
+    cancelled = reloaded.metadataForProfile("id-a");
     cancelled.notes = "accepted edit";
     ok &= check(reloaded.update(cancelled) &&
                 reloaded.metadataForProfile("id-a").notes == "accepted edit",
                 "metadata OK did not persist working copy");
     ok &= check(reloaded.copy("id-a", "id-b") &&
-                reloaded.metadataForProfile("id-b").notes == "accepted edit",
+                reloaded.metadataForProfile("id-b").notes == "accepted edit" &&
+                reloaded.metadataForProfile("id-b").preferredMibs.contains("IF-MIB"),
                 "duplicate copies metadata to stable destination ID");
     ok &= check(reloaded.remove("id-a") &&
                 reloaded.metadataForProfile("id-a").notes.isEmpty(),
@@ -83,7 +93,8 @@ int main(int argc, char **argv)
     bad.endArray(); bad.sync();
     const QList<ProfileMetadataRecord> loaded =
         ProfileMetadataRepository(malformed).load();
-    ok &= check(loaded.size() == 1 && loaded.first().notes == "kept",
-                "malformed and duplicate metadata records ignored");
+    ok &= check(loaded.size() == 1 && loaded.first().notes == "kept" &&
+                loaded.first().preferredMibs.isEmpty(),
+                "v1 schema upgrade and malformed records");
     return ok ? 0 : 1;
 }

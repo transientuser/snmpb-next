@@ -10,12 +10,13 @@ struct ProfileMetadataRecord
     QString profileId;
     QString notes;
     QStringList tags;
+    QStringList preferredMibs;
 };
 
 class ProfileMetadataRepository
 {
 public:
-    static constexpr int CurrentVersion = 1;
+    static constexpr int CurrentVersion = 2;
 
     explicit ProfileMetadataRepository(const QString &fileName);
     QList<ProfileMetadataRecord> load() const;
@@ -23,6 +24,7 @@ public:
     QString fileName() const;
 
     static QStringList normalizeTags(const QStringList &tags);
+    static QStringList normalizeMibs(const QStringList &mibs);
 
 private:
     QString path;

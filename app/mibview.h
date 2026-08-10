@@ -149,6 +149,7 @@ class MibViewLoader: public QObject
 public:
     MibViewLoader();
     void Load (QStringList &);
+    void EnsureLoaded(const QStringList &modules);
     MibNode *PopulateSubTree (SmiNode *smiNode, MibNode *parent, MibNode *sibling);    
     void RegisterView(BasicMibView* view);
 

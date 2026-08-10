@@ -75,6 +75,9 @@ class Discovery: public QObject
 public:
     Discovery(Snmpb *snmpb);
 
+public slots:
+    void RefreshDestinationFolders(void);
+
 protected slots:
     void Discover(void);
     void Abort(void);
@@ -90,6 +93,7 @@ private:
     Snmpb *s;
     DiscoveryThread *dt;
     QAction *addAgentAct;
+    class QComboBox *destinationFolder;
 };
 
 #endif /* DISCOVERY_H */

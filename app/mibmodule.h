@@ -55,6 +55,9 @@ public:
     void ReadMibPaths();
     void ReadMibPreloads();
     QStringList GetWantedModules() { return Wanted; }
+    QStringList AvailableModuleNames() const;
+    QStringList LoadedModuleNames() const;
+    QStringList LoadPreferredModules(const QStringList &modules);
 
 public slots:
     void Refresh();
@@ -82,6 +85,7 @@ private:
     QList<LoadedMibModule*> Loaded;
     QList<QStringList> Total;
     QStringList Wanted;
+    QStringList KnownModuleNames;
     enum AutomaticLoadingPolicy Policy;
     bool ErrorWhileLoading;
 };

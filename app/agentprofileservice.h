@@ -22,6 +22,9 @@ public:
     bool update(const AgentProfileRecord &record);
     bool remove(const QString &profileId);
     QString duplicate(const QString &profileId);
+    QString createFromTemplate(const QString &templateId, const QString &name,
+                               const QString &address, const QString &port,
+                               bool v1, bool v2c, bool v3);
     void reload();
 
 signals:

@@ -42,6 +42,7 @@
 #include "agentprofileservice.h"
 #include "profilemetadataservice.h"
 #include "profiletransfer.h"
+#include "discoverydestination.h"
 #include "usmprofile.h"
 #include "preferences.h"
 
@@ -134,6 +135,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     profileService = new AgentProfileService(GetAgentsConfigFile(), this);
     profileMetadataService = new ProfileMetadataService(
         GetProfileMetadataConfigFile(), this);
+    devicePlacementService = new DeviceTreePlacementService(
+        GetDeviceTreeConfigFile(), this);
     apm = new AgentProfileManager(this, profileService, profileMetadataService);
     prefs->Init();
     trap = new Trap(this);
@@ -173,6 +176,10 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             devicePane, &DevicePane::placeCreatedProfile);
     connect(devicePane, &DevicePane::organizationPersisted,
             apm, &AgentProfileManager::PersistProfiles);
+    connect(devicePane, &DevicePane::organizationPersisted,
+            discovery, &Discovery::RefreshDestinationFolders);
+    connect(devicePlacementService, &DeviceTreePlacementService::placementChanged,
+            devicePane, [this](const QString &) { devicePane->reloadTree(); });
     connect(apm, &AgentProfileManager::AgentProfileListChanged,
             devicePane, [this]() {
                 devicePane->setProfiles(apm->GetAgentProfileRecords());
@@ -192,6 +199,11 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             devicePane, [this](const QString &) {
                 devicePane->setMetadata(profileMetadataService->allMetadata());
             });
+    connect(devicePane, &DevicePane::loadPreferredMibsRequested, this,
+            [this](const QString &profileId) {
+        modules->LoadPreferredModules(
+            profileMetadataService->metadataForProfile(profileId).preferredMibs);
+    });
     connect(devicePane, &DevicePane::exportRequested, this,
             [this](int scope, const QString &id) {
         ProfileTransferDocument document;
@@ -324,6 +336,11 @@ AgentProfileService* Snmpb::AgentProfiles(void)
 ProfileMetadataService* Snmpb::ProfileMetadata(void)
 {
     return profileMetadataService;
+}
+
+DeviceTreePlacementService* Snmpb::DevicePlacements(void)
+{
+    return devicePlacementService;
 }
 
 USMProfileManager* Snmpb::UPManagerObj(void)

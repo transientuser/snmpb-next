@@ -148,6 +148,8 @@ void DevicePane::showContextMenu(const QPoint &position)
     {
         menu.addAction(tr("Export Selected Profile"), this,
                        &DevicePane::exportSelectedProfile);
+        menu.addAction(tr("Load Preferred MIBs"), this,
+                       &DevicePane::loadPreferredMibs);
         menu.addAction(tr("Edit Profile"), this, &DevicePane::editProfile);
         menu.addAction(tr("Duplicate Profile"), this, &DevicePane::duplicateProfile);
         menu.addAction(tr("Delete Profile"), this, &DevicePane::deleteProfile);
@@ -166,6 +168,11 @@ void DevicePane::exportFolder()
 {
     const QModelIndex source = sourceIndex(selectedIndex());
     emit exportRequested(2, source.data(DeviceTreeModel::FolderIdRole).toString());
+}
+void DevicePane::loadPreferredMibs()
+{
+    const QString id = deviceModel->profileId(sourceIndex(selectedIndex()));
+    if (!id.isEmpty()) emit loadPreferredMibsRequested(id);
 }
 
 void DevicePane::createFolder()

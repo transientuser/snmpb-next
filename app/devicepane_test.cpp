@@ -88,8 +88,10 @@ int main(int argc, char **argv)
     if (!Check(Find(pane.treeView()->model(), "Datacenter").isValid(),
                "filter did not retain matching parent folder"))
         return 1;
-    pane.setMetadata({{profile.profileId, "Primary aggregation router", {"Backbone"}},
-                      {lab.profileId, "Temporary validation device", {"QA"}}});
+    pane.setMetadata({{profile.profileId, "Primary aggregation router", {"Backbone"},
+                       {"IF-MIB"}},
+                      {lab.profileId, "Temporary validation device", {"QA"},
+                       {"SNMPv2-MIB"}}});
     pane.filterEdit()->setText("backbone");
     if (!Check(Find(pane.treeView()->model(), "core-01").isValid() &&
                Find(pane.treeView()->model(), "Datacenter").isValid(),
@@ -99,6 +101,10 @@ int main(int argc, char **argv)
     if (!Check(Find(pane.treeView()->model(), "lab-switch").isValid() &&
                !Find(pane.treeView()->model(), "core-01").isValid(),
                "notes filter/nonmatch exclusion failed"))
+        return 1;
+    pane.filterEdit()->setText("IF-MIB");
+    if (!Check(Find(pane.treeView()->model(), "core-01").isValid(),
+               "preferred MIB filter failed"))
         return 1;
     pane.filterEdit()->clear();
     QModelIndex proxyFolder = Find(pane.treeView()->model(), "Datacenter");

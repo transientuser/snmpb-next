@@ -160,6 +160,7 @@ protected slots:
     void SetContextEngineID(void);
     void SetNotes(void);
     void SetTags(void);
+    void SetPreferredMibs(void);
     void SelectedAgentProfile( QTreeWidgetItem * item, QTreeWidgetItem * old);
     void AgentProfileNameChange(QTreeWidgetItem * item, int column);
     void Add(void);
@@ -184,6 +185,7 @@ private:
     QHash<QString, ProfileMetadataRecord> workingMetadata;
     class QTextEdit *notesEdit;
     class QLineEdit *tagsEdit;
+    class QListWidget *mibsEdit;
 };
 
 #endif /* AGENTPROFILE_H */

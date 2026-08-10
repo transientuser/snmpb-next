@@ -29,10 +29,13 @@ bool ProfileMetadataService::update(const ProfileMetadataRecord &source)
     ProfileMetadataRecord record = source;
     record.profileId = record.profileId.trimmed();
     record.tags = ProfileMetadataRepository::normalizeTags(record.tags);
+    record.preferredMibs = ProfileMetadataRepository::normalizeMibs(
+        record.preferredMibs);
     if (record.profileId.isEmpty())
         return false;
     const int index = indexOf(record.profileId);
-    if (record.notes.isEmpty() && record.tags.isEmpty())
+    if (record.notes.isEmpty() && record.tags.isEmpty() &&
+        record.preferredMibs.isEmpty())
     {
         if (index < 0) return true;
         records.removeAt(index);

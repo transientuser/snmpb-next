@@ -38,6 +38,7 @@ signals:
     void organizationPersisted();
     void importRequested();
     void exportRequested(int scope, const QString &id);
+    void loadPreferredMibsRequested(const QString &profileId);
 
 private slots:
     void activate(const QModelIndex &index);
@@ -53,6 +54,7 @@ private slots:
     void exportAll();
     void exportSelectedProfile();
     void exportFolder();
+    void loadPreferredMibs();
 
 private:
     QModelIndex selectedIndex() const;

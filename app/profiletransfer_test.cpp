@@ -29,15 +29,16 @@ int main(int argc, char **argv)
     bool ok = true;
     ProfileTransferDocument source;
     source.profiles = {profile("profile-a", "same"), profile("profile-b", "same")};
-    source.metadata = {{"profile-a", "core note", {"Core", "Lab"}},
-                       {"profile-b", "edge note", {"Edge"}}};
+    source.metadata = {{"profile-a", "core note", {"Core", "Lab"},
+                        {"IF-MIB", "SNMPv2-MIB"}},
+                       {"profile-b", "edge note", {"Edge"}, {}}};
     source.tree.folders = {{"folder-root", "", "Datacenter", 0},
                            {"folder-child", "folder-root", "Core", 1}};
     source.tree.placements = {{"place-a", "folder-child", "profile-a", "", 2},
                               {"place-b", "folder-root", "profile-b", "", 3}};
     const ProfileTransferDocument before = source;
     const QByteArray json = ProfileTransfer::exportJson(source);
-    ok &= check(json.contains("snmpb-next-profile-transfer") && json.contains("\"version\": 1"),
+    ok &= check(json.contains("snmpb-next-profile-transfer") && json.contains("\"version\": 2"),
                 "schema and version missing");
     ok &= check(!json.contains("read-secret") && !json.contains("write-secret") &&
                 !json.contains("readcomm") && !json.contains("writecomm") &&
@@ -61,6 +62,10 @@ int main(int argc, char **argv)
                 plan.profiles.first().writecomm.isEmpty() &&
                 plan.profiles.first().secname == "unavailable-usm-reference",
                 "credential-free/missing USM reference import policy");
+    ok &= check(plan.metadata.first().preferredMibs ==
+                    QStringList({"IF-MIB", "SNMPv2-MIB"}) &&
+                !json.contains("BEGIN") && !json.contains("C:\\\\"),
+                "preferred MIB transfer exported content/path or lost names");
     QTemporaryDir directory;
     const QString agentsFile = directory.filePath("agents.conf");
     const QString metadataFile = directory.filePath("profile-metadata.conf");
@@ -84,6 +89,8 @@ int main(int argc, char **argv)
                 remapped.folderIdMap.value("folder-root") != "folder-root" &&
                 remapped.metadata.first().profileId == remapped.profileIdMap.value("profile-a"),
                 "profile/folder collision remapping");
+    ok &= check(remapped.metadata.first().preferredMibs.contains("IF-MIB"),
+                "ID remapping lost preferred MIB associations");
     ok &= check(remapped.profiles[1].name == "same",
                 "same-name different-ID profile was not retained");
 
@@ -95,6 +102,19 @@ int main(int argc, char **argv)
     ok &= check(ProfileTransfer::planImport(QJsonDocument(future).toJson(), {}, {}, &sentinel) ==
                     ProfileTransferError::UnsupportedVersion,
                 "future version accepted");
+    QJsonObject legacy = QJsonDocument::fromJson(json).object(); legacy["version"] = 1;
+    QJsonArray legacyMetadata = legacy["metadata"].toArray();
+    for (int i = 0; i < legacyMetadata.size(); ++i)
+    {
+        QJsonObject record = legacyMetadata[i].toObject();
+        record.remove("preferredMibs"); legacyMetadata[i] = record;
+    }
+    legacy["metadata"] = legacyMetadata;
+    ProfileImportPlan legacyPlan;
+    ok &= check(ProfileTransfer::planImport(QJsonDocument(legacy).toJson(), {}, {},
+                                            &legacyPlan) == ProfileTransferError::None &&
+                legacyPlan.metadata.first().preferredMibs.isEmpty(),
+                "legacy transfer v1 compatibility");
     QJsonObject duplicate = QJsonDocument::fromJson(json).object();
     QJsonArray profiles = duplicate["profiles"].toArray(); profiles.append(profiles.first());
     duplicate["profiles"] = profiles;

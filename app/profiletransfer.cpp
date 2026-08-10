@@ -54,7 +54,11 @@ QByteArray ProfileTransfer::exportJson(const ProfileTransferDocument &document)
     {
         QJsonObject o; o["profileId"] = record.profileId; o["notes"] = record.notes;
         QJsonArray tags; for (const QString &tag : record.tags) tags.append(tag);
-        o["tags"] = tags; metadata.append(o);
+        o["tags"] = tags;
+        QJsonArray preferredMibs;
+        for (const QString &name : record.preferredMibs) preferredMibs.append(name);
+        o["preferredMibs"] = preferredMibs;
+        metadata.append(o);
     }
     root["metadata"] = metadata;
     QJsonArray folders;
@@ -133,7 +137,8 @@ ProfileTransferError ProfileTransfer::planImport(
     if (root.value("format").toString() != "snmpb-next-profile-transfer" ||
         !root.value("version").isDouble())
         return ProfileTransferError::InvalidRecord;
-    if (root.value("version").toInt() != CurrentVersion)
+    const int version = root.value("version").toInt();
+    if (version < 1 || version > CurrentVersion)
         return ProfileTransferError::UnsupportedVersion;
     if (!root.value("profiles").isArray() || !root.value("metadata").isArray() ||
         !root.value("folders").isArray() || !root.value("placements").isArray())
@@ -208,6 +213,14 @@ ProfileTransferError ProfileTransfer::planImport(
         QStringList tags; for (const QJsonValue &tag : o.value("tags").toArray())
             if (tag.isString()) tags.append(tag.toString());
         m.tags = ProfileMetadataRepository::normalizeTags(tags); proposed.metadata.append(m);
+        if (version >= 2)
+        {
+            QStringList preferredMibs;
+            for (const QJsonValue &name : o.value("preferredMibs").toArray())
+                if (name.isString()) preferredMibs.append(name.toString());
+            m.preferredMibs = ProfileMetadataRepository::normalizeMibs(preferredMibs);
+            proposed.metadata.last() = m;
+        }
     }
 
     QSet<QString> placementIds;

@@ -19,10 +19,17 @@
 */
 #include <qmessagebox.h>
 #include <QContextMenuEvent>
+#include <QComboBox>
+#include <QGridLayout>
+#include <QLabel>
+#include <QSettings>
+#include <QSignalBlocker>
 
 #include "discovery.h"
 #include "preferences.h"
 #include "agent.h"
+#include "agentprofileservice.h"
+#include "discoverydestination.h"
 #include "snmp_pp/snmp_pp.h"
 #include "snmp_pp/snmpmsg.h"
 
@@ -106,6 +113,22 @@ Discovery::Discovery(Snmpb *snmpb)
 {
     s = snmpb;
 
+    destinationFolder = new QComboBox(s->MainUI()->DiscoveryAgentProperties);
+    auto *destinationLabel = new QLabel(tr("Discovery Destination:"),
+                                        s->MainUI()->DiscoveryAgentProperties);
+    if (auto *layout = qobject_cast<QGridLayout *>(
+            s->MainUI()->DiscoveryAgentProperties->layout()))
+    {
+        layout->addWidget(destinationLabel, 1, 0);
+        layout->addWidget(destinationFolder, 1, 1, 1, 4);
+    }
+    RefreshDestinationFolders();
+    connect(destinationFolder, &QComboBox::currentIndexChanged, this, [this]() {
+        QSettings settings;
+        DiscoveryDestinationSettings::save(
+            settings, destinationFolder->currentData().toString());
+    });
+
     connect( s->MainUI()->DiscoveryButton,
              SIGNAL( clicked() ), this, SLOT( Discover() ));
     connect( s->MainUI()->DiscoveryAbortButton, 
@@ -135,6 +158,23 @@ Discovery::Discovery(Snmpb *snmpb)
              this, SLOT( ContextMenu ( const QPoint & ) ) );
     addAgentAct = new QAction(tr("&Add agent(s) to profile list"), this);
     connect(addAgentAct, SIGNAL(triggered()), this, SLOT(AddAgentToProfiles()));
+}
+
+void Discovery::RefreshDestinationFolders(void)
+{
+    QSettings settings;
+    const QString saved = DiscoveryDestinationSettings::load(settings);
+    const QList<DeviceFolderChoice> folders = s->DevicePlacements()->folderChoices();
+    const QString resolved = DiscoveryDestinationSettings::resolve(saved, folders);
+    const QSignalBlocker blocker(destinationFolder);
+    destinationFolder->clear();
+    destinationFolder->addItem(tr("Unfiled"), QString());
+    for (const DeviceFolderChoice &folder : folders)
+        destinationFolder->addItem(folder.displayPath, folder.folderId);
+    const int index = destinationFolder->findData(resolved);
+    destinationFolder->setCurrentIndex(index >= 0 ? index : 0);
+    if (resolved != saved)
+        DiscoveryDestinationSettings::save(settings, QString());
 }
 
 void Discovery::ShowAgentSettings(void)
@@ -600,22 +640,24 @@ void Discovery::AddAgentToProfiles(void)
                              s->MainUI()->DiscoveryOutput->selectedItems();
     char buf[52]; // for IPv6 addr/port = 45+/+5+NULL
 
+    const QString destinationId = destinationFolder->currentData().toString();
+    const QString templateId =
+        s->MainUI()->DiscoveryAgentProfile->currentData().toString();
     for (int i = 0; i < item_list.size(); i++)
     {
         strcpy(buf, item_list[i]->text(1).toLatin1().data());
         QString address(strtok(buf, "/"));
 
-        s->APManagerObj()->Add(item_list[i]->text(0).isEmpty()?
-                               address:item_list[i]->text(0), 
-                               address, 
-                               QString(strstr(item_list[i]->text(1).toLatin1().data(), "/") + 1), 
-                               strstr(item_list[i]->text(2).toLatin1().data(), 
-                                      DISC_SNMP_V1)?true:false, 
-                               strstr(item_list[i]->text(2).toLatin1().data(), 
-                                      DISC_SNMP_V2C)?true:false, 
-                               strstr(item_list[i]->text(2).toLatin1().data(), 
-                                      DISC_SNMP_V3)?true:false, 
-                               s->MainUI()->DiscoveryAgentProfile->currentData().toString());
+        const QString profileId = s->AgentProfiles()->createFromTemplate(
+            templateId,
+            item_list[i]->text(0).isEmpty() ? address : item_list[i]->text(0),
+            address,
+            QString(strstr(item_list[i]->text(1).toLatin1().data(), "/") + 1),
+            strstr(item_list[i]->text(2).toLatin1().data(), DISC_SNMP_V1) != nullptr,
+            strstr(item_list[i]->text(2).toLatin1().data(), DISC_SNMP_V2C) != nullptr,
+            strstr(item_list[i]->text(2).toLatin1().data(), DISC_SNMP_V3) != nullptr);
+        if (!profileId.isEmpty())
+            s->DevicePlacements()->placeProfile(profileId, destinationId);
     }
 }
 

@@ -690,6 +690,17 @@ void MibViewLoader::Load(QStringList &modules)
     pmodv = modv;
 }
 
+void MibViewLoader::EnsureLoaded(const QStringList &modules)
+{
+    QStringList combined;
+    for (int i = 0; i < pmodc; ++i)
+        if (pmodv[i] && pmodv[i]->name)
+            combined.append(QString::fromLatin1(pmodv[i]->name));
+    for (const QString &module : modules)
+        if (!combined.contains(module)) combined.append(module);
+    Load(combined);
+}
+
 void MibViewLoader::RegisterView(BasicMibView* view)
 {
     views.append(view);

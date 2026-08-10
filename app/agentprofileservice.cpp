@@ -97,6 +97,18 @@ QString AgentProfileService::duplicate(const QString &id)
     return copy.profileId;
 }
 
+QString AgentProfileService::createFromTemplate(
+    const QString &templateId, const QString &name, const QString &address,
+    const QString &port, bool v1, bool v2c, bool v3)
+{
+    const AgentProfileRecord *source = findById(templateId);
+    if (!source) return {};
+    AgentProfileRecord record = *source;
+    record.profileId.clear(); record.name = name; record.address = address;
+    record.port = port; record.v1 = v1; record.v2 = v2c; record.v3 = v3;
+    return create(record);
+}
+
 void AgentProfileService::reload()
 {
     records = repository.LoadOrCreateDefaults();

@@ -14,17 +14,18 @@ and a missing metadata sidecar is normal.
 
 ## profile-metadata.conf
 
-The QSettings/INI sidecar uses schema version 1:
+The QSettings/INI sidecar now uses schema version 2; version 1 remains readable:
 
 ```ini
 [schema]
-version=1
+version=2
 
 [profiles]
 size=1
 1\profileId=stable-profile-id
 1\notes=Free-form user notes
 1\tags=Datacenter, Core
+1\preferredMibs=IF-MIB, SNMPv2-MIB
 ```
 
 Records with an empty ID and duplicate records for the same ID are ignored.
@@ -43,12 +44,13 @@ copy notes and tags to the new stable ID; they do not copy or create USM users.
 
 ## JSON transfer format
 
-Portable files are UTF-8 JSON with:
+Portable files are UTF-8 JSON. Version 2 adds preferred MIB names while version
+1 remains import-compatible:
 
 ```json
 {
   "format": "snmpb-next-profile-transfer",
-  "version": 1,
+  "version": 2,
   "credentialPolicy": "omitted",
   "profiles": [],
   "metadata": [],

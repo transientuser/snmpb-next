@@ -14,7 +14,8 @@ QList<ProfileMetadataRecord> ProfileMetadataRepository::load() const
     if (!QFileInfo::exists(path))
         return {};
     QSettings settings(path, QSettings::IniFormat);
-    if (settings.value("schema/version").toInt() != CurrentVersion)
+    const int version = settings.value("schema/version").toInt();
+    if (version < 1 || version > CurrentVersion)
         return {};
     QList<ProfileMetadataRecord> result;
     QSet<QString> seen;
@@ -26,6 +27,9 @@ QList<ProfileMetadataRecord> ProfileMetadataRepository::load() const
         record.profileId = settings.value("profileId").toString().trimmed();
         record.notes = settings.value("notes").toString();
         record.tags = normalizeTags(settings.value("tags").toStringList());
+        if (version >= 2)
+            record.preferredMibs = normalizeMibs(
+                settings.value("preferredMibs").toStringList());
         if (record.profileId.isEmpty() || seen.contains(record.profileId))
             continue;
         seen.insert(record.profileId);
@@ -51,10 +55,27 @@ bool ProfileMetadataRepository::save(
         settings.setValue("profileId", source.profileId.trimmed());
         settings.setValue("notes", source.notes);
         settings.setValue("tags", normalizeTags(source.tags));
+        settings.setValue("preferredMibs", normalizeMibs(source.preferredMibs));
     }
     settings.endArray();
     settings.sync();
     return settings.status() == QSettings::NoError;
+}
+
+QStringList ProfileMetadataRepository::normalizeMibs(const QStringList &mibs)
+{
+    QStringList result;
+    QSet<QString> seen;
+    for (const QString &raw : mibs)
+    {
+        const QString name = raw.trimmed();
+        if (!name.isEmpty() && !seen.contains(name))
+        {
+            seen.insert(name);
+            result.append(name);
+        }
+    }
+    return result;
 }
 
 QString ProfileMetadataRepository::fileName() const

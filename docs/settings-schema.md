@@ -18,6 +18,7 @@ this resolves beneath the configured user-scope INI path as
 | `ui/selectedproto` | int | `0` | Last selected SNMP protocol |
 | `misc/showagentname` | bool | `false` | Show Agent Profile name in trap display |
 | `misc/automaticloading` | int | `2` | MIB dependency loading: 1 load, 2 prompt, 3 disable |
+| `discovery/destinationfolderid` | stable folder ID string | empty | Optional Device Manager destination for newly created Discovery profiles; missing IDs fall back to Unfiled |
 | `mainwindow/size` | QSize | absent | Main-window size, restored only when present |
 | `mainwindow/pos` | QPoint | absent | Main-window position, restored only when present |
 | `mibpaths/size` | int | `0` | QSettings array length; zero triggers executable-relative defaults |
@@ -31,6 +32,7 @@ The built-in preload list is `IF-MIB`, `RFC1213-MIB`, `SNMP-FRAMEWORK-MIB`,
 directories relative to the executable (with platform install-layout handling).
 
 The application also derives sibling files (`smi.conf`, `boot_counter.conf`,
-`usm_users.conf`, `agents.conf`, `log.conf`, and `graphs.conf`) from the INI
+`usm_users.conf`, `agents.conf`, `device-tree.conf`, `profile-metadata.conf`,
+`log.conf`, and `graphs.conf`) from the INI
 file's directory. Those files have independent schemas and are not Preferences
 keys.

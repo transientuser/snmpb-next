@@ -21,6 +21,7 @@
 #include "agentprofileoperations.h"
 #include "agentprofileservice.h"
 #include "profilemetadataservice.h"
+#include "mibmodule.h"
 #include "usmprofile.h"
 #include <qhash.h>
 #include <qmessagebox.h>
@@ -28,6 +29,7 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QTextEdit>
 #include <QVBoxLayout>
 
@@ -53,6 +55,8 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
     notesEdit = new QTextEdit(metadataPage);
     metadataForm->addRow(tr("Tags"), tagsEdit);
     metadataForm->addRow(tr("Notes"), notesEdit);
+    mibsEdit = new QListWidget(metadataPage);
+    metadataForm->addRow(tr("Preferred MIB modules"), mibsEdit);
     metadataLayout->addLayout(metadataForm);
     ap.ProfileProps->addWidget(metadataPage);
 
@@ -120,6 +124,8 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
             this, &AgentProfileManager::SetNotes);
     connect(tagsEdit, &QLineEdit::textChanged,
             this, &AgentProfileManager::SetTags);
+    connect(mibsEdit, &QListWidget::itemChanged,
+            this, &AgentProfileManager::SetPreferredMibs);
 
     currentprofile = NULL; 
 
@@ -434,6 +440,17 @@ void AgentProfileManager::SetTags(void)
                 tagsEdit->text().split(',', Qt::KeepEmptyParts));
 }
 
+void AgentProfileManager::SetPreferredMibs(void)
+{
+    if (!currentprofile) return;
+    QStringList selected;
+    for (int i = 0; i < mibsEdit->count(); ++i)
+        if (mibsEdit->item(i)->checkState() == Qt::Checked)
+            selected.append(mibsEdit->item(i)->text());
+    workingMetadata[currentprofile->GetRecord().profileId].preferredMibs =
+        ProfileMetadataRepository::normalizeMibs(selected);
+}
+
 void AgentProfileManager::ContextMenu ( const QPoint &pos )
 {    
     QMenu menu(tr("Actions"), ap.ProfileTree);
@@ -527,10 +544,23 @@ void AgentProfileManager::SelectedAgentProfile(QTreeWidgetItem * item, QTreeWidg
             {
                 const QSignalBlocker notesBlock(notesEdit);
                 const QSignalBlocker tagsBlock(tagsEdit);
+                const QSignalBlocker mibsBlock(mibsEdit);
                 const ProfileMetadataRecord metadata = workingMetadata.value(
                     agents[i]->GetRecord().profileId);
                 notesEdit->setPlainText(metadata.notes);
                 tagsEdit->setText(metadata.tags.join(", "));
+                QStringList names = s->MibModuleObj()->AvailableModuleNames();
+                for (const QString &preferred : metadata.preferredMibs)
+                    if (!names.contains(preferred)) names.append(preferred);
+                names.sort(Qt::CaseInsensitive);
+                mibsEdit->clear();
+                for (const QString &name : names)
+                {
+                    auto *entry = new QListWidgetItem(name, mibsEdit);
+                    entry->setFlags(entry->flags() | Qt::ItemIsUserCheckable);
+                    entry->setCheckState(metadata.preferredMibs.contains(name) ?
+                                         Qt::Checked : Qt::Unchecked);
+                }
             }
             return;
         }

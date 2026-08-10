@@ -30,6 +30,7 @@
 #include "mibmodule.h"
 #include "agent.h"
 #include "preferences.h"
+#include "preferredmibresolver.h"
 
 LoadedMibModule::LoadedMibModule(SmiModule* mod)
 {
@@ -232,6 +233,7 @@ void MibModule::RebuildTotalList()
         smipaths = QString(smipath.get()).split(SMI_PATH_SEPARATOR);
    
     Total.clear();
+    KnownModuleNames.clear();
     QStringList errored_files;
     for (int i = 0; i < smipaths.size(); ++i)
     {
@@ -260,6 +262,9 @@ void MibModule::RebuildTotalList()
 
                 if (smiModule)
                 {
+                    const QString canonicalName = QString::fromLatin1(smiModule->name);
+                    if (!KnownModuleNames.contains(canonicalName))
+                        KnownModuleNames.append(canonicalName);
                     SmiNode *node = smiGetModuleIdentityNode(smiModule);
                     if (node)
                         module += smiRenderOID(node->oidlen, 
@@ -292,6 +297,45 @@ void MibModule::RebuildTotalList()
     }
 
     std::sort(Total.begin(), Total.end(), compareModule);
+}
+
+QStringList MibModule::AvailableModuleNames() const
+{
+    QStringList result = KnownModuleNames;
+    for (const LoadedMibModule *module : Loaded)
+        if (!result.contains(module->name)) result.append(module->name);
+    result.sort(Qt::CaseInsensitive);
+    return result;
+}
+
+QStringList MibModule::LoadedModuleNames() const
+{
+    QStringList result;
+    for (const LoadedMibModule *module : Loaded) result.append(module->name);
+    return result;
+}
+
+QStringList MibModule::LoadPreferredModules(const QStringList &modules)
+{
+    PreferredMibResolution resolution = PreferredMibResolver::resolve(
+        modules, AvailableModuleNames(), LoadedModuleNames());
+    QStringList loadedNow;
+    for (const QString &name : resolution.toLoad)
+    {
+        char *canonical = smiLoadModule(name.toLatin1().constData());
+        if (canonical) loadedNow.append(QString::fromLatin1(canonical));
+        else resolution.unavailable.append(name);
+    }
+    if (!loadedNow.isEmpty())
+    {
+        s->MibLoaderObj()->EnsureLoaded(loadedNow);
+        RebuildLoadedList();
+        RebuildUnloadedList();
+        s->TabSelected();
+    }
+    for (const QString &name : resolution.unavailable)
+        emit LogError(tr("Preferred MIB module '%1' is unavailable").arg(name));
+    return resolution.unavailable;
 }
 
 // Attempts to identify and load a mib module that resolves a specific oid

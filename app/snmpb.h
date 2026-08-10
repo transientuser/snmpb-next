@@ -36,6 +36,7 @@ class Discovery;
 class AgentProfileManager;
 class AgentProfileService;
 class ProfileMetadataService;
+class DeviceTreePlacementService;
 class USMProfileManager;
 class Preferences;
 class DevicePane;
@@ -57,6 +58,7 @@ public:
     AgentProfileManager* APManagerObj(void);
     AgentProfileService* AgentProfiles(void);
     ProfileMetadataService* ProfileMetadata(void);
+    DeviceTreePlacementService* DevicePlacements(void);
     USMProfileManager* UPManagerObj(void);
     Preferences* PreferencesObj(void);
 
@@ -85,6 +87,7 @@ private:
     AgentProfileManager *apm;
     AgentProfileService *profileService;
     ProfileMetadataService *profileMetadataService;
+    DeviceTreePlacementService *devicePlacementService;
     USMProfileManager *upm;
     Preferences *prefs;
 
