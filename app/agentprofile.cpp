@@ -18,8 +18,11 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "agentprofile.h"
+#include "agentprofileoperations.h"
 #include "usmprofile.h"
+#include <qhash.h>
 #include <qmessagebox.h>
+#include <QSignalBlocker>
 
 AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
     : repository(snmpb->GetAgentsConfigFile())
@@ -47,6 +50,8 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
     connect(addAct, SIGNAL(triggered()), this, SLOT(Add()));
     deleteAct = new QAction(tr("&Delete agent profile"), this);
     connect(deleteAct, SIGNAL(triggered()), this, SLOT(Delete()));
+    duplicateAct = new QAction(tr("D&uplicate agent profile"), this);
+    connect(duplicateAct, SIGNAL(triggered()), this, SLOT(DuplicateCurrent()));
 
     connect( ap.ProfileTree, 
              SIGNAL( currentItemChanged( QTreeWidgetItem *, QTreeWidgetItem * ) ),
@@ -111,8 +116,26 @@ void AgentProfileManager::WriteConfigFile (void)
     repository.Save(profiles);
 }
 
+void AgentProfileManager::ReplaceRecords(
+    const QList<AgentProfileRecord> &records)
+{
+    const QSignalBlocker blocker(ap.ProfileTree);
+    currentprofile = NULL;
+    qDeleteAll(agents);
+    agents.clear();
+    for (const AgentProfileRecord &record : records)
+        agents.append(new AgentProfile(&ap, record));
+    if (!agents.isEmpty())
+        ap.ProfileTree->setCurrentItem(agents.first()->GetGeneralWidgetItem());
+}
+
 void AgentProfileManager::Execute (void)
 {
+    AgentProfileEditTransaction transaction(GetAgentProfileRecords());
+    QHash<AgentProfile *, QString> originalNames;
+    for (AgentProfile *agent : agents)
+        originalNames.insert(agent, agent->GetName());
+
     // Fill-in loaded user names
     QString cpn;
     if (currentprofile)
@@ -128,8 +151,17 @@ void AgentProfileManager::Execute (void)
     if(apw.exec() == QDialog::Accepted)
     {
         WriteConfigFile();
+        for (AgentProfile *agent : agents)
+        {
+            const QString oldName = originalNames.value(agent);
+            if (!oldName.isEmpty() && oldName != agent->GetName())
+                emit AgentProfileRenamed(agent->GetRecord().profileId,
+                                         oldName, agent->GetName());
+        }
         emit AgentProfileListChanged();
     }
+    else
+        ReplaceRecords(transaction.rollbackRecords());
 }
 
 void AgentProfileManager::SetSelectedAgent(QString a)
@@ -156,12 +188,55 @@ AgentProfile *AgentProfileManager::GetAgentProfile(QString a)
     return NULL;
 }
 
+AgentProfile *AgentProfileManager::GetAgentProfileById(const QString &profileId)
+{
+    for (AgentProfile *agent : agents)
+        if (agent->GetRecord().profileId == profileId)
+            return agent;
+    return NULL;
+}
+
+void AgentProfileManager::SetSelectedAgentById(const QString &profileId)
+{
+    AgentProfile *agent = GetAgentProfileById(profileId);
+    if (agent)
+        ap.ProfileTree->setCurrentItem(agent->GetGeneralWidgetItem());
+}
+
+void AgentProfileManager::EditProfile(const QString &profileId)
+{
+    SetSelectedAgentById(profileId);
+    Execute();
+}
+
+QString AgentProfileManager::DuplicateProfile(const QString &profileId)
+{
+    AgentProfile *source = GetAgentProfileById(profileId);
+    if (!source)
+        return {};
+    AgentProfileRecord duplicate;
+    if (!AgentProfileOperations::Duplicate(GetAgentProfileRecords(),
+                                           profileId,
+                                           &duplicate))
+        return {};
+    agents.append(new AgentProfile(&ap, duplicate));
+    WriteConfigFile();
+    emit AgentProfileListChanged();
+    emit AgentProfileDuplicated(profileId, duplicate.profileId);
+    return duplicate.profileId;
+}
+
 QList<AgentProfileRecord> AgentProfileManager::GetAgentProfileRecords(void) const
 {
     QList<AgentProfileRecord> records;
     for (AgentProfile *agent : agents)
         records.append(agent->GetRecord());
     return records;
+}
+
+void AgentProfileManager::PersistProfiles(void)
+{
+    WriteConfigFile();
 }
 
 void AgentProfileManager::ProtocolV1Support(bool checked)
@@ -265,6 +340,7 @@ void AgentProfileManager::ContextMenu ( const QPoint &pos )
     QMenu menu(tr("Actions"), ap.ProfileTree);
 
     menu.addAction(addAct);
+    menu.addAction(duplicateAct);
     menu.addAction(deleteAct);
 
     menu.exec(ap.ProfileTree->mapToGlobal(pos));
@@ -296,7 +372,10 @@ void AgentProfileManager::Add(QString name, QString address, QString port,
     AgentProfile *clone;
 
     // Protection for duplicate entries (based on agent name)
-    if (!(clone = GetAgentProfile(clonefrom)) || GetAgentProfile(name))
+    clone = GetAgentProfileById(clonefrom);
+    if (!clone)
+        clone = GetAgentProfile(clonefrom); // legacy name adapter
+    if (!clone || GetAgentProfile(name))
         return;
 
     // Create new agent based on parameters ...
@@ -386,6 +465,7 @@ QStringList AgentProfileManager::GetAgentsList(void)
 AgentProfile::AgentProfile(Ui_AgentProfile *uiap, const QString *n)
 {
     ap = uiap;
+    record.profileId = AgentProfileRepository::CreateProfileId();
 
     general = new QTreeWidgetItem(ap->ProfileTree);
 
@@ -406,6 +486,12 @@ AgentProfile::AgentProfile(Ui_AgentProfile *uiap, const QString *n)
     bulk->setText(0, "Get-Bulk");
     v3 = new QTreeWidgetItem(general);
     v3->setText(0, "SnmpV3");
+}
+
+void AgentProfileManager::DuplicateCurrent(void)
+{
+    if (currentprofile)
+        DuplicateProfile(currentprofile->GetRecord().profileId);
 }
 
 AgentProfile::AgentProfile(Ui_AgentProfile *uiap,

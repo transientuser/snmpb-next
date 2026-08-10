@@ -22,6 +22,8 @@
 #include <qfileinfo.h>
 #include <qdir.h>
 #include <qmessagebox.h>
+#include <qdockwidget.h>
+#include <qmenu.h>
 #include "snmpb.h"
 #include "mibmodule.h"
 #include "agent.h"
@@ -32,6 +34,7 @@
 #include "logsnmpb.h"
 #include "mibeditor.h"
 #include "discovery.h"
+#include "devicepane.h"
 
 #include "agentprofile.h"
 #include "usmprofile.h"
@@ -51,6 +54,7 @@
 #define AGENTS_CONFIG_FILE       "agents.conf"
 #define LOG_CONFIG_FILE          "log.conf"
 #define GRAPHS_CONFIG_FILE       "graphs.conf"
+#define DEVICE_TREE_CONFIG_FILE  "device-tree.conf"
 
 #if SNMPB_ENABLE_QWT
 #define SNMPB_QWT_ABOUT_LINE \
@@ -133,6 +137,46 @@ void Snmpb::BindToGUI(QMainWindow* mw)
 #endif
     editor = new MibEditor(this);
     discovery = new Discovery(this);
+
+    devicesDock = new QDockWidget(tr("Devices"), mw);
+    devicesDock->setObjectName("DevicesDock");
+    devicesDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    devicePane = new DevicePane(GetDeviceTreeConfigFile(),
+                                apm->GetAgentProfileRecords(), devicesDock);
+    devicesDock->setWidget(devicePane);
+    devicesDock->setMinimumWidth(190);
+    mw->addDockWidget(Qt::LeftDockWidgetArea, devicesDock);
+    QMenu *viewMenu = w.MenuBar->addMenu(tr("&View"));
+    viewMenu->addAction(devicesDock->toggleViewAction());
+
+    connect(devicePane, &DevicePane::profileSelected,
+            agent, &Agent::SelectProfileById);
+    connect(devicePane, &DevicePane::editProfileRequested,
+            apm, &AgentProfileManager::EditProfile);
+    connect(devicePane, &DevicePane::duplicateProfileRequested,
+            apm, [this](const QString &name) { apm->DuplicateProfile(name); });
+    connect(devicePane, &DevicePane::organizationPersisted,
+            apm, &AgentProfileManager::PersistProfiles);
+    connect(apm, &AgentProfileManager::AgentProfileListChanged,
+            devicePane, [this]() {
+                devicePane->setProfiles(apm->GetAgentProfileRecords());
+            });
+    connect(apm, &AgentProfileManager::AgentProfileRenamed,
+            devicePane, [this](const QString &profileId, const QString &,
+                               const QString &newName) {
+                devicePane->renameProfile(profileId, newName);
+            });
+    connect(apm, &AgentProfileManager::AgentProfileDuplicated,
+            devicePane, &DevicePane::placeDuplicate);
+
+    QSettings windowSettings;
+    if (windowSettings.contains("mainwindow/state"))
+        mw->restoreState(windowSettings.value("mainwindow/state").toByteArray());
+    connect(QApplication::instance(), &QCoreApplication::aboutToQuit,
+            mw, [mw]() {
+                QSettings settings;
+                settings.setValue("mainwindow/state", mw->saveState());
+            });
 
     // Connect some signals
     connect( w.TabW, SIGNAL( currentChanged(int) ),
@@ -394,5 +438,12 @@ SNMPB_QT_ABOUT_LINE)
         .arg(QWT_VERSION_STR)
 #endif
         .arg(QT_VERSION_STR));
+}
+
+QString Snmpb::GetDeviceTreeConfigFile(void)
+{
+    QSettings settings;
+    QDir cfgdir = QFileInfo(settings.fileName()).dir();
+    return cfgdir.filePath(DEVICE_TREE_CONFIG_FILE);
 }
 

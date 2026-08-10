@@ -36,6 +36,7 @@ int main(int argc, char **argv)
         check(!defaults.showAgentName && defaults.automaticLoading == 2,
               "trap display and automatic loading defaults preserved");
         check(defaults.selectedProfile == "localhost" &&
+              defaults.selectedProfileId.isEmpty() &&
               defaults.selectedProtocol == 0, "agent selection defaults preserved");
         check(defaults.mibPaths.isEmpty() && defaults.mibPreloads.isEmpty(),
               "MIB arrays are empty before application default initialization");
@@ -51,6 +52,7 @@ int main(int argc, char **argv)
     expected.showAgentName = true;
     expected.automaticLoading = 3;
     expected.selectedProfile = "router-lab";
+    expected.selectedProfileId = "11111111-2222-4333-8444-555555555555";
     expected.selectedProtocol = 2;
     expected.mibPaths = {"C:/MIBs/vendor", "D:/MIBs/ietf"};
     expected.mibPreloads = {"SNMPv2-MIB", "IF-MIB"};
@@ -91,6 +93,8 @@ int main(int argc, char **argv)
               "automatic MIB loading mode round-trips");
         check(actual.selectedProfile == expected.selectedProfile,
               "selected Agent Profile round-trips");
+        check(actual.selectedProfileId == expected.selectedProfileId,
+              "selected Agent Profile ID round-trips");
         check(actual.selectedProtocol == expected.selectedProtocol,
               "selected SNMP protocol round-trips");
         check(actual.expandTrapBinding == expected.expandTrapBinding &&
@@ -130,6 +134,7 @@ int main(int argc, char **argv)
               !loaded.enableIpv4 && loaded.enableIpv6,
               "existing network section is compatible");
         check(loaded.selectedProfile == "legacy-router" &&
+              loaded.selectedProfileId.isEmpty() &&
               loaded.selectedProtocol == 1, "existing selection is compatible");
         check(loaded.mibPaths == QStringList{"C:/legacy/mibs"} &&
               loaded.mibPreloads == QStringList{"IF-MIB"},

@@ -8,9 +8,14 @@ set(SNMPB_APP_SOURCES
     agent.cpp
     agentrequestselection.cpp
     agentprofile.cpp
+    agentprofileoperations.cpp
     agentprofilerepository.cpp
     comboboxes.cpp
     discovery.cpp
+    devicepane.cpp
+    devicetree.cpp
+    devicetreemodel.cpp
+    devicetreerepository.cpp
     logsnmpb.cpp
     markerwidget.cpp
     mibeditor.cpp
@@ -37,9 +42,14 @@ set(SNMPB_APP_HEADERS
     agent.h
     agentrequestselection.h
     agentprofile.h
+    agentprofileoperations.h
     agentprofilerepository.h
     comboboxes.h
     discovery.h
+    devicepane.h
+    devicetree.h
+    devicetreemodel.h
+    devicetreerepository.h
     logsnmpb.h
     markerwidget.h
     mibeditor.h
@@ -176,6 +186,89 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_agentprofile_operations_test
+        agentprofileoperations.cpp
+        agentprofileoperations.h
+        agentprofilerepository.cpp
+        agentprofilerepository.h
+        agentprofileoperations_test.cpp
+    )
+    target_link_libraries(snmpb_agentprofile_operations_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.agentprofile-operations COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_agentprofile_operations_test>)
+    else()
+        add_test(NAME snmpb.agentprofile-operations COMMAND
+            $<TARGET_FILE:snmpb_agentprofile_operations_test>)
+    endif()
+
+    add_executable(snmpb_device_tree_repository_test
+        agentprofilerepository.cpp
+        agentprofilerepository.h
+        devicetree.cpp
+        devicetree.h
+        devicetreerepository.cpp
+        devicetreerepository.h
+        devicetreerepository_test.cpp
+    )
+    target_link_libraries(snmpb_device_tree_repository_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.device-tree-repository COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_device_tree_repository_test>)
+    else()
+        add_test(NAME snmpb.device-tree-repository COMMAND
+            $<TARGET_FILE:snmpb_device_tree_repository_test>)
+    endif()
+
+    add_executable(snmpb_device_tree_model_test
+        agentprofilerepository.cpp
+        agentprofilerepository.h
+        devicetree.cpp
+        devicetree.h
+        devicetreemodel.cpp
+        devicetreemodel.h
+        devicetreerepository.cpp
+        devicetreerepository.h
+        devicetreemodel_test.cpp
+    )
+    set_target_properties(snmpb_device_tree_model_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_device_tree_model_test PRIVATE Qt6::Core Qt6::Widgets)
+    if(WIN32)
+        add_test(NAME snmpb.device-tree-model COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_device_tree_model_test>)
+    else()
+        add_test(NAME snmpb.device-tree-model
+            COMMAND $<TARGET_FILE:snmpb_device_tree_model_test>)
+    endif()
+
+    add_executable(snmpb_device_pane_test
+        agentprofilerepository.cpp
+        agentprofilerepository.h
+        devicepane.cpp
+        devicepane.h
+        devicetree.cpp
+        devicetree.h
+        devicetreemodel.cpp
+        devicetreemodel.h
+        devicetreerepository.cpp
+        devicetreerepository.h
+        devicepane_test.cpp
+    )
+    set_target_properties(snmpb_device_pane_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_device_pane_test PRIVATE Qt6::Core Qt6::Widgets)
+    if(WIN32)
+        add_test(NAME snmpb.device-pane COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen"
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_device_pane_test>)
+    else()
+        add_test(NAME snmpb.device-pane COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" $<TARGET_FILE:snmpb_device_pane_test>)
+    endif()
+
     add_executable(snmpb_table_traversal_test
         tabletraversal.cpp
         tabletraversal.h

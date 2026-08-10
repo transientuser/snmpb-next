@@ -5,22 +5,14 @@ bool AgentRequestSelection::requestConfig(SnmpRequestConfig *config) const
     return SnmpRequestConfig::FromProfile(profile, selectedProtocol, config);
 }
 
-AgentSelectionError AgentSelectionResolver::Resolve(
-    const QList<AgentProfileRecord> &profiles, const QString &profileName,
+namespace
+{
+AgentSelectionError ResolveRecord(const AgentProfileRecord *profile,
     int selectedProtocol, AgentRequestSelection *selection)
 {
     if (selectedProtocol < 0 || selectedProtocol > 2)
         return AgentSelectionError::InvalidProtocol;
 
-    const AgentProfileRecord *profile = nullptr;
-    for (const AgentProfileRecord &candidate : profiles)
-    {
-        if (candidate.name == profileName)
-        {
-            profile = &candidate;
-            break;
-        }
-    }
     if (!profile)
         return AgentSelectionError::ProfileNotFound;
 
@@ -34,4 +26,39 @@ AgentSelectionError AgentSelectionResolver::Resolve(
     selection->profile = *profile;
     selection->selectedProtocol = selectedProtocol;
     return AgentSelectionError::None;
+}
+}
+
+AgentSelectionError AgentSelectionResolver::ResolveById(
+    const QList<AgentProfileRecord> &profiles, const QString &profileId,
+    int selectedProtocol, AgentRequestSelection *selection)
+{
+    for (const AgentProfileRecord &candidate : profiles)
+        if (candidate.profileId == profileId)
+            return ResolveRecord(&candidate, selectedProtocol, selection);
+    return ResolveRecord(nullptr, selectedProtocol, selection);
+}
+
+QString AgentSelectionResolver::UniqueProfileIdForName(
+    const QList<AgentProfileRecord> &profiles, const QString &profileName)
+{
+    QString result;
+    for (const AgentProfileRecord &candidate : profiles)
+        if (candidate.name == profileName)
+        {
+            if (!result.isEmpty())
+                return {};
+            result = candidate.profileId;
+        }
+    return result;
+}
+
+AgentSelectionError AgentSelectionResolver::Resolve(
+    const QList<AgentProfileRecord> &profiles, const QString &profileName,
+    int selectedProtocol, AgentRequestSelection *selection)
+{
+    for (const AgentProfileRecord &candidate : profiles)
+        if (candidate.name == profileName)
+            return ResolveRecord(&candidate, selectedProtocol, selection);
+    return ResolveRecord(nullptr, selectedProtocol, selection);
 }

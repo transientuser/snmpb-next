@@ -6,6 +6,7 @@
 
 struct AgentProfileRecord
 {
+    QString profileId;
     QString name;
     bool v1;
     bool v2;
@@ -36,6 +37,7 @@ public:
     static AgentProfileRecord DefaultProfile(const QString& name,
                                              const QString& address);
     static QList<AgentProfileRecord> DefaultProfiles();
+    static QString CreateProfileId();
 
 private:
     QString filename;

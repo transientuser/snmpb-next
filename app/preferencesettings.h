@@ -17,6 +17,7 @@ struct PreferencesSettings
     bool showAgentName = false;
     int automaticLoading = 2;
     QString selectedProfile = QStringLiteral("localhost");
+    QString selectedProfileId;
     int selectedProtocol = 0;
     QStringList mibPaths;
     QStringList mibPreloads;

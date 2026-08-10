@@ -2,6 +2,8 @@
 
 #include <qfile.h>
 #include <qsettings.h>
+#include <qset.h>
+#include <quuid.h>
 
 AgentProfileRepository::AgentProfileRepository(const QString& filename)
     : filename(filename)
@@ -12,11 +14,17 @@ QList<AgentProfileRecord> AgentProfileRepository::Load() const
 {
     QSettings settings(filename, QSettings::IniFormat);
     QList<AgentProfileRecord> profiles;
+    QSet<QString> profileIds;
     int size = settings.beginReadArray("agents");
     for (int i = 0; i < size; i++)
     {
         settings.setArrayIndex(i);
         AgentProfileRecord profile;
+        profile.profileId = settings.value("id").toString();
+        const QUuid parsedId(profile.profileId);
+        if (parsedId.isNull() || profileIds.contains(profile.profileId))
+            profile.profileId = CreateProfileId();
+        profileIds.insert(profile.profileId);
         profile.name = settings.value("name").toString();
         profile.v1 = settings.value("v1").toBool();
         profile.v2 = settings.value("v2").toBool();
@@ -48,6 +56,8 @@ void AgentProfileRepository::Save(const QList<AgentProfileRecord>& profiles) con
     {
         const AgentProfileRecord& profile = profiles[i];
         settings.setArrayIndex(i);
+        settings.setValue("id", profile.profileId.isEmpty() ?
+                          CreateProfileId() : profile.profileId);
         settings.setValue("name", profile.name);
         settings.setValue("v1", profile.v1);
         settings.setValue("v2", profile.v2);
@@ -80,6 +90,7 @@ AgentProfileRecord AgentProfileRepository::DefaultProfile(
     const QString& name, const QString& address)
 {
     AgentProfileRecord profile;
+    profile.profileId = CreateProfileId();
     profile.name = name;
     profile.v1 = true;
     profile.v2 = false;
@@ -97,6 +108,11 @@ AgentProfileRecord AgentProfileRepository::DefaultProfile(
     profile.contextname = "";
     profile.contextengineid = "";
     return profile;
+}
+
+QString AgentProfileRepository::CreateProfileId()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }
 
 QList<AgentProfileRecord> AgentProfileRepository::DefaultProfiles()

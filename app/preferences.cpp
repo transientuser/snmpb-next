@@ -135,6 +135,7 @@ void Preferences::Init(void)
     else if (automaticloading == 3) p->MibLoadingDisable->setChecked(true);
 
     curprofile = persisted.selectedProfile;
+    curprofileid = persisted.selectedProfileId;
     curproto = persisted.selectedProtocol;
 
     // reset to default MIB paths if needed
@@ -191,6 +192,7 @@ void Preferences::Save()
     values.showAgentName = showagentname;
     values.automaticLoading = automaticloading;
     values.selectedProfile = curprofile;
+    values.selectedProfileId = curprofileid;
     values.selectedProtocol = curproto;
 
     QList<QListWidgetItem *> l = p->ModulePaths->findItems("*", Qt::MatchWildcard);
@@ -451,11 +453,27 @@ bool Preferences::ShouldListenStdTrapPort6()
 
 void Preferences::SaveCurrentProfile(QString &name, int proto)
 {
+    SaveCurrentProfile(name, QString(), proto);
+}
+
+void Preferences::SaveCurrentProfile(const QString &name,
+                                     const QString &profileId, int proto)
+{
     curprofile = name;
+    curprofileid = profileId;
     curproto = proto;
     QSettings settings;
     settings.setValue("ui/selectedprofile", curprofile);
+    if (!curprofileid.isEmpty())
+        settings.setValue("ui/selectedprofileid", curprofileid);
+    else
+        settings.remove("ui/selectedprofileid");
     settings.setValue("ui/selectedproto", curproto);
+}
+
+QString Preferences::GetCurrentProfileId(void) const
+{
+    return curprofileid;
 }
 
 int Preferences::GetCurrentProfile(QString &name)

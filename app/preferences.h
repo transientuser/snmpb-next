@@ -45,7 +45,10 @@ public:
     bool GetShowAgentName(void);
     int GetAutomaticLoading(void);
     void SaveCurrentProfile(QString &name, int proto);
+    void SaveCurrentProfile(const QString &name, const QString &profileId,
+                            int proto);
     int GetCurrentProfile(QString &name);
+    QString GetCurrentProfileId(void) const;
 
 public slots:
     void SetEnableIPv4(bool checked);
@@ -89,6 +92,7 @@ private:
     bool showagentname;
     int automaticloading;
     QString curprofile;
+    QString curprofileid;
     int curproto;
 };
 

@@ -112,15 +112,24 @@ public:
     QList<AgentProfileRecord> GetAgentProfileRecords(void) const;
     void SetSelectedAgent(QString a);
     AgentProfile *GetAgentProfile(QString a);
+    AgentProfile *GetAgentProfileById(const QString &profileId);
+    void SetSelectedAgentById(const QString &profileId);
+    void EditProfile(const QString &profileId);
+    QString DuplicateProfile(const QString &profileId);
+    void PersistProfiles(void);
     void Add(QString name, QString address, QString port,
              bool isv1, bool isv2c, bool isv3, QString clonefrom);
 
 signals:
     void AgentProfileListChanged(void);
+    void AgentProfileRenamed(const QString &profileId, const QString &oldName,
+                             const QString &newName);
+    void AgentProfileDuplicated(const QString &sourceId, const QString &newId);
 
 protected:
     QAction *addAct;
     QAction *deleteAct;
+    QAction *duplicateAct;
 
 protected slots:
     void ProtocolV1Support(bool checked);
@@ -143,11 +152,13 @@ protected slots:
     void AgentProfileNameChange(QTreeWidgetItem * item, int column);
     void Add(void);
     void Delete(void);
+    void DuplicateCurrent(void);
     void ContextMenu ( const QPoint & );
 
 private:
     void ReadConfigFile(void);
     void WriteConfigFile(void);
+    void ReplaceRecords(const QList<AgentProfileRecord> &records);
 
 private:
     Snmpb *s;

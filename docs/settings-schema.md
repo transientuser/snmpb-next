@@ -14,6 +14,7 @@ this resolves beneath the configured user-scope INI path as
 | `ui/horizontalsplit` | bool | `false` | Query splitter orientation |
 | `ui/expandtrapbinding` | bool | `true` | Expanded trap varbind display |
 | `ui/selectedprofile` | string | `localhost` | Last selected Agent Profile |
+| `ui/selectedprofileid` | UUID string | empty | Stable ID of the last selected Agent Profile; preferred over the legacy name |
 | `ui/selectedproto` | int | `0` | Last selected SNMP protocol |
 | `misc/showagentname` | bool | `false` | Show Agent Profile name in trap display |
 | `misc/automaticloading` | int | `2` | MIB dependency loading: 1 load, 2 prompt, 3 disable |

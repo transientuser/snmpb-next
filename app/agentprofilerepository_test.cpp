@@ -20,6 +20,7 @@ bool Equal(const AgentProfileRecord& actual,
            const AgentProfileRecord& expected)
 {
     return actual.name == expected.name &&
+           actual.profileId == expected.profileId &&
            actual.v1 == expected.v1 &&
            actual.v2 == expected.v2 &&
            actual.v3 == expected.v3 &&
@@ -40,7 +41,7 @@ bool Equal(const AgentProfileRecord& actual,
 QStringList ExpectedKeys(int count)
 {
     static const QStringList fields = {
-        "address", "contextengineid", "contextname", "maxrepetitions",
+        "address", "contextengineid", "contextname", "id", "maxrepetitions",
         "name", "nonrepeaters", "port", "readcomm", "retries",
         "seclevel", "secname", "timeout", "v1", "v2", "v3",
         "writecomm"
@@ -68,6 +69,9 @@ int main(int argc, char **argv)
         defaultsRepository.LoadOrCreateDefaults();
     if (!Check(defaults.size() == 2, "Expected two default profiles") ||
         !Check(defaults[0].name == "localhost", "IPv4 default name changed") ||
+        !Check(!defaults[0].profileId.isEmpty() &&
+               defaults[0].profileId != defaults[1].profileId,
+               "Default profile IDs missing or duplicated") ||
         !Check(defaults[0].address == "127.0.0.1", "IPv4 default address changed") ||
         !Check(defaults[1].name == "localhostipv6", "IPv6 default name changed") ||
         !Check(defaults[1].address == "::1", "IPv6 default address changed") ||
@@ -144,6 +148,8 @@ int main(int argc, char **argv)
     AgentProfileRepository legacyRepository(legacyFile);
     QList<AgentProfileRecord> legacyProfiles = legacyRepository.Load();
     if (!Check(legacyProfiles.size() == 1, "Legacy profile was not loaded") ||
+        !Check(!legacyProfiles[0].profileId.isEmpty(),
+               "Legacy profile did not receive an ID") ||
         !Check(legacyProfiles[0].name == "legacy-router", "Legacy name changed") ||
         !Check(!legacyProfiles[0].v1 && legacyProfiles[0].v2 &&
                legacyProfiles[0].v3, "Legacy protocols changed") ||
@@ -162,12 +168,33 @@ int main(int argc, char **argv)
                "Legacy timing or bulk values changed"))
         return 1;
 
+    const QString migratedId = legacyProfiles[0].profileId;
+
     legacyRepository.Save(legacyProfiles);
     QSettings savedLegacy(legacyFile, QSettings::IniFormat);
     QStringList savedLegacyKeys = savedLegacy.allKeys();
     savedLegacyKeys.sort();
     if (!Check(savedLegacyKeys == ExpectedKeys(1),
                "Legacy save changed the agents.conf schema"))
+        return 1;
+    if (!Check(legacyRepository.Load()[0].profileId == migratedId,
+               "Migrated profile ID was not stable"))
+        return 1;
+
+    const QString duplicateLegacyFile = temporaryDir.filePath("duplicates.conf");
+    QFile duplicateLegacy(duplicateLegacyFile);
+    if (!duplicateLegacy.open(QIODevice::WriteOnly | QIODevice::Text))
+        return 1;
+    duplicateLegacy.write(
+        "[agents]\n"
+        "1\\name=same\n1\\address=192.0.2.1\n"
+        "2\\name=same\n2\\address=192.0.2.2\nsize=2\n");
+    duplicateLegacy.close();
+    AgentProfileRepository duplicateRepository(duplicateLegacyFile);
+    const QList<AgentProfileRecord> duplicates = duplicateRepository.Load();
+    if (!Check(duplicates.size() == 2, "Duplicate-name profiles were merged") ||
+        !Check(duplicates[0].profileId != duplicates[1].profileId,
+               "Duplicate-name profiles received the same ID"))
         return 1;
 
     return 0;

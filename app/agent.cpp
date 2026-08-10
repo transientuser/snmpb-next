@@ -238,10 +238,11 @@ void Agent::Init(void)
 
     // Select the default profile from preferences
     QString cp;
+    QString cpid = s->PreferencesObj()->GetCurrentProfileId();
     int prefproto = s->PreferencesObj()->GetCurrentProfile(cp);
     // Fill-in the list of agent profiles from profiles manager
     AgentProfileListChange();
-    SelectAgentProfile(&cp, prefproto);
+    SelectAgentProfile(&cp, prefproto, &cpid);
     s->MainUI()->MIBTree->SetCurrentAgentIsV1(
         s->MainUI()->AgentProtoV1->isChecked()?true:false);
 
@@ -323,7 +324,8 @@ void Agent::Init(void)
 
 void Agent::ShowAgentSettings(void)
 {
-     s->APManagerObj()->SetSelectedAgent(s->MainUI()->AgentProfile->currentText()); 
+     s->APManagerObj()->SetSelectedAgentById(
+         s->MainUI()->AgentProfile->currentData().toString());
      s->APManagerObj()->Execute();
 }
 
@@ -334,13 +336,16 @@ void Agent::AgentProfileListChange(void)
     else if (s->MainUI()->AgentProtoV2->isChecked()) prefproto = 1;
     else if (s->MainUI()->AgentProtoV3->isChecked()) prefproto = 2;
 
-    QString cap = s->MainUI()->AgentProfile->currentText();
+    QString cap = s->MainUI()->AgentProfile->currentData().toString();
     s->MainUI()->AgentProfile->clear();
-    s->MainUI()->AgentProfile->addItems(s->APManagerObj()->GetAgentsList());
+    const QList<AgentProfileRecord> profiles =
+        s->APManagerObj()->GetAgentProfileRecords();
+    for (const AgentProfileRecord &profile : profiles)
+        s->MainUI()->AgentProfile->addItem(profile.name, profile.profileId);
     if (cap.isEmpty() == false)
     {
-        int idx = s->MainUI()->AgentProfile->findText(cap);
-        s->MainUI()->AgentProfile->setCurrentIndex(idx>0?idx:0);
+        int idx = s->MainUI()->AgentProfile->findData(cap);
+        s->MainUI()->AgentProfile->setCurrentIndex(idx>=0?idx:0);
         if (idx < 0) prefproto = -1;
     }
     else
@@ -361,11 +366,22 @@ void Agent::SelectAgentProto(void)
     SelectAgentProfile(NULL, prefproto);
 }
 
-void Agent::SelectAgentProfile(QString *prefprofile, int prefproto)
+void Agent::SelectAgentProfile(QString *prefprofile, int prefproto,
+                               QString *prefprofileid)
 {
-    AgentProfile *ap = s->APManagerObj()->GetAgentProfile
-                        (prefprofile?prefprofile->toLatin1():
-                         s->MainUI()->AgentProfile->currentText());
+    AgentProfile *ap = NULL;
+    if (prefprofileid && !prefprofileid->isEmpty())
+        ap = s->APManagerObj()->GetAgentProfileById(*prefprofileid);
+    if (!ap && prefprofile)
+    {
+        const QString migratedId = AgentSelectionResolver::UniqueProfileIdForName(
+            s->APManagerObj()->GetAgentProfileRecords(), *prefprofile);
+        if (!migratedId.isEmpty())
+            ap = s->APManagerObj()->GetAgentProfileById(migratedId);
+    }
+    if (!ap)
+        ap = s->APManagerObj()->GetAgentProfileById(
+            s->MainUI()->AgentProfile->currentData().toString());
     if (ap)
     {
         bool v1,v2,v3;
@@ -412,19 +428,20 @@ void Agent::SelectAgentProfile(QString *prefprofile, int prefproto)
             selectedproto = 2;
         }
 
-        if (prefprofile)
+        if (prefprofile || (prefprofileid && !prefprofileid->isEmpty()))
         {
-            // The agent profile is loaded from the preference file, 
-            // update the combobox
-            int index = s->MainUI()->AgentProfile->findText(prefprofile->toLatin1());
-            s->MainUI()->AgentProfile->setCurrentIndex(index);
-            s->PreferencesObj()->SaveCurrentProfile(*prefprofile, prefproto);
+            int index = s->MainUI()->AgentProfile->findData(
+                ap->GetRecord().profileId);
+            if (index >= 0)
+                s->MainUI()->AgentProfile->setCurrentIndex(index);
+            s->PreferencesObj()->SaveCurrentProfile(
+                ap->GetName(), ap->GetRecord().profileId, selectedproto);
         }
         else
         {
             // The agent is selected by the user, save it in the preference file
-            QString selectedprofile = s->MainUI()->AgentProfile->currentText();
-            s->PreferencesObj()->SaveCurrentProfile(selectedprofile, selectedproto);
+            s->PreferencesObj()->SaveCurrentProfile(
+                ap->GetName(), ap->GetRecord().profileId, selectedproto);
         }
     }
     else
@@ -444,9 +461,24 @@ AgentSelectionError Agent::ResolveCurrentSelection(
     else if (s->MainUI()->AgentProtoV2->isChecked())
         selectedProtocol = 1;
 
-    return AgentSelectionResolver::Resolve(
+    return AgentSelectionResolver::ResolveById(
         s->APManagerObj()->GetAgentProfileRecords(),
-        s->MainUI()->AgentProfile->currentText(), selectedProtocol, selection);
+        s->MainUI()->AgentProfile->currentData().toString(),
+        selectedProtocol, selection);
+}
+
+void Agent::SelectProfileByName(const QString &profileName)
+{
+    const int index = s->MainUI()->AgentProfile->findText(profileName);
+    if (index >= 0)
+        s->MainUI()->AgentProfile->setCurrentIndex(index);
+}
+
+void Agent::SelectProfileById(const QString &profileId)
+{
+    const int index = s->MainUI()->AgentProfile->findData(profileId);
+    if (index >= 0)
+        s->MainUI()->AgentProfile->setCurrentIndex(index);
 }
 
 int Agent::SetupFromCurrentSelection(const QString& oid, SnmpTarget **t,

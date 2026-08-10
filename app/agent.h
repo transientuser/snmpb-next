@@ -81,6 +81,8 @@ private:
     void VarbindsBuildList(void);
 
 public slots:
+    void SelectProfileByName(const QString &profileName);
+    void SelectProfileById(const QString &profileId);
     void WalkFrom(const QString& oid);
     void Get(const QString& oid, bool usevblist = false);
     void GetNext(const QString& oid, bool usevblist = false);
@@ -100,7 +102,8 @@ public slots:
 protected slots:
     void TimerExpired(void);    
     void ShowAgentSettings(void);
-    void SelectAgentProfile(QString *prefprofile = NULL, int prefproto = -1);
+    void SelectAgentProfile(QString *prefprofile = NULL, int prefproto = -1,
+                            QString *prefprofileid = NULL);
     void SelectAgentProto(void);
     void AgentProfileListChange(void);
     void VarbindsNew(void);

@@ -36,6 +36,8 @@ class Discovery;
 class AgentProfileManager;
 class USMProfileManager;
 class Preferences;
+class DevicePane;
+class QDockWidget;
 
 class Snmpb: public QObject
 {
@@ -61,6 +63,7 @@ public:
     QString GetAgentsConfigFile(void);
     QString GetLogConfigFile(void);
     QString GetGraphsConfigFile(void);
+    QString GetDeviceTreeConfigFile(void);
 
 public slots:
     void TabSelected(void);
@@ -88,6 +91,8 @@ private:
     MibEditor *editor;
     LogSnmpb *logsnmpb;
     Discovery *discovery;
+    DevicePane *devicePane;
+    QDockWidget *devicesDock;
 
     QString start_msg;
     bool start_issuccess;

@@ -39,6 +39,7 @@ PreferencesSettings PreferencesSettings::load(QSettings &settings)
     result.showAgentName = settings.value("misc/showagentname", false).toBool();
     result.automaticLoading = settings.value("misc/automaticloading", 2).toInt();
     result.selectedProfile = settings.value("ui/selectedprofile", "localhost").toString();
+    result.selectedProfileId = settings.value("ui/selectedprofileid").toString();
     result.selectedProtocol = settings.value("ui/selectedproto", 0).toInt();
     result.mibPaths = readArray(settings, "mibpaths", "dir");
     result.mibPreloads = readArray(settings, "mibpreloads", "mib");
@@ -58,6 +59,10 @@ void PreferencesSettings::save(QSettings &settings) const
     settings.setValue("misc/showagentname", showAgentName);
     settings.setValue("misc/automaticloading", automaticLoading);
     settings.setValue("ui/selectedprofile", selectedProfile);
+    if (!selectedProfileId.isEmpty())
+        settings.setValue("ui/selectedprofileid", selectedProfileId);
+    else
+        settings.remove("ui/selectedprofileid");
     settings.setValue("ui/selectedproto", selectedProtocol);
     writeArray(settings, "mibpaths", "dir", mibPaths);
     writeArray(settings, "mibpreloads", "mib", mibPreloads);

@@ -139,19 +139,24 @@ Discovery::Discovery(Snmpb *snmpb)
 
 void Discovery::ShowAgentSettings(void)
 {
-     s->APManagerObj()->SetSelectedAgent(s->MainUI()->DiscoveryAgentProfile->currentText()); 
+     s->APManagerObj()->SetSelectedAgentById(
+         s->MainUI()->DiscoveryAgentProfile->currentData().toString());
      s->APManagerObj()->Execute();
 }
 
 void Discovery::AgentProfileListChange(void)
 {
-    QString cap = s->MainUI()->DiscoveryAgentProfile->currentText();
+    QString cap = s->MainUI()->DiscoveryAgentProfile->currentData().toString();
     s->MainUI()->DiscoveryAgentProfile->clear();
-    s->MainUI()->DiscoveryAgentProfile->addItems(s->APManagerObj()->GetAgentsList());
+    const QList<AgentProfileRecord> profiles =
+        s->APManagerObj()->GetAgentProfileRecords();
+    for (const AgentProfileRecord &profile : profiles)
+        s->MainUI()->DiscoveryAgentProfile->addItem(profile.name,
+                                                    profile.profileId);
     if (cap.isEmpty() == false)
     {
-        int idx = s->MainUI()->DiscoveryAgentProfile->findText(cap);
-        s->MainUI()->DiscoveryAgentProfile->setCurrentIndex(idx>0?idx:0);
+        int idx = s->MainUI()->DiscoveryAgentProfile->findData(cap);
+        s->MainUI()->DiscoveryAgentProfile->setCurrentIndex(idx>=0?idx:0);
     }
 }
 
@@ -440,8 +445,8 @@ new_loop:
 void DiscoveryThread::run(void)
 {
     snmp_version cur_version  = version1;
-    AgentProfile *ap = s->APManagerObj()->GetAgentProfile
-                        (s->MainUI()->DiscoveryAgentProfile->currentText());
+    AgentProfile *ap = s->APManagerObj()->GetAgentProfileById(
+        s->MainUI()->DiscoveryAgentProfile->currentData().toString());
 
     if (!ap)
         return;
@@ -610,7 +615,7 @@ void Discovery::AddAgentToProfiles(void)
                                       DISC_SNMP_V2C)?true:false, 
                                strstr(item_list[i]->text(2).toLatin1().data(), 
                                       DISC_SNMP_V3)?true:false, 
-                               s->MainUI()->DiscoveryAgentProfile->currentText());
+                               s->MainUI()->DiscoveryAgentProfile->currentData().toString());
     }
 }
 

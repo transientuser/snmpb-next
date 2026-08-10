@@ -22,6 +22,7 @@
 #include <QTranslator>
 #include <QLibraryInfo>
 #include <QDialog>
+#include <QDockWidget>
 #include <QDir>
 #include <QFile>
 #include <QSettings>
@@ -133,6 +134,9 @@ int main( int argc, char ** argv )
                       QFileInfo(smoke_config_dir).absoluteFilePath()),
                   "QSettings uses the isolated directory");
             check(mw.isVisible(), "main window is visible");
+            QDockWidget *devicesDock = mw.findChild<QDockWidget *>("DevicesDock");
+            check(devicesDock && devicesDock->widget(),
+                  "Devices dock created and integrated");
             check(snmpb.MainUI()->LoadedModules->topLevelItemCount() > 0,
                   "bundled MIB modules loaded");
             check(snmpb.MainUI()->MIBTree->topLevelItemCount() > 0,

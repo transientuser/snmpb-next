@@ -26,6 +26,11 @@ struct AgentRequestSelection
 class AgentSelectionResolver
 {
 public:
+    static QString UniqueProfileIdForName(
+        const QList<AgentProfileRecord> &profiles, const QString &profileName);
+    static AgentSelectionError ResolveById(
+        const QList<AgentProfileRecord> &profiles, const QString &profileId,
+        int selectedProtocol, AgentRequestSelection *selection);
     static AgentSelectionError Resolve(const QList<AgentProfileRecord> &profiles,
                                        const QString &profileName,
                                        int selectedProtocol,

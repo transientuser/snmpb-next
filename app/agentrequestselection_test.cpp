@@ -20,6 +20,7 @@ AgentProfileRecord profile(const QString &name, const QString &address,
 {
     AgentProfileRecord record{};
     record.name = name;
+    record.profileId = name + "-id";
     record.address = address;
     record.port = "161";
     record.v1 = v1;
@@ -98,6 +99,26 @@ int main(int argc, char **argv)
                                           &selection) ==
               AgentSelectionError::InvalidProtocol,
           "invalid protocol identifiers are rejected");
+
+    AgentProfileRecord sameA = profile("same", "192.0.2.20", true, true, false);
+    AgentProfileRecord sameB = profile("same", "192.0.2.21", true, true, false);
+    sameA.profileId = "same-a";
+    sameB.profileId = "same-b";
+    check(AgentSelectionResolver::ResolveById({sameA, sameB}, sameA.profileId,
+                                              1, &selection) ==
+              AgentSelectionError::None &&
+          selection.profile.address == "192.0.2.20",
+          "first same-name profile resolves independently by ID");
+    check(AgentSelectionResolver::ResolveById({sameA, sameB}, sameB.profileId,
+                                              1, &selection) ==
+              AgentSelectionError::None &&
+          selection.profile.address == "192.0.2.21",
+          "second same-name profile resolves independently by ID");
+    check(AgentSelectionResolver::UniqueProfileIdForName(profiles, "v2-only") ==
+              profiles[1].profileId,
+          "unique legacy selected name migrates to stable ID");
+    check(AgentSelectionResolver::UniqueProfileIdForName({sameA, sameB}, "same").isEmpty(),
+          "ambiguous legacy selected name is not silently migrated");
 
     if (failures == 0)
         QTextStream(stdout) << "All Agent selection tests passed." << Qt::endl;
