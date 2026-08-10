@@ -41,6 +41,9 @@ set(SNMPB_APP_SOURCES
     snmprequestconfig.cpp
     snmprequestconfigadapter.cpp
     snmprequestcontext.cpp
+    snmptransport.cpp
+    snmptableoperation.cpp
+    snmptableasyncrunner.cpp
     tablenodevalidation.cpp
     tabletraversal.cpp
     snmpb.cpp
@@ -90,6 +93,9 @@ set(SNMPB_APP_HEADERS
     snmprequestconfig.h
     snmprequestconfigadapter.h
     snmprequestcontext.h
+    snmptransport.h
+    snmptableoperation.h
+    snmptableasyncrunner.h
     tablenodevalidation.h
     tabletraversal.h
     snmpb.h
@@ -216,6 +222,27 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_snmp_operations_test
+        snmprequestconfig.cpp snmprequestconfig.h
+        snmprequestconfigadapter.cpp snmprequestconfigadapter.h
+        snmprequestcontext.cpp snmprequestcontext.h
+        snmptransport.cpp snmptransport.h
+        snmptableoperation.cpp snmptableoperation.h
+        snmptableasyncrunner.cpp snmptableasyncrunner.h
+        tabletraversal.cpp tabletraversal.h
+        snmpoperations_test.cpp)
+    set_target_properties(snmpb_snmp_operations_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_snmp_operations_test PRIVATE
+        Qt6::Core snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
+    if(WIN32)
+        add_test(NAME snmpb.snmp-operations COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_snmp_operations_test>)
+    else()
+        add_test(NAME snmpb.snmp-operations COMMAND
+            $<TARGET_FILE:snmpb_snmp_operations_test>)
+    endif()
+
     add_executable(snmpb_community_credential_test
         communitybindingrepository.cpp communitybindingrepository.h
         communitycredentialrepository.cpp communitycredentialrepository.h

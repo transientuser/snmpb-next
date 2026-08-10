@@ -87,6 +87,9 @@ Agent::Agent(Snmpb *snmpb, bool offline_mode)
     s = snmpb;
     offline = offline_mode;
     snmp = NULL;
+    tableRunner = new SnmpTableAsyncRunner(this);
+    connect(tableRunner, &SnmpTableAsyncRunner::completed,
+            this, &Agent::PresentTableResult);
 
     int status, status2;
 
@@ -473,6 +476,12 @@ AgentSelectionError Agent::ResolveCurrentSelection(
         selection->hasResolvedCredentials = true;
     }
     return error;
+}
+
+Agent::~Agent()
+{
+    tableRunner->cancel();
+    tableRunner->wait();
 }
 
 void Agent::SelectProfileByName(const QString &profileName)
@@ -1514,34 +1523,31 @@ void Agent::SetFrom(const QString& oid)
 void Agent::Stop(void)
 {
     stop = true;
+    if (tableRunner)
+        tableRunner->cancel();
 }
 
-/* TODO: make it async */
 void Agent::TableViewFrom(const QString& oid)
 {
+    if (tableRunner->isRunning())
+        return;
     AgentRequestSelection selection;
     if (ResolveCurrentSelection(&selection) != AgentSelectionError::None)
         return;
 
-    // Initialize agent & pdu objects
-    SnmpTarget *target;
-    Pdu *pdu;
-    Vb tvb;
-    Oid toid;
-    int rows = 0;
-    
-    if (Setup(selection, oid, &target, &pdu) < 0)
+    SnmpTarget *validationTarget;
+    Pdu *validationPdu;
+    SnmpRequestConfig config;
+    if (Setup(selection, oid, &validationTarget, &validationPdu,
+              false, &config) < 0)
         return;
+    delete validationTarget;
+    delete validationPdu;
     
     // Clear the Query window ...
     s->MainUI()->Query->clear();
     s->MainUI()->Query->append(tr("<font color=black>-----SNMP query started-----</font>"));
     
-    // Clear some global vars
-    requests = 0;
-    objects  = 0;
-    msg = "";
-
     s->MainUI()->Query->append(tr("Collecting table objects, please wait ...<br>"));
     
     /* Set the parent oid & parent node */
@@ -1555,8 +1561,6 @@ void Agent::TableViewFrom(const QString& oid)
     if (ResolveTableRowNode(pnode, firstChild, &rowNode) !=
         TableNodeValidation::Valid)
     {
-        delete target;
-        delete pdu;
         s->MainUI()->Query->append(tr("<font color=red>Abort, not a table or row entry</font>"));
         return;
     }
@@ -1566,118 +1570,71 @@ void Agent::TableViewFrom(const QString& oid)
     {
         if (!RenderSmiNodeOid(rowNode, &poid))
         {
-            delete target;
-            delete pdu;
             s->MainUI()->Query->append(tr("<font color=red>Abort, not a table or row entry</font>"));
             return;
         }
     }
-    pnode = rowNode;
-
-    /* Build the table header */
-    msg += tr("<table border=\"1\"><tr bgcolor=yellow><td>Instance</td>");
+    SnmpTablePlan plan;
+    plan.rowOid = poid;
     for (SmiNode *node = smiGetFirstChildNode(pnode); node != NULL;
          node = smiGetNextChildNode(node))
     {
         if (!HasValidColumnInfo(node))
             continue;
-        msg += QString("<td>%1</td>").arg(node->name);
-    }    
-    msg += QString("</tr>");
-    
-    /* Get next on the parent to get the first entry ... */
-    tvb.set_oid(poid);
-    pdu->set_vblist(&tvb, 1);
-    
-    Oid roid(poid);
-    int first = 1;
-    
-    // Now do a sync get_next
-    while (snmp->get_next(*pdu, *target) == SNMP_CLASS_SUCCESS)
-    {
-        if (!HasVarbindAt(pdu->get_vb_count(), 0))
-            break;
-        pdu->get_vb(tvb, 0);
-        toid = tvb.get_oid();
-
-        // look for var bind exception, applies to v2 only
-        if (tvb.get_syntax() == sNMP_SYNTAX_ENDOFMIBVIEW)
-            break;
-        
-        if (first) /* Get the column id we'll iterate on */
-        {
-            first = 0; /* reset the flag */
-            if (!BuildFirstColumnRoot(poid, toid, &roid))
-                break;
-        }
-        
-        /* Make sure we dont get out of table scope ... */
-        if (!IsOidInSubtree(toid, roid))
-            break;
-        
-        /* Get & print the instance part */
-        QString instance;
-        if (!ExtractOidSuffix(roid, toid, &instance))
-            break;
-        if (!instance.isEmpty())
-            msg += QString("<tr><td bgcolor=pink>%1</td>").arg(instance);
-        
-        /* Loop thru all columns of that instance and build the row */
-        for (SmiNode *node = smiGetFirstChildNode(pnode); node != NULL;
-             node = smiGetNextChildNode(node))
-        {
-            if (!HasValidColumnInfo(node))
-                continue;
-            Vb svb;
-            if (!RenderSmiNodeOid(node, &toid))
-            {
-                msg += tr("<td>not available</td>");
-                continue;
-            }
-            toid += instance.toLatin1().constData();
-            svb.set_oid(toid);    
-            pdu->set_vblist(&svb, 1);
-            
-            // Now do an sync get
-            int status = snmp->get(*pdu, *target);
-
-            if (status != SNMP_CLASS_SUCCESS ||
-                !HasVarbindAt(pdu->get_vb_count(), 0))
-            {
-                msg += tr("<td>not available</td>");
-                continue;
-            }
-            pdu->get_vb(svb, 0);
-
-            if ((pdu->get_error_status() == SNMP_ERROR_NO_SUCH_NAME) || // For v1
-                (svb.get_syntax() == sNMP_SYNTAX_NOSUCHOBJECT) ||       // For v2
-                (svb.get_syntax() == sNMP_SYNTAX_NOSUCHINSTANCE)) 
-            {
-                msg += tr("<td>not available</td>");
-            }
-            else
-                msg += QString("<td>%1</td>")
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-                                   .arg(Qt::escape(GetPrintableValue(node, &svb)));
-#else
-                                   .arg(QString(GetPrintableValue(node, &svb)).toHtmlEscaped());
-#endif
-
-        }
-        msg += QString("</tr>");
-        rows++;
-        
-        // Next get_next ...
-        pdu->set_vblist(&tvb, 1);   
+        Oid columnOid;
+        if (RenderSmiNodeOid(node, &columnOid))
+            plan.columns.append({QString::fromLatin1(node->name), columnOid});
     }
-    
-    msg += QString("</table>");
-    msg += tr("-----SNMP query finished-----<br>");
-    msg += QString("<font color=#009000>Total # of rows = %1<br>").arg(rows);
-    s->MainUI()->Query->append(msg);
-    
-    delete target;
-    delete pdu;
+    const SnmpRequestContext context(config, SnmpRequestOperation::Walk);
+    s->MainUI()->actionStop->setEnabled(true);
+    emit StartWalk(true);
+    if (!tableRunner->start(context, plan,
+                            std::make_unique<SnmpPlusTransport>(config)))
+    {
+        s->MainUI()->actionStop->setEnabled(false);
+        emit StartWalk(false);
+    }
+}
+
+void Agent::PresentTableResult(const SnmpTableResult &result)
+{
+    QString output = tr("<table border=\"1\"><tr bgcolor=yellow><td>Instance</td>");
+    for (const SnmpTableColumn &column : result.columns)
+        output += QString("<td>%1</td>").arg(column.name);
+    output += QString("</tr>");
+    for (const SnmpTableRow &row : result.rows)
+    {
+        output += QString("<tr><td bgcolor=pink>%1</td>").arg(row.instance);
+        for (int i = 0; i < row.cells.size(); ++i)
+        {
+            if (!row.cells[i].available)
+            {
+                output += tr("<td>not available</td>");
+                continue;
+            }
+            Vb vb = row.cells[i].varbind;
+            Oid oid = result.columns[i].oid;
+            SmiNode *node = GetNodeFromOid(oid);
+            output += QString("<td>%1</td>").arg(
+                QString(GetPrintableValue(node, &vb)).toHtmlEscaped());
+        }
+        output += QString("</tr>");
+    }
+    output += QString("</table>");
+    if (result.status == SnmpOperationStatus::Cancelled)
+        output += tr("<font color=red>Operation cancelled</font><br>");
+    else if (result.status == SnmpOperationStatus::Timeout)
+        output += tr("<font color=red>Timeout</font><br>");
+    else if (result.status == SnmpOperationStatus::SnmpError)
+        output += tr("<font color=red>SNMP error</font><br>");
+    else if (result.status == SnmpOperationStatus::TransportFailure)
+        output += tr("<font color=red>No response received</font><br>");
+    output += tr("-----SNMP query finished-----<br>");
+    output += QString("<font color=#009000>Total # of rows = %1<br>")
+                  .arg(result.rows.size());
+    s->MainUI()->Query->append(output);
+    s->MainUI()->actionStop->setEnabled(false);
+    emit StartWalk(false);
 }
 
 QString Agent::GetValueString(MibSelection &ms, Vb* vb)

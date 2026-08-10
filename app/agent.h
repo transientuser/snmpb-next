@@ -31,6 +31,7 @@
 #include "agentrequestselection.h"
 #include "snmprequestconfig.h"
 #include "snmprequestcontext.h"
+#include "snmptableasyncrunner.h"
 #include "ui_varbinds.h"
 #include "snmp_pp/snmp_pp.h"
 
@@ -40,6 +41,7 @@ class Agent: public QObject
     
 public:
     Agent(Snmpb *snmpb, bool offline = false);
+    ~Agent() override;
     bool GetStartupResult(QString &Err);
     void StartTrapTimer(void);
     void Init(void);
@@ -79,6 +81,7 @@ protected:
 private:
     QString GetValueString(MibSelection &ms, Vb* vb);
     void VarbindsBuildList(void);
+    void PresentTableResult(const SnmpTableResult &result);
 
 public slots:
     void SelectProfileByName(const QString &profileName);
@@ -145,6 +148,7 @@ private:
     QVector<Vb> vblist;
 
     std::unique_ptr<SnmpRequestContext> activeRequestContext;
+    SnmpTableAsyncRunner *tableRunner = nullptr;
 
     Ui_Varbinds *vbui;
     QDialog *vbd;
