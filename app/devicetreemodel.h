@@ -20,7 +20,8 @@ public:
         ProfileIdRole,
         ProfileNameRole,
         FolderIdRole,
-        SearchTextRole
+        SearchTextRole,
+        CredentialHealthRole
     };
     enum class NodeType { Root, Folder, Profile, Unfiled };
 
@@ -57,6 +58,7 @@ public:
     void reload();
     void setProfiles(const QList<AgentProfileRecord> &profiles);
     void setMetadata(const QList<ProfileMetadataRecord> &metadata);
+    void setCredentialHealth(const QHash<QString, QString> &health);
     void renameProfile(const QString &profileId, const QString &newName);
     void placeDuplicate(const QString &sourceId, const QString &newId);
     QString profileId(const QModelIndex &index) const;
@@ -92,6 +94,7 @@ private:
     DeviceTreeState treeState;
     QList<AgentProfileRecord> profiles;
     QList<ProfileMetadataRecord> profileMetadata;
+    QHash<QString, QString> credentialHealth;
     std::unique_ptr<Node> root;
 };
 

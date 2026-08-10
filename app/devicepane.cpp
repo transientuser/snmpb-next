@@ -87,6 +87,11 @@ void DevicePane::setMetadata(const QList<ProfileMetadataRecord> &metadata)
     selectProfile(selectedId);
 }
 
+void DevicePane::setCredentialHealth(const QHash<QString, QString> &health)
+{
+    deviceModel->setCredentialHealth(health);
+}
+
 void DevicePane::renameProfile(const QString &profileId, const QString &newName)
 {
     deviceModel->renameProfile(profileId, newName);

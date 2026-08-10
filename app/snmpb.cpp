@@ -44,6 +44,9 @@
 #include "profiletransfer.h"
 #include "discoverydestination.h"
 #include "usmprofile.h"
+#include "communitycredentialservice.h"
+#include "communitycredentialmanager.h"
+#include "usmcredentialservice.h"
 #include "preferences.h"
 
 // These are needed to get the libraries version strings for the about box
@@ -63,6 +66,8 @@
 #define DEVICE_TREE_CONFIG_FILE  "device-tree.conf"
 #define PROFILE_METADATA_CONFIG_FILE "profile-metadata.conf"
 #define CREDENTIAL_IDENTITIES_CONFIG_FILE "credential-identities.conf"
+#define COMMUNITY_CREDENTIALS_CONFIG_FILE "community-credentials.conf"
+#define CREDENTIAL_BINDINGS_CONFIG_FILE "credential-bindings.conf"
 
 #if SNMPB_ENABLE_QWT
 #define SNMPB_QWT_ABOUT_LINE \
@@ -134,6 +139,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     logsnmpb = new LogSnmpb(this);
     modules = new MibModule(this);
     profileService = new AgentProfileService(GetAgentsConfigFile(), this);
+    communityCredentialService = new CommunityCredentialService(
+        GetCommunityCredentialsConfigFile(), GetCredentialBindingsConfigFile(), this);
     profileMetadataService = new ProfileMetadataService(
         GetProfileMetadataConfigFile(), this);
     devicePlacementService = new DeviceTreePlacementService(
@@ -160,6 +167,38 @@ void Snmpb::BindToGUI(QMainWindow* mw)
                                 apm->GetAgentProfileRecords(),
                                 profileMetadataService->allMetadata(), devicesDock);
     devicesDock->setWidget(devicePane);
+    auto refreshCredentialHealth = [this]() {
+        QHash<QString, QString> health;
+        for (const AgentProfileRecord &profile : profileService->profiles())
+        {
+            QString text;
+            if (profile.v3)
+            {
+                const UsmReferenceResult result = UsmCredentials()->validate(profile);
+                switch (result.status) {
+                case UsmReferenceStatus::Valid: text = tr("SNMPv3 credential available"); break;
+                case UsmReferenceStatus::Missing: text = tr("SNMPv3 credential missing"); break;
+                case UsmReferenceStatus::Ambiguous: text = tr("SNMPv3 security name ambiguous"); break;
+                case UsmReferenceStatus::IncompatibleSecurityLevel:
+                    text = tr("SNMPv3 security-level mismatch"); break;
+                default: break;
+                }
+            }
+            else if (profile.v1 || profile.v2)
+                text = communityCredentialService->healthText(profile);
+            health.insert(profile.profileId, text);
+        }
+        devicePane->setCredentialHealth(health);
+    };
+    refreshCredentialHealth();
+    connect(communityCredentialService, &CommunityCredentialService::credentialsChanged,
+            devicePane, refreshCredentialHealth);
+    connect(communityCredentialService, &CommunityCredentialService::bindingsChanged,
+            devicePane, refreshCredentialHealth);
+    connect(profileService, &AgentProfileService::profilesChanged,
+            devicePane, refreshCredentialHealth);
+    connect(UsmCredentials(), &UsmCredentialService::credentialsChanged,
+            devicePane, refreshCredentialHealth);
     devicesDock->setMinimumWidth(190);
     mw->addDockWidget(Qt::LeftDockWidgetArea, devicesDock);
     QMenu *viewMenu = w.MenuBar->addMenu(tr("&View"));
@@ -196,8 +235,13 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             devicePane, &DevicePane::placeDuplicate);
     connect(profileService, &AgentProfileService::profileDuplicated,
             profileMetadataService, &ProfileMetadataService::copy);
+    connect(profileService, &AgentProfileService::profileDuplicated,
+            communityCredentialService, &CommunityCredentialService::copyBinding);
     connect(profileService, &AgentProfileService::profileDeleted,
             profileMetadataService, &ProfileMetadataService::remove);
+    connect(profileService, &AgentProfileService::profileDeleted,
+            communityCredentialService,
+            &CommunityCredentialService::removeProfileBinding);
     connect(profileMetadataService, &ProfileMetadataService::metadataChanged,
             devicePane, [this](const QString &) {
                 devicePane->setMetadata(profileMetadataService->allMetadata());
@@ -283,6 +327,13 @@ void Snmpb::BindToGUI(QMainWindow* mw)
              this, SLOT( ManageAgentProfiles(bool) ) );
     connect( w.actionManageUSMProfiles, SIGNAL( triggered(bool) ),
              this, SLOT( ManageUSMProfiles(bool) ) );
+    QAction *manageCommunities = w.optionsMenu->addAction(
+        tr("Manage SNMPv1/v2c Community Credentials..."));
+    connect(manageCommunities, &QAction::triggered, mw, [this, mw]() {
+        CommunityCredentialManager manager(communityCredentialService,
+                                           profileService, mw);
+        manager.execute();
+    });
     connect( w.actionPreferences, SIGNAL( triggered(bool) ),
              this, SLOT( ManagePreferences(bool) ) );
     connect( w.helpAboutAction, SIGNAL( triggered(bool) ),
@@ -354,6 +405,11 @@ USMProfileManager* Snmpb::UPManagerObj(void)
 UsmCredentialService* Snmpb::UsmCredentials(void)
 {
     return upm ? upm->Credentials() : nullptr;
+}
+
+CommunityCredentialService* Snmpb::CommunityCredentials(void)
+{
+    return communityCredentialService;
 }
 
 Preferences* Snmpb::PreferencesObj(void)
@@ -577,5 +633,19 @@ QString Snmpb::GetCredentialIdentitiesConfigFile(void)
     QSettings settings;
     QDir cfgdir = QFileInfo(settings.fileName()).dir();
     return cfgdir.filePath(CREDENTIAL_IDENTITIES_CONFIG_FILE);
+}
+
+QString Snmpb::GetCommunityCredentialsConfigFile(void)
+{
+    QSettings settings;
+    QDir cfgdir = QFileInfo(settings.fileName()).dir();
+    return cfgdir.filePath(COMMUNITY_CREDENTIALS_CONFIG_FILE);
+}
+
+QString Snmpb::GetCredentialBindingsConfigFile(void)
+{
+    QSettings settings;
+    QDir cfgdir = QFileInfo(settings.fileName()).dir();
+    return cfgdir.filePath(CREDENTIAL_BINDINGS_CONFIG_FILE);
 }
 

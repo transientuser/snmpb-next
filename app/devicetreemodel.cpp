@@ -69,6 +69,8 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
         return node->profileName;
     if (role == FolderIdRole)
         return node->id;
+    if (role == CredentialHealthRole && node->type == NodeType::Profile)
+        return credentialHealth.value(node->profileId);
     if (role == SearchTextRole)
     {
         if (node->type != NodeType::Profile)
@@ -79,7 +81,8 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
         return record->name + QLatin1Char(' ') + record->address + QLatin1Char(' ') +
                (details ? details->tags.join(' ') + QLatin1Char(' ') + details->notes +
                               QLatin1Char(' ') + details->preferredMibs.join(' ')
-                        : QString());
+                        : QString()) + QLatin1Char(' ') +
+               credentialHealth.value(node->profileId);
     }
     if (role == Qt::DecorationRole)
         return QIcon::fromTheme(node->type == NodeType::Profile ?
@@ -101,9 +104,20 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
             tooltip += QString("\n%1").arg(details->notes.simplified().left(120));
         if (details && !details->preferredMibs.isEmpty())
             tooltip += QString("\nMIBs: %1").arg(details->preferredMibs.join(", "));
+        if (!credentialHealth.value(node->profileId).isEmpty())
+            tooltip += QString("\nCredential: %1").arg(
+                credentialHealth.value(node->profileId));
         return tooltip;
     }
     return {};
+}
+
+void DeviceTreeModel::setCredentialHealth(const QHash<QString, QString> &health)
+{
+    credentialHealth = health;
+    if (rowCount() > 0)
+        emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
+                         {CredentialHealthRole, Qt::ToolTipRole, SearchTextRole});
 }
 
 Qt::ItemFlags DeviceTreeModel::flags(const QModelIndex &modelIndex) const

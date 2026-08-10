@@ -70,6 +70,24 @@ int main(int argc, char **argv)
                "profile tooltip missing address"))
         return 1;
 
+    model.setCredentialHealth({{coreProfile.profileId,
+                                "Reusable credential available"}});
+    core = Find(model, "core-01");
+    if (!Check(core.data(DeviceTreeModel::CredentialHealthRole).toString() ==
+                   "Reusable credential available",
+               "credential health role missing") ||
+        !Check(core.data(Qt::ToolTipRole).toString().contains(
+                   "Credential: Reusable credential available"),
+               "credential health tooltip missing") ||
+        !Check(core.data(DeviceTreeModel::SearchTextRole).toString().contains(
+                   "Reusable credential available"),
+               "credential health search text missing") ||
+        !Check(!core.data(Qt::ToolTipRole).toString().contains("secret-marker") &&
+                   !core.data(DeviceTreeModel::SearchTextRole).toString().contains(
+                       "secret-marker"),
+               "credential health exposed a secret marker"))
+        return 1;
+
     QModelIndex branch = model.createFolder("Branch", dc);
     dc = Find(model, "Datacenter");
     branch = Find(model, "Branch");

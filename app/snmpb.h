@@ -39,6 +39,7 @@ class ProfileMetadataService;
 class DeviceTreePlacementService;
 class USMProfileManager;
 class UsmCredentialService;
+class CommunityCredentialService;
 class Preferences;
 class DevicePane;
 class QDockWidget;
@@ -62,6 +63,7 @@ public:
     DeviceTreePlacementService* DevicePlacements(void);
     USMProfileManager* UPManagerObj(void);
     UsmCredentialService* UsmCredentials(void);
+    CommunityCredentialService* CommunityCredentials(void);
     Preferences* PreferencesObj(void);
 
     void CheckForConfigFiles(void);
@@ -74,6 +76,8 @@ public:
     QString GetDeviceTreeConfigFile(void);
     QString GetProfileMetadataConfigFile(void);
     QString GetCredentialIdentitiesConfigFile(void);
+    QString GetCommunityCredentialsConfigFile(void);
+    QString GetCredentialBindingsConfigFile(void);
 
 public slots:
     void TabSelected(void);
@@ -92,6 +96,7 @@ private:
     ProfileMetadataService *profileMetadataService;
     DeviceTreePlacementService *devicePlacementService;
     USMProfileManager *upm;
+    CommunityCredentialService *communityCredentialService;
     Preferences *prefs;
 
     MibModule *modules;

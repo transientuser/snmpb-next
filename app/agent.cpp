@@ -24,6 +24,7 @@
 
 #include "mibview.h"
 #include "agent.h"
+#include "communitycredentialservice.h"
 #include "mibmodule.h"
 #include "snmp_pp/notifyqueue.h"
 #include "preferences.h"
@@ -461,10 +462,17 @@ AgentSelectionError Agent::ResolveCurrentSelection(
     else if (s->MainUI()->AgentProtoV2->isChecked())
         selectedProtocol = 1;
 
-    return AgentSelectionResolver::ResolveById(
+    const AgentSelectionError error = AgentSelectionResolver::ResolveById(
         s->APManagerObj()->GetAgentProfileRecords(),
         s->MainUI()->AgentProfile->currentData().toString(),
         selectedProtocol, selection);
+    if (error == AgentSelectionError::None && selection && selectedProtocol < 2)
+    {
+        selection->credentials = s->CommunityCredentials()->resolve(
+            selection->profile).values;
+        selection->hasResolvedCredentials = true;
+    }
+    return error;
 }
 
 void Agent::SelectProfileByName(const QString &profileName)

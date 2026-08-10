@@ -26,6 +26,7 @@
 #include <QSignalBlocker>
 
 #include "discovery.h"
+#include "communitycredentialservice.h"
 #include "preferences.h"
 #include "agent.h"
 #include "agentprofileservice.h"
@@ -657,7 +658,10 @@ void Discovery::AddAgentToProfiles(void)
             strstr(item_list[i]->text(2).toLatin1().data(), DISC_SNMP_V2C) != nullptr,
             strstr(item_list[i]->text(2).toLatin1().data(), DISC_SNMP_V3) != nullptr);
         if (!profileId.isEmpty())
+        {
+            s->CommunityCredentials()->copyBinding(templateId, profileId);
             s->DevicePlacements()->placeProfile(profileId, destinationId);
+        }
     }
 }
 

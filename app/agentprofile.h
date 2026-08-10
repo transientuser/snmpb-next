@@ -163,6 +163,7 @@ protected slots:
     void SetTags(void);
     void SetPreferredMibs(void);
     void UpdateCredentialStatus(void);
+    void SetCommunityBinding(int index);
     void SelectedAgentProfile( QTreeWidgetItem * item, QTreeWidgetItem * old);
     void AgentProfileNameChange(QTreeWidgetItem * item, int column);
     void Add(void);
@@ -185,10 +186,13 @@ private:
     AgentProfile* currentprofile;
     QList<AgentProfile *> agents;
     QHash<QString, ProfileMetadataRecord> workingMetadata;
+    QHash<QString, QString> workingCommunityBindings;
     class QTextEdit *notesEdit;
     class QLineEdit *tagsEdit;
     class QListWidget *mibsEdit;
     class QLabel *credentialStatus;
+    class QComboBox *communitySource;
+    class QLabel *communityStatus;
 };
 
 #endif /* AGENTPROFILE_H */

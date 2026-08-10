@@ -4,6 +4,7 @@
 #include "devicetreemodel.h"
 
 #include <QWidget>
+#include <QHash>
 
 class QTreeView;
 class QLineEdit;
@@ -23,6 +24,7 @@ public:
     QLineEdit *filterEdit() const;
     void setProfiles(const QList<AgentProfileRecord> &profiles);
     void setMetadata(const QList<ProfileMetadataRecord> &metadata);
+    void setCredentialHealth(const QHash<QString, QString> &health);
     void renameProfile(const QString &profileId, const QString &newName);
     void placeDuplicate(const QString &sourceId, const QString &newId);
     void placeCreatedProfile(const QString &profileId);

@@ -24,6 +24,7 @@
 #include "mibmodule.h"
 #include "usmprofile.h"
 #include "usmcredentialservice.h"
+#include "communitycredentialservice.h"
 #include <qhash.h>
 #include <qmessagebox.h>
 #include <QSignalBlocker>
@@ -32,6 +33,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QTextEdit>
+#include <QComboBox>
 #include <QVBoxLayout>
 
 AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
@@ -65,6 +67,18 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
     credentialStatus->setWordWrap(true);
     if (ap.SecName->parentWidget()->layout())
         ap.SecName->parentWidget()->layout()->addWidget(credentialStatus);
+    communitySource = new QComboBox(ap.ReadComm->parentWidget());
+    communityStatus = new QLabel(ap.ReadComm->parentWidget());
+    communityStatus->setWordWrap(true);
+    if (ap.ReadComm->parentWidget()->layout())
+    {
+        ap.ReadComm->parentWidget()->layout()->addWidget(
+            new QLabel(tr("Credential source"), ap.ReadComm->parentWidget()));
+        ap.ReadComm->parentWidget()->layout()->addWidget(communitySource);
+        ap.ReadComm->parentWidget()->layout()->addWidget(communityStatus);
+    }
+    connect(communitySource, &QComboBox::currentIndexChanged,
+            this, &AgentProfileManager::SetCommunityBinding);
 
     // Set some properties for the Agent Profile TreeView
     ap.ProfileTree->header()->hide();
@@ -207,9 +221,14 @@ void AgentProfileManager::Execute (bool reload)
             SetSelectedAgentById(selectedId);
     }
     workingMetadata.clear();
+    workingCommunityBindings.clear();
     for (const AgentProfileRecord &record : EditorRecords())
+    {
         workingMetadata.insert(record.profileId,
                                metadataService->metadataForProfile(record.profileId));
+        workingCommunityBindings.insert(
+            record.profileId, s->CommunityCredentials()->binding(record.profileId));
+    }
     // Fill-in loaded user names
     QString cpn;
     if (currentprofile)
@@ -243,6 +262,13 @@ void AgentProfileManager::Execute (bool reload)
             metadataService->update(metadata);
         }
         metadataService->reconcile(retainedIds, true);
+        for (const AgentProfileRecord &record : service->profiles())
+        {
+            const QString credentialId = workingCommunityBindings.value(record.profileId);
+            if (credentialId.isEmpty()) s->CommunityCredentials()->unbind(record.profileId);
+            else s->CommunityCredentials()->bind(record.profileId, credentialId);
+        }
+        s->CommunityCredentials()->reconcileProfiles(retainedIds);
         ReplaceRecords(service->profiles());
     }
     else
@@ -271,6 +297,18 @@ AgentProfile *AgentProfileManager::GetAgentProfile(QString a)
             return agents[i];
     }
     return NULL;
+}
+
+void AgentProfileManager::SetCommunityBinding(int index)
+{
+    if (!currentprofile || index < 0) return;
+    workingCommunityBindings.insert(currentprofile->GetRecord().profileId,
+                                    communitySource->currentData().toString());
+    const QString id = communitySource->currentData().toString();
+    if (id.isEmpty()) communityStatus->setText(tr("Using inline communities"));
+    else if (s->CommunityCredentials()->find(id))
+        communityStatus->setText(tr("Reusable credential available"));
+    else communityStatus->setText(tr("Reusable credential missing"));
 }
 
 void AgentProfileManager::RefreshCredentialChoices(void)
@@ -558,7 +596,9 @@ void AgentProfileManager::Add(QString name, QString address, QString port,
     created.v1 = isv1;
     created.v2 = isv2c;
     created.v3 = isv3;
-    service->create(created);
+    const QString createdId = service->create(created);
+    if (!createdId.isEmpty())
+        s->CommunityCredentials()->copyBinding(clone->profileId, createdId);
 }
 
 void AgentProfileManager::Delete(void)
@@ -597,6 +637,25 @@ void AgentProfileManager::SelectedAgentProfile(QTreeWidgetItem * item, QTreeWidg
         {
             currentprofile = agents[i];
             agents[i]->SelectAgentProfile(item);
+            {
+                const QSignalBlocker blocker(communitySource);
+                communitySource->clear();
+                communitySource->addItem(tr("Inline communities"), QString());
+                for (const CommunityCredentialRecord &credential :
+                     s->CommunityCredentials()->records())
+                    communitySource->addItem(credential.displayName,
+                                             credential.identity.credentialId);
+                const QString bound = workingCommunityBindings.value(
+                    agents[i]->GetRecord().profileId);
+                int credentialIndex = communitySource->findData(bound);
+                if (credentialIndex < 0 && !bound.isEmpty())
+                {
+                    communitySource->addItem(tr("Missing reusable credential"), bound);
+                    credentialIndex = communitySource->count() - 1;
+                }
+                communitySource->setCurrentIndex(qMax(0, credentialIndex));
+            }
+            SetCommunityBinding(communitySource->currentIndex());
             if (agents[i]->IsMetadataItem(item))
             {
                 const QSignalBlocker notesBlock(notesEdit);
@@ -691,6 +750,9 @@ void AgentProfileManager::DuplicateCurrent(void)
                 currentprofile->GetRecord().profileId);
             copied.profileId = duplicate.profileId;
             workingMetadata.insert(duplicate.profileId, copied);
+            workingCommunityBindings.insert(
+                duplicate.profileId,
+                workingCommunityBindings.value(currentprofile->GetRecord().profileId));
             ap.ProfileTree->setCurrentItem(agents.last()->GetGeneralWidgetItem());
         }
     }

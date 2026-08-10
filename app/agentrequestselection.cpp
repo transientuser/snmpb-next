@@ -2,7 +2,9 @@
 
 bool AgentRequestSelection::requestConfig(SnmpRequestConfig *config) const
 {
-    return SnmpRequestConfig::FromProfile(profile, selectedProtocol, config);
+    return hasResolvedCredentials
+        ? SnmpRequestConfig::FromProfile(profile, selectedProtocol, credentials, config)
+        : SnmpRequestConfig::FromProfile(profile, selectedProtocol, config);
 }
 
 namespace

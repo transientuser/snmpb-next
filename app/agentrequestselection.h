@@ -19,6 +19,8 @@ struct AgentRequestSelection
 {
     AgentProfileRecord profile;
     int selectedProtocol = 0;
+    EffectiveCredentialValues credentials;
+    bool hasResolvedCredentials = false;
 
     bool requestConfig(SnmpRequestConfig *config) const;
 };

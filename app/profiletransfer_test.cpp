@@ -42,6 +42,8 @@ int main(int argc, char **argv)
                 "schema and version missing");
     ok &= check(!json.contains("read-secret") && !json.contains("write-secret") &&
                 !json.contains("readcomm") && !json.contains("writecomm") &&
+                !json.contains("communityCredentialId") &&
+                !json.contains("credential-bindings") &&
                 json.contains("credentialsOmitted"), "default export exposed credentials");
     ok &= check(source.profiles.first().readcomm == before.profiles.first().readcomm,
                 "export mutated source state");

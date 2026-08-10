@@ -12,6 +12,10 @@ set(SNMPB_APP_SOURCES
     agentprofilerepository.cpp
     agentprofileservice.cpp
     comboboxes.cpp
+    communitybindingrepository.cpp
+    communitycredentialrepository.cpp
+    communitycredentialservice.cpp
+    communitycredentialmanager.cpp
     credentialrecords.cpp
     discovery.cpp
     discoverydestination.cpp
@@ -57,6 +61,10 @@ set(SNMPB_APP_HEADERS
     agentprofilerepository.h
     agentprofileservice.h
     comboboxes.h
+    communitybindingrepository.h
+    communitycredentialrepository.h
+    communitycredentialservice.h
+    communitycredentialmanager.h
     credentialrecords.h
     discovery.h
     discoverydestination.h
@@ -208,6 +216,25 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_community_credential_test
+        communitybindingrepository.cpp communitybindingrepository.h
+        communitycredentialrepository.cpp communitycredentialrepository.h
+        communitycredentialservice.cpp communitycredentialservice.h
+        credentialrecords.cpp credentialrecords.h
+        snmprequestconfig.cpp snmprequestconfig.h
+        snmprequestcontext.cpp snmprequestcontext.h
+        communitycredential_test.cpp)
+    set_target_properties(snmpb_community_credential_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_community_credential_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.community-credential COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_community_credential_test>)
+    else()
+        add_test(NAME snmpb.community-credential COMMAND
+            $<TARGET_FILE:snmpb_community_credential_test>)
+    endif()
+
     add_executable(snmpb_credential_architecture_test
         agentprofileoperations.cpp agentprofileoperations.h
         agentprofilerepository.cpp agentprofilerepository.h
