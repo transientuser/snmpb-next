@@ -34,6 +34,7 @@ class MibEditor;
 class LogSnmpb;
 class Discovery;
 class AgentProfileManager;
+class AgentProfileService;
 class USMProfileManager;
 class Preferences;
 class DevicePane;
@@ -53,6 +54,7 @@ public:
     MibModule* MibModuleObj(void);
     MibEditor* MibEditorObj(void);
     AgentProfileManager* APManagerObj(void);
+    AgentProfileService* AgentProfiles(void);
     USMProfileManager* UPManagerObj(void);
     Preferences* PreferencesObj(void);
 
@@ -78,6 +80,7 @@ private:
 private:
     Ui_MainW w;
     AgentProfileManager *apm;
+    AgentProfileService *profileService;
     USMProfileManager *upm;
     Preferences *prefs;
 

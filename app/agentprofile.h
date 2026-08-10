@@ -106,15 +106,19 @@ class AgentProfileManager: public QObject
     Q_OBJECT
 
 public:
-    AgentProfileManager(Snmpb *snmpb);
-    void Execute(void);
+    AgentProfileManager(Snmpb *snmpb, class AgentProfileService *service);
+    void Execute(bool reload = true);
     QStringList GetAgentsList(void);
     QList<AgentProfileRecord> GetAgentProfileRecords(void) const;
+    const AgentProfileRecord *GetAgentProfileRecord(const QString &profileId) const;
+    const AgentProfileRecord *GetAgentProfileRecordByName(const QString &name) const;
     void SetSelectedAgent(QString a);
     AgentProfile *GetAgentProfile(QString a);
     AgentProfile *GetAgentProfileById(const QString &profileId);
     void SetSelectedAgentById(const QString &profileId);
     void EditProfile(const QString &profileId);
+    void NewProfile(void);
+    bool DeleteProfile(const QString &profileId);
     QString DuplicateProfile(const QString &profileId);
     void PersistProfiles(void);
     void Add(QString name, QString address, QString port,
@@ -125,6 +129,7 @@ signals:
     void AgentProfileRenamed(const QString &profileId, const QString &oldName,
                              const QString &newName);
     void AgentProfileDuplicated(const QString &sourceId, const QString &newId);
+    void NewProfileCompleted(const QString &profileId);
 
 protected:
     QAction *addAct;
@@ -159,13 +164,13 @@ private:
     void ReadConfigFile(void);
     void WriteConfigFile(void);
     void ReplaceRecords(const QList<AgentProfileRecord> &records);
+    QList<AgentProfileRecord> EditorRecords(void) const;
 
 private:
     Snmpb *s;
+    AgentProfileService *service;
     Ui_AgentProfile ap;
     QDialog apw;
-    AgentProfileRepository repository;
-
     AgentProfile* currentprofile;
     QList<AgentProfile *> agents;
 };

@@ -369,24 +369,24 @@ void Agent::SelectAgentProto(void)
 void Agent::SelectAgentProfile(QString *prefprofile, int prefproto,
                                QString *prefprofileid)
 {
-    AgentProfile *ap = NULL;
+    const AgentProfileRecord *ap = NULL;
     if (prefprofileid && !prefprofileid->isEmpty())
-        ap = s->APManagerObj()->GetAgentProfileById(*prefprofileid);
+        ap = s->APManagerObj()->GetAgentProfileRecord(*prefprofileid);
     if (!ap && prefprofile)
     {
         const QString migratedId = AgentSelectionResolver::UniqueProfileIdForName(
             s->APManagerObj()->GetAgentProfileRecords(), *prefprofile);
         if (!migratedId.isEmpty())
-            ap = s->APManagerObj()->GetAgentProfileById(migratedId);
+            ap = s->APManagerObj()->GetAgentProfileRecord(migratedId);
     }
     if (!ap)
-        ap = s->APManagerObj()->GetAgentProfileById(
+        ap = s->APManagerObj()->GetAgentProfileRecord(
             s->MainUI()->AgentProfile->currentData().toString());
     if (ap)
     {
         bool v1,v2,v3;
         int selectedproto = -1;
-        ap->GetSupportedProtocol(&v1, &v2, &v3);
+        v1 = ap->v1; v2 = ap->v2; v3 = ap->v3;
 
         s->MainUI()->AgentProtoV1->setEnabled(v1);
         s->MainUI()->AgentProtoV2->setEnabled(v2);
@@ -431,17 +431,17 @@ void Agent::SelectAgentProfile(QString *prefprofile, int prefproto,
         if (prefprofile || (prefprofileid && !prefprofileid->isEmpty()))
         {
             int index = s->MainUI()->AgentProfile->findData(
-                ap->GetRecord().profileId);
+                ap->profileId);
             if (index >= 0)
                 s->MainUI()->AgentProfile->setCurrentIndex(index);
             s->PreferencesObj()->SaveCurrentProfile(
-                ap->GetName(), ap->GetRecord().profileId, selectedproto);
+                ap->name, ap->profileId, selectedproto);
         }
         else
         {
             // The agent is selected by the user, save it in the preference file
             s->PreferencesObj()->SaveCurrentProfile(
-                ap->GetName(), ap->GetRecord().profileId, selectedproto);
+                ap->name, ap->profileId, selectedproto);
         }
     }
     else

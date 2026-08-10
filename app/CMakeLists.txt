@@ -10,6 +10,7 @@ set(SNMPB_APP_SOURCES
     agentprofile.cpp
     agentprofileoperations.cpp
     agentprofilerepository.cpp
+    agentprofileservice.cpp
     comboboxes.cpp
     discovery.cpp
     devicepane.cpp
@@ -44,6 +45,7 @@ set(SNMPB_APP_HEADERS
     agentprofile.h
     agentprofileoperations.h
     agentprofilerepository.h
+    agentprofileservice.h
     comboboxes.h
     discovery.h
     devicepane.h
@@ -186,6 +188,26 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_agentprofile_service_test
+        agentprofileoperations.cpp
+        agentprofileoperations.h
+        agentprofilerepository.cpp
+        agentprofilerepository.h
+        agentprofileservice.cpp
+        agentprofileservice.h
+        agentprofileservice_test.cpp
+    )
+    set_target_properties(snmpb_agentprofile_service_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_agentprofile_service_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.agentprofile-service COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_agentprofile_service_test>)
+    else()
+        add_test(NAME snmpb.agentprofile-service COMMAND
+            $<TARGET_FILE:snmpb_agentprofile_service_test>)
+    endif()
+
     add_executable(snmpb_agentprofile_operations_test
         agentprofileoperations.cpp
         agentprofileoperations.h

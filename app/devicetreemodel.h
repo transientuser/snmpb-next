@@ -18,7 +18,8 @@ public:
         NodeTypeRole = Qt::UserRole + 1,
         ProfileIdRole,
         ProfileNameRole,
-        FolderIdRole
+        FolderIdRole,
+        SearchTextRole
     };
     enum class NodeType { Root, Folder, Profile, Unfiled };
 
@@ -49,6 +50,7 @@ public:
     bool deleteFolder(const QModelIndex &index);
     bool moveProfile(const QString &profileId,
                      const QModelIndex &destinationFolder);
+    bool moveProfileToFolderId(const QString &profileId, const QString &folderId);
     void setProfiles(const QList<AgentProfileRecord> &profiles);
     void renameProfile(const QString &profileId, const QString &newName);
     void placeDuplicate(const QString &sourceId, const QString &newId);

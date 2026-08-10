@@ -162,7 +162,7 @@ int main( int argc, char ** argv )
             const QString smoke_profile = "ctest-local-profile";
             snmpb.APManagerObj()->Add(smoke_profile, "127.0.0.1", "161",
                                      true, false, false, "localhost");
-            check(snmpb.APManagerObj()->GetAgentProfile(smoke_profile) != nullptr,
+            check(snmpb.APManagerObj()->GetAgentProfileRecordByName(smoke_profile) != nullptr,
                   "Agent Profile load/save works");
 
             QTimer dialog_closer;

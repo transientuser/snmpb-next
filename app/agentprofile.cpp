@@ -19,13 +19,15 @@
 */
 #include "agentprofile.h"
 #include "agentprofileoperations.h"
+#include "agentprofileservice.h"
 #include "usmprofile.h"
 #include <qhash.h>
 #include <qmessagebox.h>
 #include <QSignalBlocker>
 
-AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
-    : repository(snmpb->GetAgentsConfigFile())
+AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
+                                         AgentProfileService *profileService)
+    : service(profileService)
 {
     s = snmpb;
 
@@ -94,6 +96,13 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
 
     currentprofile = NULL; 
 
+    connect(service, &AgentProfileService::profilesChanged,
+            this, &AgentProfileManager::AgentProfileListChanged);
+    connect(service, &AgentProfileService::profileRenamed,
+            this, &AgentProfileManager::AgentProfileRenamed);
+    connect(service, &AgentProfileService::profileDuplicated,
+            this, &AgentProfileManager::AgentProfileDuplicated);
+
     // Loop & load all stored agent profiles
     ReadConfigFile();
 
@@ -103,17 +112,35 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb)
 
 void AgentProfileManager::ReadConfigFile (void)
 {
-    const QList<AgentProfileRecord> profiles = repository.LoadOrCreateDefaults();
+    const QList<AgentProfileRecord> profiles = service->profiles();
     for (const AgentProfileRecord& profile : profiles)
         agents.append(new AgentProfile(&ap, profile));
 }
 
 void AgentProfileManager::WriteConfigFile (void)
 {
-    QList<AgentProfileRecord> profiles;
-    for (int i = 0; i < agents.size(); i++)
-        profiles.append(agents[i]->GetRecord());
-    repository.Save(profiles);
+    const QList<AgentProfileRecord> edited = EditorRecords();
+    QStringList editedIds;
+    for (const AgentProfileRecord &record : edited)
+    {
+        editedIds.append(record.profileId);
+        if (service->findById(record.profileId))
+            service->update(record);
+        else
+            service->create(record);
+    }
+    const QList<AgentProfileRecord> original = service->profiles();
+    for (const AgentProfileRecord &record : original)
+        if (!editedIds.contains(record.profileId))
+            service->remove(record.profileId);
+}
+
+QList<AgentProfileRecord> AgentProfileManager::EditorRecords(void) const
+{
+    QList<AgentProfileRecord> records;
+    for (AgentProfile *agent : agents)
+        records.append(agent->GetRecord());
+    return records;
 }
 
 void AgentProfileManager::ReplaceRecords(
@@ -129,13 +156,17 @@ void AgentProfileManager::ReplaceRecords(
         ap.ProfileTree->setCurrentItem(agents.first()->GetGeneralWidgetItem());
 }
 
-void AgentProfileManager::Execute (void)
+void AgentProfileManager::Execute (bool reload)
 {
-    AgentProfileEditTransaction transaction(GetAgentProfileRecords());
-    QHash<AgentProfile *, QString> originalNames;
-    for (AgentProfile *agent : agents)
-        originalNames.insert(agent, agent->GetName());
-
+    QString selectedId;
+    if (currentprofile)
+        selectedId = currentprofile->GetRecord().profileId;
+    if (reload)
+    {
+        ReplaceRecords(service->profiles());
+        if (!selectedId.isEmpty())
+            SetSelectedAgentById(selectedId);
+    }
     // Fill-in loaded user names
     QString cpn;
     if (currentprofile)
@@ -151,17 +182,10 @@ void AgentProfileManager::Execute (void)
     if(apw.exec() == QDialog::Accepted)
     {
         WriteConfigFile();
-        for (AgentProfile *agent : agents)
-        {
-            const QString oldName = originalNames.value(agent);
-            if (!oldName.isEmpty() && oldName != agent->GetName())
-                emit AgentProfileRenamed(agent->GetRecord().profileId,
-                                         oldName, agent->GetName());
-        }
-        emit AgentProfileListChanged();
+        ReplaceRecords(service->profiles());
     }
     else
-        ReplaceRecords(transaction.rollbackRecords());
+        ReplaceRecords(service->profiles());
 }
 
 void AgentProfileManager::SetSelectedAgent(QString a)
@@ -205,38 +229,58 @@ void AgentProfileManager::SetSelectedAgentById(const QString &profileId)
 
 void AgentProfileManager::EditProfile(const QString &profileId)
 {
+    ReplaceRecords(service->profiles());
     SetSelectedAgentById(profileId);
-    Execute();
+    Execute(false);
 }
 
 QString AgentProfileManager::DuplicateProfile(const QString &profileId)
 {
-    AgentProfile *source = GetAgentProfileById(profileId);
-    if (!source)
-        return {};
-    AgentProfileRecord duplicate;
-    if (!AgentProfileOperations::Duplicate(GetAgentProfileRecords(),
-                                           profileId,
-                                           &duplicate))
-        return {};
-    agents.append(new AgentProfile(&ap, duplicate));
-    WriteConfigFile();
-    emit AgentProfileListChanged();
-    emit AgentProfileDuplicated(profileId, duplicate.profileId);
-    return duplicate.profileId;
+    return service->duplicate(profileId);
+}
+
+void AgentProfileManager::NewProfile(void)
+{
+    QStringList before;
+    for (const AgentProfileRecord &record : service->profiles())
+        before.append(record.profileId);
+    ReplaceRecords(service->profiles());
+    Add();
+    Execute(false);
+    for (const AgentProfileRecord &record : service->profiles())
+        if (!before.contains(record.profileId))
+        {
+            emit NewProfileCompleted(record.profileId);
+            break;
+        }
+}
+
+bool AgentProfileManager::DeleteProfile(const QString &profileId)
+{
+    return service->remove(profileId);
 }
 
 QList<AgentProfileRecord> AgentProfileManager::GetAgentProfileRecords(void) const
 {
-    QList<AgentProfileRecord> records;
-    for (AgentProfile *agent : agents)
-        records.append(agent->GetRecord());
-    return records;
+    return service->profiles();
+}
+
+const AgentProfileRecord *AgentProfileManager::GetAgentProfileRecord(
+    const QString &profileId) const
+{
+    return service->findById(profileId);
+}
+
+const AgentProfileRecord *AgentProfileManager::GetAgentProfileRecordByName(
+    const QString &name) const
+{
+    return service->findFirstByName(name);
 }
 
 void AgentProfileManager::PersistProfiles(void)
 {
-    WriteConfigFile();
+    // Profile persistence is owned by AgentProfileService. This compatibility
+    // slot remains for the device-tree organization signal.
 }
 
 void AgentProfileManager::ProtocolV1Support(bool checked)
@@ -369,31 +413,20 @@ void AgentProfileManager::Add(void)
 void AgentProfileManager::Add(QString name, QString address, QString port,
                               bool isv1, bool isv2c, bool isv3, QString clonefrom)
 {
-    AgentProfile *clone;
-
-    // Protection for duplicate entries (based on agent name)
-    clone = GetAgentProfileById(clonefrom);
+    const AgentProfileRecord *clone = service->findById(clonefrom);
     if (!clone)
-        clone = GetAgentProfile(clonefrom); // legacy name adapter
-    if (!clone || GetAgentProfile(name))
+        clone = service->findFirstByName(clonefrom); // legacy name adapter
+    if (!clone || service->findFirstByName(name))
         return;
-
-    // Create new agent based on parameters ...
-    AgentProfile * newagent = new AgentProfile(&ap, &name);
-    newagent->SetSupportedProtocol(isv1, isv2c, isv3);
-    newagent->SetTarget(address, port);
-
-    // Copy all other values from the clone 
-    newagent->SetRetriesTimeout(clone->GetRetries(), clone->GetTimeout());
-    newagent->SetComms(clone->GetReadComm(), clone->GetWriteComm());
-    newagent->SetBulk(clone->GetMaxRepetitions(), clone->GetNonRepeaters());
-    newagent->SetUser(clone->GetSecName(), clone->GetSecLevel());
-    newagent->SetContext(clone->GetContextName(), clone->GetContextEngineID());
-    agents.append(newagent);
-
-    // Write to config file and notify everybody that the list changed ...
-    WriteConfigFile();
-    emit AgentProfileListChanged();
+    AgentProfileRecord created = *clone;
+    created.profileId.clear();
+    created.name = name;
+    created.address = address;
+    created.port = port;
+    created.v1 = isv1;
+    created.v2 = isv2c;
+    created.v3 = isv3;
+    service->create(created);
 }
 
 void AgentProfileManager::Delete(void)
@@ -491,7 +524,16 @@ AgentProfile::AgentProfile(Ui_AgentProfile *uiap, const QString *n)
 void AgentProfileManager::DuplicateCurrent(void)
 {
     if (currentprofile)
-        DuplicateProfile(currentprofile->GetRecord().profileId);
+    {
+        AgentProfileRecord duplicate;
+        if (AgentProfileOperations::Duplicate(EditorRecords(),
+                                              currentprofile->GetRecord().profileId,
+                                              &duplicate))
+        {
+            agents.append(new AgentProfile(&ap, duplicate));
+            ap.ProfileTree->setCurrentItem(agents.last()->GetGeneralWidgetItem());
+        }
+    }
 }
 
 AgentProfile::AgentProfile(Ui_AgentProfile *uiap,

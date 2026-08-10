@@ -67,6 +67,14 @@ QVariant DeviceTreeModel::data(const QModelIndex &modelIndex, int role) const
         return node->profileName;
     if (role == FolderIdRole)
         return node->id;
+    if (role == SearchTextRole)
+    {
+        if (node->type != NodeType::Profile)
+            return node->text;
+        const AgentProfileRecord *record = profile(node->profileId);
+        return record ? record->name + QLatin1Char(' ') + record->address
+                      : node->text;
+    }
     if (role == Qt::DecorationRole)
         return QIcon::fromTheme(node->type == NodeType::Profile ?
                                 "network-server" : "folder");
@@ -239,6 +247,27 @@ bool DeviceTreeModel::moveProfile(const QString &id,
     rebuild();
     endResetModel();
     return true;
+}
+
+bool DeviceTreeModel::moveProfileToFolderId(const QString &id,
+                                            const QString &folderId)
+{
+    if (folderId.isEmpty())
+        return moveProfile(id, {});
+    std::function<QModelIndex(const QModelIndex &)> findFolder =
+        [&](const QModelIndex &parent) -> QModelIndex {
+            for (int row = 0; row < rowCount(parent); ++row)
+            {
+                const QModelIndex candidate = index(row, 0, parent);
+                if (candidate.data(FolderIdRole).toString() == folderId)
+                    return candidate;
+                const QModelIndex nested = findFolder(candidate);
+                if (nested.isValid()) return nested;
+            }
+            return {};
+        };
+    const QModelIndex folder = findFolder({});
+    return folder.isValid() && moveProfile(id, folder);
 }
 
 void DeviceTreeModel::setProfiles(const QList<AgentProfileRecord> &newProfiles)

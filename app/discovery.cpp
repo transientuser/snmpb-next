@@ -445,7 +445,7 @@ new_loop:
 void DiscoveryThread::run(void)
 {
     snmp_version cur_version  = version1;
-    AgentProfile *ap = s->APManagerObj()->GetAgentProfileById(
+    const AgentProfileRecord *ap = s->APManagerObj()->GetAgentProfileRecord(
         s->MainUI()->DiscoveryAgentProfile->currentData().toString());
 
     if (!ap)
@@ -473,11 +473,11 @@ void DiscoveryThread::run(void)
                 address_str = "ff02::1/";
             else 
                 continue;
-            address_str += ap->GetPort();
+            address_str += ap->port;
         }
         else
         {
-            address_str = s->MainUI()->DiscoveryFrom->text() + "/" + ap->GetPort();
+            address_str = s->MainUI()->DiscoveryFrom->text() + "/" + ap->port;
 
             Address::version_type v = 
                 UdpAddress(address_str.toLatin1().data()).get_ip_version(); 
@@ -522,9 +522,9 @@ void DiscoveryThread::run(void)
 
             snmp->aborting = false;
             snmp->discover(start_address, num_addresses, 
-                    wait_time, cur_version, ap->GetReadComm(), 
-                    ap->GetSecName(), ap->GetSecLevel(), 
-                    ap->GetContextName(), ap->GetContextEngineID(), 
+                    wait_time, cur_version, ap->readcomm,
+                    ap->secname, ap->seclevel,
+                    ap->contextname, ap->contextengineid,
                     s->MainUI()->DiscoverySNMPv3Probe->isChecked(), this);
             if (snmp->aborting == true) goto discover_end;
         }

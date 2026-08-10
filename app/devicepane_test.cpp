@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTreeView>
+#include <QLineEdit>
 
 #include <iostream>
 
@@ -16,7 +17,7 @@ bool Check(bool condition, const char *message)
     return condition;
 }
 
-QModelIndex Find(DeviceTreeModel *model, const QString &text,
+QModelIndex Find(QAbstractItemModel *model, const QString &text,
                  const QModelIndex &parent = {})
 {
     for (int row = 0; row < model->rowCount(parent); ++row)
@@ -49,7 +50,7 @@ int main(int argc, char **argv)
     if (!Check(pane.model() != nullptr && pane.treeView() != nullptr,
                "pane construction failed"))
         return 1;
-    QModelIndex profileIndex = Find(pane.model(), "core-01");
+    QModelIndex profileIndex = Find(pane.treeView()->model(), "core-01");
     if (!Check(profileIndex.isValid(), "profile missing from pane"))
         return 1;
     QString selected;
@@ -72,6 +73,37 @@ int main(int argc, char **argv)
     if (!verify.open(QIODevice::ReadOnly))
         return 1;
     if (!Check(verify.readAll() == "unchanged", "opening pane changed agents.conf"))
+        return 1;
+
+    AgentProfileRecord lab =
+        AgentProfileRepository::DefaultProfile("lab-switch", "2001:db8::10");
+    pane.setProfiles({profile, lab});
+    pane.filterEdit()->setText("2001:db8::10");
+    if (!Check(Find(pane.treeView()->model(), "lab-switch").isValid(),
+               "address filter did not retain matching profile") ||
+        !Check(!Find(pane.treeView()->model(), "core-01").isValid(),
+               "address filter retained nonmatching profile"))
+        return 1;
+    pane.filterEdit()->setText("core-01");
+    if (!Check(Find(pane.treeView()->model(), "Datacenter").isValid(),
+               "filter did not retain matching parent folder"))
+        return 1;
+    pane.filterEdit()->clear();
+    QModelIndex proxyFolder = Find(pane.treeView()->model(), "Datacenter");
+    pane.treeView()->setCurrentIndex(proxyFolder);
+    QString requestedFolder;
+    QObject::connect(&pane, &DevicePane::newProfileRequested,
+                     [&requestedFolder](const QString &id) { requestedFolder = id; });
+    QMetaObject::invokeMethod(&pane, "newProfile");
+    if (!Check(!requestedFolder.isEmpty(), "new profile did not retain folder target"))
+        return 1;
+    pane.setProfiles({profile, lab});
+    pane.placeCreatedProfile(lab.profileId);
+    bool labPlaced = false;
+    for (const DeviceProfilePlacement &placement : pane.model()->state().placements)
+        if (placement.profileId == lab.profileId && placement.parentId == requestedFolder)
+            labPlaced = true;
+    if (!Check(labPlaced, "created profile was not placed in selected folder"))
         return 1;
     return 0;
 }

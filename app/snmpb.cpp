@@ -37,6 +37,7 @@
 #include "devicepane.h"
 
 #include "agentprofile.h"
+#include "agentprofileservice.h"
 #include "usmprofile.h"
 #include "preferences.h"
 
@@ -125,7 +126,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     // Creation order is VERY important here
     logsnmpb = new LogSnmpb(this);
     modules = new MibModule(this);
-    apm = new AgentProfileManager(this);
+    profileService = new AgentProfileService(GetAgentsConfigFile(), this);
+    apm = new AgentProfileManager(this, profileService);
     prefs->Init();
     trap = new Trap(this);
     agent->Init();
@@ -155,6 +157,12 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             apm, &AgentProfileManager::EditProfile);
     connect(devicePane, &DevicePane::duplicateProfileRequested,
             apm, [this](const QString &name) { apm->DuplicateProfile(name); });
+    connect(devicePane, &DevicePane::newProfileRequested,
+            apm, [this](const QString &) { apm->NewProfile(); });
+    connect(devicePane, &DevicePane::deleteProfileRequested,
+            apm, &AgentProfileManager::DeleteProfile);
+    connect(apm, &AgentProfileManager::NewProfileCompleted,
+            devicePane, &DevicePane::placeCreatedProfile);
     connect(devicePane, &DevicePane::organizationPersisted,
             apm, &AgentProfileManager::PersistProfiles);
     connect(apm, &AgentProfileManager::AgentProfileListChanged,
@@ -231,6 +239,11 @@ MibEditor* Snmpb::MibEditorObj(void)
 AgentProfileManager* Snmpb::APManagerObj(void)
 {
     return (apm);
+}
+
+AgentProfileService* Snmpb::AgentProfiles(void)
+{
+    return profileService;
 }
 
 USMProfileManager* Snmpb::UPManagerObj(void)

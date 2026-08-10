@@ -6,6 +6,8 @@
 #include <QWidget>
 
 class QTreeView;
+class QLineEdit;
+class QSortFilterProxyModel;
 
 class DevicePane : public QWidget
 {
@@ -17,14 +19,18 @@ public:
                QWidget *parent = nullptr);
     DeviceTreeModel *model() const;
     QTreeView *treeView() const;
+    QLineEdit *filterEdit() const;
     void setProfiles(const QList<AgentProfileRecord> &profiles);
     void renameProfile(const QString &profileId, const QString &newName);
     void placeDuplicate(const QString &sourceId, const QString &newId);
+    void placeCreatedProfile(const QString &profileId);
 
 signals:
     void profileSelected(const QString &profileId);
     void editProfileRequested(const QString &profileId);
     void duplicateProfileRequested(const QString &profileId);
+    void newProfileRequested(const QString &folderId);
+    void deleteProfileRequested(const QString &profileId);
     void organizationPersisted();
 
 private slots:
@@ -35,11 +41,18 @@ private slots:
     void deleteFolder();
     void editProfile();
     void duplicateProfile();
+    void newProfile();
+    void deleteProfile();
 
 private:
     QModelIndex selectedIndex() const;
+    QModelIndex sourceIndex(const QModelIndex &index) const;
+    void selectProfile(const QString &profileId);
     DeviceTreeModel *deviceModel;
+    QSortFilterProxyModel *filterModel;
     QTreeView *tree;
+    QLineEdit *filter;
+    QString pendingFolderId;
 };
 
 #endif
