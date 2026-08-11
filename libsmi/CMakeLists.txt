@@ -14,30 +14,52 @@ add_library(snmpb_libsmi STATIC
 
 if(WIN32)
     target_sources(snmpb_libsmi PRIVATE win/win.c)
+else()
+    include(CheckFunctionExists)
+    include(CheckIncludeFile)
+
+    check_include_file(limits.h HAVE_LIMITS_H)
+    check_include_file(pwd.h HAVE_PWD_H)
+    check_include_file(regex.h HAVE_REGEX_H)
+    check_include_file(stdint.h HAVE_STDINT_H)
+    check_include_file(strings.h HAVE_STRINGS_H)
+    check_include_file(unistd.h HAVE_UNISTD_H)
+    check_function_exists(asprintf HAVE_ASPRINTF)
+    check_function_exists(snprintf HAVE_SNPRINTF)
+    check_function_exists(strtoll HAVE_STRTOLL)
+    check_function_exists(strtoq HAVE_STRTOQ)
+    check_function_exists(strtoull HAVE_STRTOULL)
+    check_function_exists(strtouq HAVE_STRTOUQ)
+    check_function_exists(timegm HAVE_TIMEGM)
+    check_function_exists(vasprintf HAVE_VASPRINTF)
+    check_function_exists(vsnprintf HAVE_VSNPRINTF)
+
+    set(LIBSMI_DEFAULT_GLOBALCONFIG "${CMAKE_INSTALL_FULL_SYSCONFDIR}/smi.conf")
+    set(LIBSMI_DEFAULT_SMIPATH
+        "${CMAKE_INSTALL_FULL_DATADIR}/mibs/ietf:${CMAKE_INSTALL_FULL_DATADIR}/mibs/iana:${CMAKE_INSTALL_FULL_DATADIR}/mibs/tubs:${CMAKE_INSTALL_FULL_DATADIR}/pibs/ietf:${CMAKE_INSTALL_FULL_DATADIR}/pibs/tubs")
+    configure_file(cmake/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h @ONLY)
 endif()
 
 target_include_directories(snmpb_libsmi
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/lib
-
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/win
 )
 
-target_compile_definitions(snmpb_libsmi
-    PRIVATE
+if(WIN32)
+    target_include_directories(snmpb_libsmi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win)
+    target_compile_definitions(snmpb_libsmi PRIVATE
         _CRT_SECURE_NO_WARNINGS
         _CRT_NONSTDC_NO_WARNINGS
         YY_NO_UNISTD_H
         YYMALLOC=malloc
         YYFREE=free
-)
-
-set_source_files_properties(
-    lib/scanner-smi.c
-    PROPERTIES
+    )
+    set_source_files_properties(lib/scanner-smi.c PROPERTIES
         COMPILE_DEFINITIONS "_Win32;__STDC__;YY_NEVER_INTERACTIVE"
-)
+    )
+else()
+    target_include_directories(snmpb_libsmi PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+endif()
 
 # Build libsmi's native MIB validation utility.
 # This gives SnmpB Next a regression tool for verifying that the
@@ -50,16 +72,19 @@ add_executable(snmpb_smilint
 
 target_include_directories(snmpb_smilint
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/win
         ${CMAKE_CURRENT_SOURCE_DIR}/lib
         ${CMAKE_CURRENT_SOURCE_DIR}/tools
 )
 
-target_compile_definitions(snmpb_smilint
-    PRIVATE
+if(WIN32)
+    target_include_directories(snmpb_smilint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win)
+    target_compile_definitions(snmpb_smilint PRIVATE
         _CRT_SECURE_NO_WARNINGS
         _CRT_NONSTDC_NO_WARNINGS
-)
+    )
+else()
+    target_include_directories(snmpb_smilint PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+endif()
 
 target_link_libraries(snmpb_smilint
     PRIVATE
