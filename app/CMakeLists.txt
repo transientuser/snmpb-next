@@ -209,7 +209,7 @@ if(SNMPB_ENABLE_QWT)
     target_link_libraries(snmpb PRIVATE Qwt::Qwt)
 endif()
 
-find_package(Qt6 6.11 REQUIRED COMPONENTS LinguistTools)
+find_package(Qt6 6.10 REQUIRED COMPONENTS LinguistTools)
 
 qt_add_translations(snmpb
     TS_FILES
