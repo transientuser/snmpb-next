@@ -22,7 +22,7 @@
 
 #include "ui_mainw.h"
 
-#define SNMPB_VERSION_STRING "1.0"
+#define SNMPB_VERSION_STRING "1.0.0"
 
 class MibModule;
 class Trap;

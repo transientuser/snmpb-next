@@ -249,7 +249,7 @@ install(TARGETS snmpb
     BUNDLE DESTINATION .
 )
 
-if(WIN32)
+if(WIN32 OR APPLE)
     qt_generate_deploy_app_script(
         TARGET snmpb
         OUTPUT_SCRIPT SNMPB_QT_DEPLOY_SCRIPT
