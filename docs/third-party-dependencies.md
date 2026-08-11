@@ -5,8 +5,8 @@ installed without modification where it exists in the source distribution.
 
 | Component | Version | License/material | Repository source | Runtime/package status |
 |---|---:|---|---|---|
-| SnmpB / SnmpB Next | 1.0.0 | GPL-2.0-or-later; `license.txt` | repository root and `app/` | executable shipped; GPL text installed |
-| Qt | 6.11.1 in the validated Windows build | Qt commercial or applicable open-source terms; Qt SDK SBOMs identify module-level licensing | external Qt SDK, found by CMake | Core, Gui, Widgets, Svg and deployment-selected Network/plugins shipped; Qt license compliance must be confirmed for the chosen distribution license |
+| SnmpB / SnmpB Next | 1.0.0-rc1 | GPL-2.0-or-later; `license.txt` | repository root and `app/` | executable shipped; GPL text installed |
+| Qt | 6.11.1 in the validated Windows package; CI currently uses 6.10.3 | Qt commercial or applicable open-source terms; Qt SDK SBOMs identify module-level licensing | external Qt SDK, found by CMake | Core, Gui, Widgets, Svg, and deployment-selected Network are dynamically linked in the Windows package; Qt plugins and translations are dynamically loaded; Qt license compliance must be confirmed for the chosen distribution license |
 | Qwt | 6.3.0 | Qwt License 1.0 (`COPYING`) | `third_party/qwt-6.3.0` | statically linked; COPYING and README installed |
 | libsmi | 0.5.0, locally patched | permissive libsmi license (`COPYING`) | `libsmi/` | statically linked; COPYING installed |
 | SNMP++ | 3.3.10 | HP/Jochen Katz permission notice reproduced from the source headers | `snmp++/` | statically linked; notice installed |
@@ -22,6 +22,11 @@ support files. The exact package must be inventoried after every Qt upgrade.
 The validated package uses the native Schannel TLS backend; the OpenSSL backend
 is not included.
 
-Before public distribution, select and document the Qt licensing route and
-stage any corresponding Qt license/source-offer materials required by that
-route. No definitive legal conclusion is made here.
+The validated Qt 6.11.1 SDK supplies and the package stages `qtbase` and
+`qtsvg` SPDX inventories, including source inventories. Those metadata files
+do not by themselves decide or necessarily satisfy a distribution route.
+Before public distribution, the release owner must select and document the Qt
+licensing route, review its notices and source-material/source-offer terms, and
+confirm any reverse-engineering or relinking requirements that apply to the
+chosen route. No definitive legal conclusion is made here, and the Qt linkage
+strategy has not been changed.

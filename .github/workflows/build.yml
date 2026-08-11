@@ -39,3 +39,15 @@ jobs:
         run: ctest --test-dir build-ci -C Release -E snmpb.launch-smoke --output-on-failure
       - name: Install staging tree
         run: cmake --install build-ci --config Release --prefix "${{ github.workspace }}/stage"
+      - name: Verify staging tree
+        run: cmake -DSNMPB_PACKAGE_ROOT="${{ github.workspace }}/stage" -P cmake/VerifyReleaseTree.cmake
+      - name: Create release-candidate archive
+        run: cpack --config build-ci/CPackConfig.cmake -C Release -B build-ci/packages
+      - name: Verify extracted release-candidate archive
+        run: cmake -DSNMPB_PACKAGE_DIR="${{ github.workspace }}/build-ci/packages" -DSNMPB_EXTRACT_DIR="${{ github.workspace }}/build-ci/extracted-package" -P cmake/VerifyReleaseArchive.cmake
+      - name: Upload release-candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SnmpB-Next-1.0.0-rc1-${{ matrix.os }}
+          path: build-ci/packages/SnmpB-Next-1.0.0-rc1-*
+          if-no-files-found: error

@@ -195,6 +195,7 @@ endif()
 target_include_directories(snmpb
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_BINARY_DIR}/generated
 )
 
 target_link_libraries(snmpb

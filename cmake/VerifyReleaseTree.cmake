@@ -5,11 +5,6 @@ endif()
 cmake_path(ABSOLUTE_PATH SNMPB_PACKAGE_ROOT NORMALIZE OUTPUT_VARIABLE root)
 
 set(required_files
-    "bin/snmpb.exe"
-    "bin/qt.conf"
-    "bin/mibs/SNMPv2-MIB"
-    "bin/pibs/COPS-PR-SPPI"
-    "plugins/platforms/qwindows.dll"
     "share/snmpb/licenses/SnmpB/COPYING"
     "share/snmpb/licenses/libsmi/COPYING"
     "share/snmpb/licenses/LibTomCrypt/LICENSE"
@@ -21,17 +16,41 @@ set(required_files
     "share/snmpb/licenses/icons/ionicons/LICENSE.txt"
     "portable-package-readme.txt"
     "release-candidate-validation.md"
+    "release-notes-1.0.0-rc1.md"
+    "security.md"
     "manual-real-device-acceptance.md"
     "third-party-dependencies.md"
 )
 
-if(WIN32)
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
     list(APPEND required_files
+        "bin/snmpb.exe"
+        "bin/qt.conf"
+        "bin/mibs/SNMPv2-MIB"
+        "bin/pibs/COPS-PR-SPPI"
+        "plugins/platforms/qwindows.dll"
         "bin/Qt6Core.dll"
         "bin/Qt6Gui.dll"
         "bin/Qt6Widgets.dll"
         "bin/Qt6Svg.dll"
     )
+    set(mib_root "bin")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    list(APPEND required_files
+        "snmpb.app/Contents/MacOS/snmpb"
+        "snmpb.app/Contents/Resources/mibs/SNMPv2-MIB"
+        "snmpb.app/Contents/Resources/pibs/COPS-PR-SPPI"
+        "snmpb.app/Contents/Frameworks/QtCore.framework"
+        "snmpb.app/Contents/PlugIns/platforms/libqcocoa.dylib"
+    )
+    set(mib_root "snmpb.app/Contents/Resources")
+else()
+    list(APPEND required_files
+        "bin/snmpb"
+        "share/snmpb/mibs/SNMPv2-MIB"
+        "share/snmpb/pibs/COPS-PR-SPPI"
+    )
+    set(mib_root "share/snmpb")
 endif()
 
 foreach(relative_path IN LISTS required_files)
@@ -59,10 +78,13 @@ foreach(relative_path IN LISTS packaged_entries)
     if(relative_path MATCHES "(^|/)Qt6[^/]*d\\.dll$")
         message(FATAL_ERROR "Debug Qt runtime was packaged: ${relative_path}")
     endif()
+    if(relative_path MATCHES "(^|/)(lib)?qwt[^/]*\\.(dll|dylib|so)(\\.[0-9]+)*$")
+        message(FATAL_ERROR "Unexpected dynamically linked Qwt runtime: ${relative_path}")
+    endif()
 endforeach()
 
-file(GLOB mib_files "${root}/bin/mibs/*")
-file(GLOB pib_files "${root}/bin/pibs/*")
+file(GLOB mib_files "${root}/${mib_root}/mibs/*")
+file(GLOB pib_files "${root}/${mib_root}/pibs/*")
 list(LENGTH mib_files mib_count)
 list(LENGTH pib_files pib_count)
 if(mib_count LESS 1 OR pib_count LESS 1)

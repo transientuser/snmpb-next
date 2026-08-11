@@ -5,6 +5,14 @@ project(SnmpBNext
     LANGUAGES C CXX
 )
 
+set(SNMPB_RELEASE_LABEL "${PROJECT_VERSION}-rc1" CACHE STRING
+    "SnmpB Next display and package release label")
+configure_file(
+    cmake/snmpb_version.h.in
+    generated/snmpb_version.h
+    @ONLY
+)
+
 include(CTest)
 include(GNUInstallDirs)
 
@@ -56,6 +64,8 @@ install(FILES
 install(FILES
     docs/portable-package-readme.txt
     docs/release-candidate-validation.md
+    docs/release-notes-1.0.0-rc1.md
+    docs/security.md
     docs/manual-real-device-acceptance.md
     docs/third-party-dependencies.md
     DESTINATION .
@@ -87,21 +97,21 @@ endif()
 if(WIN32)
     set(CPACK_GENERATOR ZIP)
     set(CPACK_PACKAGE_FILE_NAME
-        "SnmpB-Next-${PROJECT_VERSION}-windows-x64")
+        "SnmpB-Next-${SNMPB_RELEASE_LABEL}-windows-x64")
 elseif(APPLE)
     set(CPACK_GENERATOR TGZ)
     set(CPACK_PACKAGE_FILE_NAME
-        "SnmpB-Next-${PROJECT_VERSION}-macos")
+        "SnmpB-Next-${SNMPB_RELEASE_LABEL}-macos-${CMAKE_SYSTEM_PROCESSOR}")
 else()
     set(CPACK_GENERATOR TGZ)
     set(CPACK_PACKAGE_FILE_NAME
-        "SnmpB-Next-${PROJECT_VERSION}-linux-${CMAKE_SYSTEM_PROCESSOR}")
+        "SnmpB-Next-${SNMPB_RELEASE_LABEL}-linux-${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 set(CPACK_PACKAGE_NAME "SnmpB Next")
 set(CPACK_PACKAGE_VENDOR "SnmpB Next contributors")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
     "Cross-platform graphical SNMP and MIB browser")
-set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_VERSION "${SNMPB_RELEASE_LABEL}")
 set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/license.txt")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
 include(CPack)
