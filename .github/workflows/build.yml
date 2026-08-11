@@ -30,7 +30,6 @@ jobs:
         with:
           version: 6.10.3
           arch: ${{ matrix.qt-arch }}
-          modules: qttools
           cache: true
       - name: Configure
         run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
