@@ -1,6 +1,6 @@
 # SnmpB Next CMake integration for the unmodified Qwt 6.3.0 distribution.
 # Only the base and 2-D plot sources required by Graphing v2 are compiled.
-find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Concurrent Svg)
+find_package(Qt6 6.10 REQUIRED COMPONENTS Core Gui Widgets Concurrent Svg)
 
 file(GLOB QWT_630_SOURCES CONFIGURE_DEPENDS src/qwt*.cpp)
 file(GLOB QWT_630_HEADERS CONFIGURE_DEPENDS src/qwt*.h)
