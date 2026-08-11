@@ -17,6 +17,7 @@ public:
                const QList<std::shared_ptr<ISnmpTransport>> &transports,
                const QDateTime &timestamp = QDateTime::currentDateTimeUtc());
     void stop();
+    void wait();
     bool isRunning() const;
 signals:
     void completed(const GraphSampleBatch &batch);

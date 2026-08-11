@@ -1,9 +1,3 @@
-if(SNMPB_ENABLE_QWT)
-    message(FATAL_ERROR
-        "SNMPB_ENABLE_QWT requires a future Qt 6 port of bundled Qwt 6.1.2"
-    )
-endif()
-
 set(SNMPB_APP_SOURCES
     agent.cpp
     agentrequestselection.cpp
@@ -22,6 +16,10 @@ set(SNMPB_APP_SOURCES
     discoverydestination.cpp
     graphmodel.cpp
     graphasyncrunner.cpp
+    graphplotpresenter.cpp
+    graphmanager.cpp
+    graphlabelresolver.cpp
+    graphpollingstate.cpp
     graphrepository.cpp
     graphservice.cpp
     devicepane.cpp
@@ -89,6 +87,10 @@ set(SNMPB_APP_HEADERS
     discoverydestination.h
     graphmodel.h
     graphasyncrunner.h
+    graphplotpresenter.h
+    graphmanager.h
+    graphlabelresolver.h
+    graphpollingstate.h
     graphrepository.h
     graphservice.h
     devicepane.h
@@ -174,7 +176,7 @@ set_target_properties(snmpb PROPERTIES
 
 target_compile_definitions(snmpb
     PRIVATE
-        SNMPB_ENABLE_QWT=0
+        SNMPB_ENABLE_QWT=$<BOOL:${SNMPB_ENABLE_QWT}>
 )
 
 if(UNIX AND NOT APPLE)
@@ -197,6 +199,9 @@ target_link_libraries(snmpb
         snmpb_snmp_pp
         snmpb_libtomcrypt
 )
+if(SNMPB_ENABLE_QWT)
+    target_link_libraries(snmpb PRIVATE Qwt::Qwt)
+endif()
 
 find_package(Qt6 6.11 REQUIRED COMPONENTS LinguistTools)
 
@@ -239,6 +244,15 @@ install(TARGETS snmpb
 )
 
 if(WIN32)
+    qt_generate_deploy_app_script(
+        TARGET snmpb
+        OUTPUT_SCRIPT SNMPB_QT_DEPLOY_SCRIPT
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+    install(SCRIPT ${SNMPB_QT_DEPLOY_SCRIPT})
+endif()
+
+if(WIN32)
     set(SNMPB_INSTALL_DATA_DIR ${CMAKE_INSTALL_BINDIR})
 elseif(APPLE)
     set(SNMPB_INSTALL_DATA_DIR "snmpb.app/Contents/Resources")
@@ -259,6 +273,9 @@ if(BUILD_TESTING)
         credentialrecords.cpp credentialrecords.h
         graphmodel.cpp graphmodel.h graphrepository.cpp graphrepository.h
         graphasyncrunner.cpp graphasyncrunner.h
+        graphplotpresenter.cpp graphplotpresenter.h
+        graphpollingstate.cpp graphpollingstate.h
+        graphlabelresolver.cpp graphlabelresolver.h
         graphservice.cpp graphservice.h
         snmprequestconfig.cpp snmprequestconfig.h
         snmprequestconfigadapter.cpp snmprequestconfigadapter.h
@@ -268,14 +285,20 @@ if(BUILD_TESTING)
         tabletraversal.cpp tabletraversal.h
         graph_v2_test.cpp)
     target_link_libraries(snmpb_graph_v2_test PRIVATE
-        Qt6::Core snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
+        Qt6::Core Qt6::Widgets Qwt::Qwt snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
     set_target_properties(snmpb_graph_v2_test PROPERTIES AUTOMOC ON)
+    target_compile_definitions(snmpb_graph_v2_test PRIVATE SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     if(WIN32)
         add_test(NAME snmpb.graph-v2 COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen"
+            "QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             $<TARGET_FILE:snmpb_graph_v2_test>)
     else()
-        add_test(NAME snmpb.graph-v2 COMMAND $<TARGET_FILE:snmpb_graph_v2_test>)
+        add_test(NAME snmpb.graph-v2 COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen"
+            "QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
+            $<TARGET_FILE:snmpb_graph_v2_test>)
     endif()
 
     add_executable(snmpb_mib_service_test

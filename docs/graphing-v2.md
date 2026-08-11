@@ -36,11 +36,56 @@ invalidate a definition. Profile renames are harmless because profile IDs are
 authoritative. Deleted profiles leave unresolved definitions. Credential
 changes affect later request captures, never a request already in progress.
 
-No supported plotting component is installed with the current Qt 6.11.1
-environment. Qt Charts, Qt Graphs, and Qt Data Visualization are absent. The
-legacy bundled Qwt 6.1.2 remains disabled. UI restoration therefore stops at
-the presentation-backend dependency decision; no dependency was installed or
-added.
+The approved official Qwt 6.3.0 distribution is vendored under
+`third_party/qwt-6.3.0`. Its upstream `COPYING`, `README`, copyright notices,
+and qmake metadata are retained unchanged. A project CMake target compiles only
+the base and 2-D plot implementation needed for curves, axes, grids, dates, and
+legends; examples, tests, designer plugins, polar plots, OpenGL canvases, and
+specialty widgets are not built. SnmpB identifies its use of Qwt in the About
+dialog, as requested by the included Qwt License 1.0.
+
+`GraphPlotPresenter` is the only application layer that includes Qwt. It maps
+stable series IDs to curves, renders sample timestamps on a UTC date axis,
+maps legacy pen settings with safe fallbacks, and uses NaN gaps for invalid
+samples rather than plotting false zeroes. Qwt owns no profiles, credentials,
+SNMP transports, definitions, persistence, history, or MIB state.
+The generic numeric Y axis uses 12 significant digits so nearby large raw SNMP
+values retain distinguishable tick labels without changing sample values or
+introducing type-specific units.
+
+`GraphManager` adapts the existing Graph tab to `GraphService`, presents a
+separate live plot page, and provides graph/series editing plus Start, Stop,
+and Clear controls. Every polling cycle resolves each stable profile ID,
+captures a fresh request configuration, and starts only when the preceding
+cycle has completed. The single-shot scheduling pattern prevents overlapping
+or queued cycles. Stop cancels cooperatively and prevents the next timer.
+Series with unresolved profiles are retained and skipped with non-modal status.
+Labels are resolved transiently through libsmi with module-qualified symbolic
+names and numeric fallback; definitions retain only numeric OIDs.
+
+Numeric conversion uses SNMP++ typed accessors rather than printable display
+strings. This is essential for TimeTicks, whose printable representation is a
+human-readable duration rather than a locale-independent number. INTEGER,
+Gauge32, Counter32, Counter64, and TimeTicks retain their raw numeric values.
+Per-series status distinguishes timeout, SNMP status, transport failure,
+unsupported syntax, missing value, and cancellation without exposing secrets.
+One failed series does not discard successful samples from another series.
+
+The legacy `qwt/` 6.1.2 tree remains solely as historical source reference and
+is not part of the active CMake dependency graph. The old `graph.cpp` and
+`graph.h` implementation are likewise not compiled.
+
+On Windows, create a runnable Release installation with Qt's deployment helper:
+
+```powershell
+cmake --install build-graph-release --config Release --prefix "$PWD\build-graph-release\install"
+```
+
+The generated install script discovers and stages the Qt runtime DLLs and
+plugins required by `snmpb.exe`; no developer Qt path or fixed DLL list is
+encoded in the project. Qwt is linked statically and therefore requires no
+separate Qwt runtime DLL. Bundled MIBs, PIBs, and upstream Qwt license material
+are installed by the same command.
 
 Ordinary Query operations still use the established SNMP++ callback path.
 Their captured request-context work already removes the most serious mutable

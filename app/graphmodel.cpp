@@ -24,15 +24,26 @@ GraphSample GraphValueConverter::fromVarbind(const Vb &vb, const QDateTime &time
     switch (syntax)
     {
     case sNMP_SYNTAX_INT32:
+    {
+        long value=0;
+        if(vb.get_value(value)==SNMP_CLASS_SUCCESS){sample.value=double(value);sample.status=GraphSampleStatus::Valid;}
+        else sample.status=GraphSampleStatus::UnsupportedValue;
+        return sample;
+    }
     case sNMP_SYNTAX_GAUGE32:
     case sNMP_SYNTAX_CNTR32:
-    case sNMP_SYNTAX_CNTR64:
     case sNMP_SYNTAX_TIMETICKS:
     {
-        bool ok = false;
-        sample.value = QString::fromLatin1(vb.get_printable_value()).toDouble(&ok);
-        sample.status = ok ? GraphSampleStatus::Valid : GraphSampleStatus::UnsupportedValue;
-        if (!ok) sample.detail = QString::fromLatin1(vb.get_printable_value());
+        unsigned long value=0;
+        if(vb.get_value(value)==SNMP_CLASS_SUCCESS){sample.value=double(value);sample.status=GraphSampleStatus::Valid;}
+        else sample.status=GraphSampleStatus::UnsupportedValue;
+        return sample;
+    }
+    case sNMP_SYNTAX_CNTR64:
+    {
+        pp_uint64 value=0;
+        if(vb.get_value(value)==SNMP_CLASS_SUCCESS){sample.value=double(value);sample.status=GraphSampleStatus::Valid;}
+        else sample.status=GraphSampleStatus::UnsupportedValue;
         return sample;
     }
     case sNMP_SYNTAX_NOSUCHOBJECT:
@@ -46,6 +57,19 @@ GraphSample GraphValueConverter::fromVarbind(const Vb &vb, const QDateTime &time
         sample.detail = QString::fromLatin1(vb.get_printable_value());
         return sample;
     }
+}
+
+QString GraphValueConverter::statusText(GraphSampleStatus status)
+{
+    switch(status){
+    case GraphSampleStatus::Valid:return QStringLiteral("valid");
+    case GraphSampleStatus::Timeout:return QStringLiteral("timeout");
+    case GraphSampleStatus::SnmpError:return QStringLiteral("SNMP error");
+    case GraphSampleStatus::TransportError:return QStringLiteral("transport error");
+    case GraphSampleStatus::UnsupportedValue:return QStringLiteral("unsupported value type");
+    case GraphSampleStatus::MissingValue:return QStringLiteral("missing value");
+    case GraphSampleStatus::Cancelled:return QStringLiteral("cancelled");}
+    return QStringLiteral("unknown error");
 }
 
 GraphSamplingOperation::GraphSamplingOperation(const QList<GraphSampleSeriesPlan> &series) : plans(series) {}
@@ -75,9 +99,9 @@ GraphSampleBatch GraphSamplingOperation::execute(const QList<ISnmpTransport *> &
                 sample = GraphValueConverter::fromVarbind(vb, timestamp);
             }
             else if (result.status == SnmpOperationStatus::Timeout) sample.status = GraphSampleStatus::Timeout;
-            else if (result.status == SnmpOperationStatus::SnmpError) sample.status = GraphSampleStatus::SnmpError;
+            else if (result.status == SnmpOperationStatus::SnmpError) { sample.status = GraphSampleStatus::SnmpError; sample.detail=QString::number(result.snmpErrorStatus); }
             else if (result.status == SnmpOperationStatus::Cancelled) sample.status = GraphSampleStatus::Cancelled;
-            else sample.status = GraphSampleStatus::TransportError;
+            else { sample.status = GraphSampleStatus::TransportError; sample.detail=QString::number(result.transportStatus); }
         }
         batch.samples.append(qMakePair(plans[i].seriesId, sample));
     }

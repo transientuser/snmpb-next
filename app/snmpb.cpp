@@ -31,7 +31,7 @@
 #include "agent.h"
 #include "trap.h"
 #if SNMPB_ENABLE_QWT
-#include "graph.h"
+#include "graphmanager.h"
 #endif
 #include "logsnmpb.h"
 #include "mibeditor.h"

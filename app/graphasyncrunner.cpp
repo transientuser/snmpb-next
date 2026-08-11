@@ -30,4 +30,5 @@ bool GraphAsyncRunner::start(const QList<GraphSampleSeriesPlan> &plans,
 }
 
 void GraphAsyncRunner::stop() { if (cancellation) cancellation->cancel(); }
+void GraphAsyncRunner::wait() { if (worker) worker->wait(); }
 bool GraphAsyncRunner::isRunning() const { return worker && worker->isRunning(); }

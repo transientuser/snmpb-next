@@ -77,6 +77,7 @@ class GraphValueConverter
 {
 public:
     static GraphSample fromVarbind(const Vb &varbind, const QDateTime &timestamp);
+    static QString statusText(GraphSampleStatus status);
 };
 
 class GraphSamplingOperation
