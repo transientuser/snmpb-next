@@ -20,6 +20,10 @@ set(SNMPB_APP_SOURCES
     discovery.cpp
     discoveryscanplan.cpp
     discoverydestination.cpp
+    graphmodel.cpp
+    graphasyncrunner.cpp
+    graphrepository.cpp
+    graphservice.cpp
     devicepane.cpp
     devicetree.cpp
     devicetreemodel.cpp
@@ -83,6 +87,10 @@ set(SNMPB_APP_HEADERS
     discovery.h
     discoveryscanplan.h
     discoverydestination.h
+    graphmodel.h
+    graphasyncrunner.h
+    graphrepository.h
+    graphservice.h
     devicepane.h
     devicetree.h
     devicetreemodel.h
@@ -246,6 +254,30 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_graph_v2_test
+        agentprofilerepository.cpp agentprofilerepository.h
+        credentialrecords.cpp credentialrecords.h
+        graphmodel.cpp graphmodel.h graphrepository.cpp graphrepository.h
+        graphasyncrunner.cpp graphasyncrunner.h
+        graphservice.cpp graphservice.h
+        snmprequestconfig.cpp snmprequestconfig.h
+        snmprequestconfigadapter.cpp snmprequestconfigadapter.h
+        snmprequestcontext.cpp snmprequestcontext.h
+        snmptransport.cpp snmptransport.h
+        snmptableoperation.cpp snmptableoperation.h
+        tabletraversal.cpp tabletraversal.h
+        graph_v2_test.cpp)
+    target_link_libraries(snmpb_graph_v2_test PRIVATE
+        Qt6::Core snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
+    set_target_properties(snmpb_graph_v2_test PROPERTIES AUTOMOC ON)
+    if(WIN32)
+        add_test(NAME snmpb.graph-v2 COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_graph_v2_test>)
+    else()
+        add_test(NAME snmpb.graph-v2 COMMAND $<TARGET_FILE:snmpb_graph_v2_test>)
+    endif()
+
     add_executable(snmpb_mib_service_test
         mibdiagnosticcollector.cpp mibdiagnosticcollector.h
         mibdiagnosticmodel.cpp mibdiagnosticmodel.h
