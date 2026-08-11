@@ -57,13 +57,13 @@ MibService::MibService(SmiErrorHandler *restoreHandler, int restoreErrorLevel)
 
 void MibService::setSearchPaths(const QStringList &paths)
 {
-    smiSetPath(paths.join(QLatin1Char(';')).toLocal8Bit().constData());
+    smiSetPath(paths.join(QDir::listSeparator()).toLocal8Bit().constData());
 }
 
 QStringList MibService::searchPaths() const
 {
     std::unique_ptr<char, decltype(&std::free)> path{smiGetPath(), std::free};
-    return path ? QString::fromLocal8Bit(path.get()).split(';', Qt::KeepEmptyParts)
+    return path ? QString::fromLocal8Bit(path.get()).split(QDir::listSeparator(), Qt::KeepEmptyParts)
                 : QStringList();
 }
 
