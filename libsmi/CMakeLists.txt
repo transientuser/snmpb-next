@@ -1,6 +1,4 @@
 add_library(snmpb_libsmi STATIC
-    win/win.c
-
     lib/common.c
     lib/error.c
     lib/util.c
@@ -13,6 +11,10 @@ add_library(snmpb_libsmi STATIC
     lib/parser-smi.c
     lib/scanner-smi.c
 )
+
+if(WIN32)
+    target_sources(snmpb_libsmi PRIVATE win/win.c)
+endif()
 
 target_include_directories(snmpb_libsmi
     PUBLIC
