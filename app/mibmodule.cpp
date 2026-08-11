@@ -31,11 +31,13 @@
 #include "agent.h"
 #include "preferences.h"
 #include "preferredmibresolver.h"
+#include "mibservice.h"
 
 LoadedMibModule::LoadedMibModule(SmiModule* mod)
 {
-    name = mod->name;
-    module = mod;
+    record = MibService::snapshotModule(mod);
+    name = record.name;
+    path = record.path;
 }
 
 void LoadedMibModule::PrintProperties(QString& text)
@@ -45,71 +47,44 @@ void LoadedMibModule::PrintProperties(QString& text)
     
     // Add the name
     text += MibModule::tr("<tr><td><b>Name:</b></td><td><font color=#009000><b>%1</b></font></td>")
-            .arg(module->name);
+            .arg(record.name);
     
     // Add last revision
-    SmiRevision * rev = smiGetFirstRevision(module);
-    if(rev)
+    if(record.lastRevision.isValid())
         text += MibModule::tr("<tr><td><b>Last revision:</b></td><td>%1</td></tr>")
-                .arg(asctime(gmtime(&rev->date)));
+                .arg(record.lastRevision.toString(Qt::ISODate));
     
     // Add the description
     text += MibModule::tr("<tr><td><b>Description:</b></td><td><font face=fixed color=blue>");
-    text += Qt::convertFromPlainText (module->description);
+    text += Qt::convertFromPlainText (record.description);
     text += MibModule::tr("</font></td></tr>");
     
     // Add root node name
-    SmiNode *node = smiGetModuleIdentityNode(module);
-    if (node)
+    if (!record.rootName.isEmpty())
         text += MibModule::tr("<tr><td><b>Root node:</b></td><td>%1</td>")
-                .arg(node->name);
+                .arg(record.rootName);
     
     // Add required modules
     text += MibModule::tr("<tr><td><b>Requires:</b></td><td><font color=red>");
-    SmiImport * ip = smiGetFirstImport(module);
-    SmiImport * ipprev = NULL;
-    int first = 1;
-    while(ip)    
-    {
-        if (!ipprev || strcmp(ip->module, ipprev->module))
-        {
-            if (!first) text += QString("<br>");
-            first = 0;
-            text += QString("%1").arg(ip->module);
-        }
-        ipprev = ip;
-        ip = smiGetNextImport(ip);
-    }
+    text += record.imports.join(QStringLiteral("<br>"));
     text += MibModule::tr("</font></td></tr>");
     
     // Add organization
     text += MibModule::tr("<tr><td><b>Organization:</b></td><td>");
-    text += Qt::convertFromPlainText (module->organization);
+    text += Qt::convertFromPlainText (record.organization);
     text += MibModule::tr("</td></tr>");
     
     // Add contact info
     text += MibModule::tr("<tr><td><b>Contact Info:</b></td><td><font face=fixed>");
-    text += Qt::convertFromPlainText (module->contactinfo);
+    text += Qt::convertFromPlainText (record.contactInfo);
     text += MibModule::tr("</font></td></tr>");
              
     text += QString("</table>");
 }
 
-const char* LoadedMibModule::GetMibLanguage()
+QString LoadedMibModule::GetMibLanguage() const
 {
-    switch(module->language)
-    {
-    case SMI_LANGUAGE_SMIV1:
-        return "SMIv1";
-    case SMI_LANGUAGE_SMIV2:
-        return "SMIv2";
-    case SMI_LANGUAGE_SMING:
-        return "SMIng";
-    case SMI_LANGUAGE_SPPI:
-        return "SPPI";
-    default:
-        return "Unknown";
-    }
+    return record.language;
 }
 
 static MibModule *CurrentModuleObject = NULL;
@@ -158,7 +133,7 @@ void MibModule::ShowModuleInfo()
         LoadedMibModule *lmodule;
         for(int i = 0; i < Loaded.count(); i++)
         { 
-            lmodule = Loaded[i];
+            lmodule = &Loaded[i];
             if (lmodule->name == item->text(0))
             {
                 lmodule->PrintProperties(text);
@@ -302,8 +277,8 @@ void MibModule::RebuildTotalList()
 QStringList MibModule::AvailableModuleNames() const
 {
     QStringList result = KnownModuleNames;
-    for (const LoadedMibModule *module : Loaded)
-        if (!result.contains(module->name)) result.append(module->name);
+    for (const LoadedMibModule &module : Loaded)
+        if (!result.contains(module.name)) result.append(module.name);
     result.sort(Qt::CaseInsensitive);
     return result;
 }
@@ -311,7 +286,7 @@ QStringList MibModule::AvailableModuleNames() const
 QStringList MibModule::LoadedModuleNames() const
 {
     QStringList result;
-    for (const LoadedMibModule *module : Loaded) result.append(module->name);
+    for (const LoadedMibModule &module : Loaded) result.append(module.name);
     return result;
 }
 
@@ -319,13 +294,10 @@ QStringList MibModule::LoadPreferredModules(const QStringList &modules)
 {
     PreferredMibResolution resolution = PreferredMibResolver::resolve(
         modules, AvailableModuleNames(), LoadedModuleNames());
-    QStringList loadedNow;
-    for (const QString &name : resolution.toLoad)
-    {
-        char *canonical = smiLoadModule(name.toLatin1().constData());
-        if (canonical) loadedNow.append(QString::fromLatin1(canonical));
-        else resolution.unavailable.append(name);
-    }
+    MibService mibService(NormalErrorHdlr, 3);
+    const MibLoadResult loadResult = mibService.loadModules(resolution.toLoad, 3);
+    const QStringList loadedNow = loadResult.loadedModules;
+    resolution.unavailable.append(loadResult.unavailableModules);
     if (!loadedNow.isEmpty())
     {
         s->MibLoaderObj()->EnsureLoaded(loadedNow);
@@ -418,10 +390,10 @@ QString MibModule::LoadBestModule(QString oid)
     return best_file;
 }
 
-bool lessThanLoadedMibModule(const LoadedMibModule *lm1, 
-                             const LoadedMibModule *lm2)
+bool lessThanLoadedMibModule(const LoadedMibModule &lm1,
+                             const LoadedMibModule &lm2)
 {
-    return lm1->name < lm2->name;
+    return lm1.name < lm2.name;
 }
 
 void MibModule::RebuildLoadedList()
@@ -433,16 +405,16 @@ void MibModule::RebuildLoadedList()
          mod;
          mod = smiGetNextModule(mod) )
     {
-        LoadedMibModule *lmodule = new LoadedMibModule(mod);
+        LoadedMibModule lmodule(mod);
         Loaded.append(lmodule);
 
-        QString required = Wanted.contains(lmodule->name) ? tr("yes") : tr("no");
+        QString required = Wanted.contains(lmodule.name) ? tr("yes") : tr("no");
 
         QStringList columns;
-        columns << lmodule->name.toUtf8().data()
+        columns << lmodule.name.toUtf8().data()
                 << required
-                << lmodule->GetMibLanguage()
-                << lmodule->module->path;
+                << lmodule.GetMibLanguage()
+                << lmodule.path;
         new QTreeWidgetItem(s->MainUI()->LoadedModules, columns);
     }
     
@@ -461,7 +433,7 @@ void MibModule::RebuildUnloadedList()
         bool found = false;
         for(int j = 0; j < Loaded.count(); j++)
         { 
-            if (QFileInfo(Loaded[j]->module->path).fileName() == current)
+            if (QFileInfo(Loaded[j].path).fileName() == current)
             {
                 found = true;
                 break;

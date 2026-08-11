@@ -29,6 +29,10 @@ set(SNMPB_APP_SOURCES
     mibeditor.cpp
     mibhighlighter.cpp
     mibmodule.cpp
+    mibdiagnosticcollector.cpp
+    mibdiagnosticmodel.cpp
+    mibservice.cpp
+    mibtreemodel.cpp
     mibnode.cpp
     mibselection.cpp
     mibtextedit.cpp
@@ -88,6 +92,11 @@ set(SNMPB_APP_HEADERS
     mibeditor.h
     mibhighlighter.h
     mibmodule.h
+    mibdiagnosticcollector.h
+    mibdiagnosticmodel.h
+    mibrecords.h
+    mibservice.h
+    mibtreemodel.h
     mibnode.h
     mibselection.h
     mibtextedit.h
@@ -237,6 +246,24 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_mib_service_test
+        mibdiagnosticcollector.cpp mibdiagnosticcollector.h
+        mibdiagnosticmodel.cpp mibdiagnosticmodel.h
+        mibrecords.h mibservice.cpp mibservice.h
+        mibtreemodel.cpp mibtreemodel.h mibservice_test.cpp)
+    set_target_properties(snmpb_mib_service_test PROPERTIES AUTOMOC ON)
+    target_compile_definitions(snmpb_mib_service_test PRIVATE
+        SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(snmpb_mib_service_test PRIVATE
+        Qt6::Core snmpb_libsmi)
+    if(WIN32)
+        add_test(NAME snmpb.mib-service COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_service_test>)
+    else()
+        add_test(NAME snmpb.mib-service COMMAND $<TARGET_FILE:snmpb_mib_service_test>)
+    endif()
+
     add_executable(snmpb_trap_pipeline_test
         trapdecoder.cpp trapdecoder.h
         traphistorystore.cpp traphistorystore.h traprecord.h

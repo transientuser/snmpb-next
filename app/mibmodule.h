@@ -23,6 +23,7 @@
 #include "snmpb.h"
 #include "mibview.h"
 #include "smi.h"
+#include "mibrecords.h"
 
 #define SMI_PATH_SEPARATOR ';'
 
@@ -33,10 +34,11 @@ public:
     LoadedMibModule(SmiModule* mod);
     
     void PrintProperties(QString& text);   
-    const char* GetMibLanguage();
+    QString GetMibLanguage() const;
 
     QString name;
-    SmiModule *module;
+    QString path;
+    MibModuleRecord record;
 };
 
 class MibModule: public QObject
@@ -82,7 +84,7 @@ private:
     Snmpb *s;
 
     QStringList Unloaded;
-    QList<LoadedMibModule*> Loaded;
+    QList<LoadedMibModule> Loaded;
     QList<QStringList> Total;
     QStringList Wanted;
     QStringList KnownModuleNames;

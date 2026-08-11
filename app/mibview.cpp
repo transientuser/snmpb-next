@@ -30,6 +30,8 @@
 
 #include "mibnode.h"
 #include "mibview.h"
+#include "mibservice.h"
+#include "mibtreemodel.h"
 
 //
 // BasicMibView class
@@ -645,21 +647,16 @@ void MibView::contextMenuEvent ( QContextMenuEvent *event)
 
 MibViewLoader::MibViewLoader ()
 {    
-    pmodc = 0;
-    pmodv = NULL;
     ignoreconformance = 0;
     ignoreleafs = 0;
+    treeModel = new MibTreeModel(this);
 }
 
 void MibViewLoader::Load(QStringList &modules)
 {
     char *modulename;
     SmiModule *smiModule;
-    SmiModule **modv = NULL;
-    int modc = 0;
-    
-    modv = (SmiModule **)malloc(modules.count() * sizeof(SmiModule *));
-    modc = 0;
+    loadedModuleNames.clear();
     
     QString module;
 
@@ -676,7 +673,7 @@ void MibViewLoader::Load(QStringList &modules)
         smiModule = modulename ? smiGetModule(modulename) : NULL;
 
         if (smiModule)
-            modv[modc++] = smiModule;
+            loadedModuleNames.append(QString::fromLatin1(smiModule->name));
         else
         {
             emit LogError(tr("Error: `%1` module cannot be loaded (not in MIB paths)")
@@ -684,18 +681,14 @@ void MibViewLoader::Load(QStringList &modules)
         }
     }
 
-    pmodc = modc;
-    if (pmodv)
-        free(pmodv);
-    pmodv = modv;
+    treeSnapshot = MibService().treeSnapshot(loadedModuleNames);
+    treeModel->setSnapshot(treeSnapshot);
 }
 
 void MibViewLoader::EnsureLoaded(const QStringList &modules)
 {
     QStringList combined;
-    for (int i = 0; i < pmodc; ++i)
-        if (pmodv[i] && pmodv[i]->name)
-            combined.append(QString::fromLatin1(pmodv[i]->name));
+    combined = loadedModuleNames;
     for (const QString &module : modules)
         if (!combined.contains(module)) combined.append(module);
     Load(combined);
@@ -709,16 +702,9 @@ void MibViewLoader::RegisterView(BasicMibView* view)
 int MibViewLoader::IsPartOfLoadedModules(SmiNode *smiNode)
 {
     SmiModule *smiModule;
-    int i;
-    
     smiModule = smiGetNodeModule(smiNode);
-    
-    for (i = 0; i < pmodc; i++) {
-        if (strcmp(pmodv[i]->name, smiModule->name) == 0) {
-            return 1;
-        }
-    }
-    return 0;
+    return smiModule && smiModule->name &&
+           loadedModuleNames.contains(QString::fromLatin1(smiModule->name));
 }
 
 /*

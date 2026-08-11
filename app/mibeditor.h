@@ -26,6 +26,7 @@
 
 #include "snmpb.h"
 #include "mibhighlighter.h"
+#include "mibrecords.h"
 #include "ui_gotoline.h"
 #include "ui_find.h"
 #include "ui_replace.h"
@@ -38,6 +39,7 @@ public:
     MibEditor(Snmpb *snmpb);
     void ErrorHandler(char *path, int line, int severity, 
                       char *msg, char *tag);
+    const QList<MibDiagnosticRecord> &Diagnostics() const { return diagnostics; }
 
 public slots:
     void MibFileNew(void);
@@ -80,6 +82,7 @@ private:
     int num_error;
     int num_warning;
     int num_info;
+    QList<MibDiagnosticRecord> diagnostics;
 
     QTextDocument::FindFlags ff;
     QStringList find_strings;

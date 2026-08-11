@@ -23,17 +23,18 @@
 MibNode::MibNode(enum MibType mibtype, SmiNode *node, MibNode * parent, MibNode * sibling)
     : QTreeWidgetItem(parent, sibling)
     , Type(mibtype)
-    , Node(node)
 {    
     setText(0, node->name); 
+    Oid = QString::fromLatin1(smiRenderOID(node->oidlen, node->oid,
+                                          SMI_RENDER_NUMERIC));
     SetPixmap(FoldState::COLLAPSED);
 }
 
 MibNode::MibNode(QString label, QTreeWidget* parent)
     : QTreeWidgetItem(parent)
     , Type(MIBNODE_NODE)
-    , Node(nullptr)
 {
+    Oid = QStringLiteral("1");
     setText (0, label);
     SetPixmap(FoldState::COLLAPSED);
 }
@@ -75,6 +76,8 @@ void MibNode::SetPixmap(FoldState fold)
 
 const char *MibNode::GetAccess(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return "";
     switch (Node->access)
     {
     case SMI_ACCESS_NOT_ACCESSIBLE:
@@ -108,6 +111,8 @@ const char *MibNode::GetAccess(void)
 
 const char *MibNode::GetStatus(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return "";
     switch (Node->status)
     {
     case SMI_STATUS_CURRENT:
@@ -129,6 +134,8 @@ const char *MibNode::GetStatus(void)
 
 const char *MibNode::GetKindName(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return "";
     switch(Node->nodekind)
     {
     case SMI_NODEKIND_NODE:
@@ -160,6 +167,8 @@ const char *MibNode::GetKindName(void)
 
 const char *MibNode::GetSmiTypeName(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return "";
     switch(Node->decl)
     {    
     /* SMIv1/v2 ASN.1 statements and macros */    
@@ -222,6 +231,8 @@ const char *MibNode::GetSmiTypeName(void)
                                   
 const char *MibNode::GetTypeName(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return NULL;
     SmiType *smiType, *parentType;
     
     smiType = smiGetNodeType(Node);
@@ -243,6 +254,8 @@ const char *MibNode::GetTypeName(void)
 
 const char *MibNode::GetBaseTypeName(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return "";
     SmiType *smiType;
     
     smiType = smiGetNodeType(Node);
@@ -274,10 +287,15 @@ const char *MibNode::GetBaseTypeName(void)
     return "";
 }
 
-const char *MibNode::GetOid(void)
+QString MibNode::GetOid(void) const
 {
-    // If the Node is NULL, this is the root node, return the iso OID ...
-    return (Node?smiRenderOID(Node->oidlen, Node->oid, SMI_RENDER_NUMERIC):"1");
+    return Oid;
+}
+
+SmiNode *MibNode::ResolveNode() const
+{
+    if (Oid.isEmpty()) return nullptr;
+    return smiGetNode(nullptr, Oid.toLatin1().constData());
 }
 
 // Generate indexes for table rows
@@ -333,6 +351,8 @@ QString MibNode::GetRowIndex(SmiNode *smiNode)
 
 QString MibNode::GetSizeRange(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return {};
     SmiType *type = smiGetNodeType(Node);
     QString i;
     SmiRange *r;
@@ -356,6 +376,8 @@ QString MibNode::GetSizeRange(void)
 
 QString MibNode::GetValueList(void)
 {
+    SmiNode *Node = ResolveNode();
+    if (!Node) return {};
     SmiType *type = smiGetNodeType(Node);
     QString i;
     SmiNamedNumber  *nn;
@@ -376,6 +398,7 @@ QString MibNode::GetValueList(void)
 
 void MibNode::PrintProperties(QString& text)
 {
+    SmiNode *Node = ResolveNode();
     if (!Node)
         return;
 

@@ -380,7 +380,15 @@ void MibEditor::ErrorHandler(char *path, int line, int severity,
     QString message = NULL;
     QListWidgetItem *item;
     QBrush item_brush;
-    (void)path;
+    MibDiagnosticRecord diagnostic;
+    diagnostic.severity = severity;
+    diagnostic.sourcePath = QString::fromLocal8Bit(path ? path : "");
+    diagnostic.line = line;
+    diagnostic.tag = QString::fromLocal8Bit(tag ? tag : "");
+    diagnostic.message = QString::fromLocal8Bit(msg ? msg : "");
+    diagnostic.rawText = QStringLiteral("%1:%2: [%3] %4")
+        .arg(diagnostic.sourcePath).arg(line).arg(diagnostic.tag, diagnostic.message);
+    diagnostics.append(diagnostic);
 
     switch (severity)
     {
@@ -431,6 +439,7 @@ void MibEditor::VerifyMIB(void)
     smiSetFlags(flags);
 
     s->MainUI()->MIBLog->clear();
+    diagnostics.clear();
     CurrentEditorObject = this;
     smiSetErrorHandler(ErrorHdlr);
     smiSetErrorLevel(9);

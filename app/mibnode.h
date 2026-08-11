@@ -55,7 +55,7 @@ public:
 
     void SetPixmap(FoldState);
     void PrintProperties(QString& text);
-    const char *GetOid();
+    QString GetOid() const;
     enum MibNode::MibType GetKind(void) { return Type; }
     
 protected:
@@ -70,8 +70,9 @@ protected:
     QString GetValueList(void);
                     
 private:
+    SmiNode *ResolveNode() const;
     enum MibType Type;
-    SmiNode *Node;
+    QString Oid;
 };
 
 #endif /* MIBNODE_H */

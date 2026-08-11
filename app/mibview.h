@@ -31,6 +31,9 @@
 #include "ui_find.h"
 #include "mibnode.h"
 #include "smi.h"
+#include "mibrecords.h"
+
+class MibTreeModel;
 
 class MibViewLoader;
 
@@ -150,6 +153,8 @@ public:
     MibViewLoader();
     void Load (QStringList &);
     void EnsureLoaded(const QStringList &modules);
+    const MibTreeNodeRecord &TreeSnapshot() const { return treeSnapshot; }
+    MibTreeModel *TreeModel() const { return treeModel; }
     MibNode *PopulateSubTree (SmiNode *smiNode, MibNode *parent, MibNode *sibling);    
     void RegisterView(BasicMibView* view);
 
@@ -161,12 +166,13 @@ private:
     int PruneSubTree(SmiNode *smiNode);
     int IsPartOfLoadedModules(SmiNode *smiNode);
     
-    int pmodc;
-    SmiModule **pmodv;
+    QStringList loadedModuleNames;
     int ignoreconformance;
     int ignoreleafs;
     
     QList<BasicMibView*> views;
+    MibTreeNodeRecord treeSnapshot;
+    MibTreeModel *treeModel;
 };
 
 #endif /* MIBVIEW_H */
