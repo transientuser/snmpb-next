@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 if(NOT DEFINED SNMPB_PACKAGE_DIR OR NOT DEFINED SNMPB_EXTRACT_DIR)
     message(FATAL_ERROR
         "SNMPB_PACKAGE_DIR and SNMPB_EXTRACT_DIR must be defined")

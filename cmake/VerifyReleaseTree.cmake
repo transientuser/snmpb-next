@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+
 if(NOT DEFINED SNMPB_PACKAGE_ROOT)
     message(FATAL_ERROR "SNMPB_PACKAGE_ROOT must name an installed release tree")
 endif()
