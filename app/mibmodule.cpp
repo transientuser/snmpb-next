@@ -32,6 +32,7 @@
 #include "preferences.h"
 #include "preferredmibresolver.h"
 #include "mibservice.h"
+#include "mibcandidatefilter.h"
 
 LoadedMibModule::LoadedMibModule(SmiModule* mod)
 {
@@ -168,31 +169,7 @@ static bool MibFilenameFilter(const QString& filename)
     // But code like this function should not exist.
     // Instead, try to load every readable file as MIB, and back off gracefully.
 
-    if (filename.endsWith("-MIB") ||
-        filename.endsWith("-SMI") ||
-        filename.endsWith("-PIB") ||
-        filename.endsWith("-TC")  ||
-        filename.endsWith("-TYPES")
-        )
-        return true;
-
-    /* skip git merge conflict artifacts */
-    if (filename.endsWith("-orig"))
-        return false;
-
-    QString extension = QFileInfo(filename).suffix();
-    if (extension == "mib" || extension == "pib" || extension == "smi" ||
-        extension == "MIB" || extension == "PIB" || extension == "SMI" ||
-        /* net-snmp distribution */
-        extension == "txt" ||
-        /* many of taishin/vendor_mibs */
-        extension == "my"  ||
-        /* mimic libsmi; see smi_config(3) manpage */
-        extension == "smiv2" || extension == "sming"
-        )
-        return true;
-
-    return extension.isEmpty();
+    return MibCandidateFilter::accepts(filename);
 }
 
 void MibModule::RebuildTotalList()
@@ -229,7 +206,7 @@ void MibModule::RebuildTotalList()
                 SmiModule *smiModule = mod?smiGetModule(mod):NULL;
                 if (ErrorWhileLoading == true)
                 {
-                    errored_files << fn;
+                    errored_files << d.absoluteFilePath(fn);
                     continue;
                 }
 
@@ -264,7 +241,7 @@ void MibModule::RebuildTotalList()
         std::sort(errored_files.begin(), errored_files.end());
 
         QMessageBox::warning (s->MainUI()->MIBTree, tr("MIB loading errors"),
-                              tr("<p>The following MIB files failed to load. Check the log tab.</p>")
+                              tr("<p>The following files from configured MIB search paths were considered MIB candidates but failed to load. Check the Log tab for parser diagnostics.</p>")
                                   % "<code>\n"
                                   % errored_files.join('\n')
                                   % "\n</code>",

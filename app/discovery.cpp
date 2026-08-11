@@ -132,8 +132,9 @@ Discovery::Discovery(Snmpb *snmpb)
     s = snmpb;
 
     destinationFolder = new QComboBox(s->MainUI()->DiscoveryAgentProperties);
-    auto *destinationLabel = new QLabel(tr("Discovery Destination:"),
+    auto *destinationLabel = new QLabel(tr("Discovery &destination:"),
                                         s->MainUI()->DiscoveryAgentProperties);
+    destinationLabel->setBuddy(destinationFolder);
     if (auto *layout = qobject_cast<QGridLayout *>(
             s->MainUI()->DiscoveryAgentProperties->layout()))
     {
@@ -176,6 +177,10 @@ Discovery::Discovery(Snmpb *snmpb)
              this, SLOT( ContextMenu ( const QPoint & ) ) );
     addAgentAct = new QAction(tr("&Add agent(s) to profile list"), this);
     connect(addAgentAct, SIGNAL(triggered()), this, SLOT(AddAgentToProfiles()));
+    s->MainUI()->DiscoveryButton->setText(tr("Start Scan"));
+    s->MainUI()->DiscoveryAbortButton->setText(tr("Stop"));
+    s->MainUI()->DiscoveryButton->setToolTip(tr("Start discovery with the selected profile and destination"));
+    s->MainUI()->DiscoveryAbortButton->setToolTip(tr("Stop the active discovery scan"));
 }
 
 Discovery::~Discovery()
@@ -575,6 +580,12 @@ void Discovery::DisplayAgent(QStringList agent_info)
 
 void Discovery::StartStop(int isstart)
 {
+    const bool editable = !isstart;
+    s->MainUI()->DiscoveryAgentProperties->setEnabled(editable);
+    s->MainUI()->DiscoveryLocal->setEnabled(editable);
+    s->MainUI()->DiscoveryNetworks->setEnabled(editable);
+    s->MainUI()->DiscoveryFrom->setEnabled(editable);
+    s->MainUI()->DiscoveryTo->setEnabled(editable);
     if (isstart)
     {
         s->MainUI()->DiscoveryButton->setEnabled(false);

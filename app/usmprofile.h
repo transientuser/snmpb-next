@@ -78,6 +78,7 @@ signals:
 
 protected:
     QAction *addAct;
+    QAction *duplicateAct;
     QAction *deleteAct;
 
 protected slots:
@@ -89,6 +90,7 @@ protected slots:
     void SelectedUSMProfile( QTreeWidgetItem * item, QTreeWidgetItem * old);
     void USMSecNameChange(QTreeWidgetItem * item, int column);
     void Add(void);
+    void Duplicate(void);
     void Delete(void);
     void ContextMenu ( const QPoint & );
 

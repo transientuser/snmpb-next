@@ -220,7 +220,7 @@
               </widget>
              </item>
              <item>
-              <widget class="MibView" name="MIBTree" native="true">
+              <widget class="MibModelView" name="MIBTree" native="true">
                <property name="enabled">
                 <bool>true</bool>
                </property>
@@ -818,7 +818,7 @@
              </widget>
             </item>
             <item>
-             <widget class="QListWidget" name="MIBLog">
+              <widget class="QTableView" name="MIBLog">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
                 <horstretch>0</horstretch>
@@ -1031,20 +1031,20 @@
            <item row="3" column="2" colspan="2">
             <widget class="QLineEdit" name="DiscoveryTo">
              <property name="sizePolicy">
-              <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+              <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
                <horstretch>0</horstretch>
                <verstretch>0</verstretch>
               </sizepolicy>
              </property>
              <property name="minimumSize">
               <size>
-               <width>180</width>
+               <width>120</width>
                <height>0</height>
               </size>
              </property>
              <property name="maximumSize">
               <size>
-               <width>180</width>
+               <width>16777215</width>
                <height>16777215</height>
               </size>
              </property>
@@ -1099,20 +1099,20 @@
            <item row="2" column="2" colspan="2">
             <widget class="QLineEdit" name="DiscoveryFrom">
              <property name="sizePolicy">
-              <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+              <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
                <horstretch>0</horstretch>
                <verstretch>0</verstretch>
               </sizepolicy>
              </property>
              <property name="minimumSize">
               <size>
-               <width>180</width>
+               <width>120</width>
                <height>0</height>
               </size>
              </property>
              <property name="maximumSize">
               <size>
-               <width>180</width>
+               <width>16777215</width>
                <height>16777215</height>
               </size>
              </property>
@@ -2063,6 +2063,11 @@
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <customwidgets>
+  <customwidget>
+   <class>MibModelView</class>
+   <extends>QTreeView</extends>
+   <header>mibmodelview.h</header>
+  </customwidget>
   <customwidget>
    <class>MibView</class>
    <extends>QWidget</extends>

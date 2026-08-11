@@ -4,6 +4,7 @@
 #include "agentprofileservice.h"
 #include "communitycredentialservice.h"
 #include "graphplotpresenter.h"
+#include "graphdefinitioneditor.h"
 #include "graphlabelresolver.h"
 #include "snmpb.h"
 
@@ -12,10 +13,12 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QMessageBox>
 #include <qwt_plot.h>
 
 GraphManager::GraphManager(Snmpb *application)
@@ -28,6 +31,8 @@ GraphManager::GraphManager(Snmpb *application)
     startButton = new QPushButton(tr("Start"), page);
     stopButton = new QPushButton(tr("Stop"), page);
     clearButton = new QPushButton(tr("Clear"), page);
+    editButton = new QPushButton(tr("Edit..."), app->MainUI()->Graph);
+    duplicateButton = new QPushButton(tr("Duplicate"), app->MainUI()->groupBox);
     statusLabel = new QLabel(tr("Stopped"), page);
     controls->addWidget(startButton); controls->addWidget(stopButton);
     controls->addWidget(clearButton); controls->addWidget(statusLabel, 1);
@@ -35,20 +40,28 @@ GraphManager::GraphManager(Snmpb *application)
     app->MainUI()->GraphTab->addTab(page, tr("Live"));
     presenter = std::make_unique<GraphPlotPresenter>(plot);
     stopButton->setEnabled(false);
+    if (auto *graphLayout = app->MainUI()->Graph->layout()) graphLayout->addWidget(editButton);
+    if (auto *listLayout = qobject_cast<QGridLayout *>(app->MainUI()->groupBox->layout()))
+        listLayout->addWidget(duplicateButton, 2, 0, 1, 2);
+    app->MainUI()->GraphName->setReadOnly(true);
+    app->MainUI()->GraphPollInterval->setReadOnly(true);
+    app->MainUI()->PlotAdd->hide(); app->MainUI()->PlotDelete->hide();
+    app->MainUI()->PlotL->setText(tr("Series"));
+    app->MainUI()->GraphAdd->setText(tr("New..."));
+    app->MainUI()->GraphDelete->setText(tr("Delete"));
 
     connect(app->MainUI()->GraphList, &QListWidget::currentItemChanged, this, &GraphManager::selectGraph);
     connect(app->MainUI()->GraphAdd, &QPushButton::clicked, this, &GraphManager::addGraph);
     connect(app->MainUI()->GraphDelete, &QPushButton::clicked, this, &GraphManager::deleteGraph);
-    connect(app->MainUI()->PlotAdd, &QPushButton::clicked, this, &GraphManager::addSeries);
-    connect(app->MainUI()->PlotDelete, &QPushButton::clicked, this, &GraphManager::deleteSeries);
-    connect(app->MainUI()->GraphName, &QLineEdit::editingFinished, this, &GraphManager::applyDetails);
-    connect(app->MainUI()->GraphPollInterval, &QSpinBox::editingFinished, this, &GraphManager::applyDetails);
+    connect(editButton, &QPushButton::clicked, this, &GraphManager::editGraph);
+    connect(duplicateButton, &QPushButton::clicked, this, &GraphManager::duplicateGraph);
+    connect(app->MainUI()->GraphList, &QListWidget::itemDoubleClicked, this, [this] { editGraph(); });
     connect(startButton, &QPushButton::clicked, this, &GraphManager::start);
     connect(stopButton, &QPushButton::clicked, this, &GraphManager::stop);
     connect(clearButton, &QPushButton::clicked, this, &GraphManager::clear);
     connect(&timer, &QTimer::timeout, this, &GraphManager::poll);
     connect(&runner, &GraphAsyncRunner::completed, this, &GraphManager::sampled);
-    refreshList();
+    refreshList(); refreshEditor();
 }
 
 GraphManager::~GraphManager() { disconnect(&runner,nullptr,this,nullptr); stop(); runner.wait(); }
@@ -75,7 +88,12 @@ void GraphManager::refreshEditor()
 {
     const auto *graph=current(); const bool enabled=graph;
     app->MainUI()->Graph->setEnabled(enabled); app->MainUI()->PlotList->clear();
-    if (!graph) return;
+    app->MainUI()->GraphDelete->setEnabled(enabled);
+    editButton->setEnabled(enabled);
+    duplicateButton->setEnabled(enabled);
+    startButton->setEnabled(enabled && !pollingState.isRunning() && !graph->series.isEmpty());
+    clearButton->setEnabled(enabled && !graph->series.isEmpty());
+    if (!graph) { presenter->clear(); setStatus(tr("Select a graph")); return; }
     app->MainUI()->GraphName->setText(graph->name);
     app->MainUI()->GraphPollInterval->setValue(graph->pollIntervalSeconds);
     presenter->setTitle(graph->name); state.clear();
@@ -87,40 +105,30 @@ void GraphManager::refreshEditor()
 void GraphManager::addGraph()
 {
     GraphDefinition graph; graph.name=tr("New Graph"); graph.graphId=GraphRepository::createId();
-    if (service.create(graph)) refreshList(graph.graphId);
+    GraphDefinitionEditor editor(graph,app->AgentProfiles()->profiles(),app->MainUI()->GraphsTab);
+    if(editor.exec()==QDialog::Accepted && service.create(editor.definition())) refreshList(graph.graphId);
+}
+void GraphManager::editGraph()
+{
+    const auto *graph=current(); if(!graph)return;
+    stop();
+    GraphDefinitionEditor editor(*graph,app->AgentProfiles()->profiles(),app->MainUI()->GraphsTab);
+    if(editor.exec()!=QDialog::Accepted)return;
+    const GraphDefinition draft=editor.definition();
+    if(service.update(draft)){currentGraphId=draft.graphId;refreshList(draft.graphId);refreshEditor();}
+}
+void GraphManager::duplicateGraph()
+{
+    if(currentGraphId.isEmpty())return;
+    const QString copyId=service.duplicate(currentGraphId);
+    if(!copyId.isEmpty())refreshList(copyId);
 }
 void GraphManager::deleteGraph()
-{ if (!currentGraphId.isEmpty() && service.remove(currentGraphId)) { currentGraphId.clear(); refreshList(); } }
-void GraphManager::applyDetails()
 {
-    auto *graph=current(); if (!graph) return; GraphDefinition draft=*graph;
-    draft.name=app->MainUI()->GraphName->text(); draft.pollIntervalSeconds=app->MainUI()->GraphPollInterval->value();
-    if (service.update(draft)) { currentGraphId=draft.graphId; refreshList(draft.graphId); presenter->setTitle(draft.name); }
-}
-void GraphManager::addSeries()
-{
-    auto *graph=current(); if (!graph) return;
-    QDialog dialog(app->MainUI()->GraphsTab); dialog.setWindowTitle(tr("Add Graph Series")); QFormLayout form(&dialog);
-    QComboBox profiles, protocols; QLineEdit oid, label;
-    for (const auto &profile : app->AgentProfiles()->profiles()) profiles.addItem(profile.name,profile.profileId);
-    protocols.addItem("SNMPv1",0); protocols.addItem("SNMPv2c",1); protocols.addItem("SNMPv3",2);
-    form.addRow(tr("Agent Profile"),&profiles); form.addRow(tr("Protocol"),&protocols);
-    form.addRow(tr("Numeric OID"),&oid); form.addRow(tr("Label"),&label);
-    QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel); form.addRow(&buttons);
-    connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept); connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
-    if (dialog.exec()!=QDialog::Accepted) return;
-    GraphDefinition draft=*graph; GraphSeriesDefinition series; series.seriesId=GraphRepository::createId();
-    series.profileId=profiles.currentData().toString(); series.legacyProfileName=profiles.currentText();
-    series.protocol=protocols.currentData().toInt(); series.numericOid=GraphRepository::canonicalOid(oid.text());
-    series.label=label.text().isEmpty()?GraphLabelResolver::displayLabel(series.numericOid):label.text();
-    draft.series.append(series); if (service.update(draft)) refreshEditor();
-}
-void GraphManager::deleteSeries()
-{
-    auto *graph=current(); auto *item=app->MainUI()->PlotList->currentItem(); if (!graph||!item) return;
-    GraphDefinition draft=*graph; const QString id=item->data(Qt::UserRole).toString();
-    for(int i=0;i<draft.series.size();++i) if(draft.series[i].seriesId==id){draft.series.removeAt(i);break;}
-    if(service.update(draft)) refreshEditor();
+    if(currentGraphId.isEmpty())return;
+    stop();
+    if(QMessageBox::question(app->MainUI()->GraphsTab,tr("Delete Graph"),tr("Delete the selected graph?"))!=QMessageBox::Yes)return;
+    if(service.remove(currentGraphId)){currentGraphId.clear();refreshList();}
 }
 void GraphManager::start()
 {
@@ -128,8 +136,7 @@ void GraphManager::start()
     startButton->setEnabled(false); stopButton->setEnabled(true); setStatus(tr("Running")); poll();
 }
 void GraphManager::stop()
-
-{ timer.stop(); pollingState.stop(); runner.stop(); startButton->setEnabled(true); stopButton->setEnabled(false); setStatus(tr("Stopped")); }
+{ timer.stop(); pollingState.stop(); runner.stop(); const auto *graph=current(); startButton->setEnabled(graph&&!graph->series.isEmpty()); stopButton->setEnabled(false); setStatus(tr("Stopped")); }
 void GraphManager::clear()
 { for(auto it=state.begin();it!=state.end();++it) it.value().clear(); presenter->refresh(state.values()); }
 void GraphManager::poll()
@@ -145,7 +152,7 @@ void GraphManager::poll()
         plans.append(GraphSampleSeriesPlan(series.seriesId,series.numericOid,SnmpRequestContext(config,SnmpRequestOperation::Get)));
         transports.append(std::make_shared<SnmpPlusTransport>(config));
     }
-    if(plans.isEmpty()){pollingState.completeCycle();setStatus(pendingErrors.isEmpty()?tr("No series"):pendingErrors.join(QStringLiteral("; ")));return;}
+    if(plans.isEmpty()){pollingState.completeCycle();pollingState.stop();startButton->setEnabled(graph&&!graph->series.isEmpty());stopButton->setEnabled(false);setStatus(pendingErrors.isEmpty()?tr("No series"):tr("No runnable series: ")+pendingErrors.join(QStringLiteral("; ")));return;}
     if(!runner.start(plans,transports)) pollingState.completeCycle();
 }
 void GraphManager::sampled(const GraphSampleBatch &batch)

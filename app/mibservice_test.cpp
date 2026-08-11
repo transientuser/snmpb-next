@@ -1,12 +1,15 @@
 #include "mibservice.h"
 #include "mibdiagnosticmodel.h"
 #include "mibtreemodel.h"
+#include "mibcandidatefilter.h"
+#include "mibmodelview.h"
 
-#include <QCoreApplication>
+#include <QApplication>
 #include <QFile>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QSortFilterProxyModel>
 #include <algorithm>
 
 namespace {
@@ -26,7 +29,7 @@ int nodeCount(const MibTreeNodeRecord &node)
 
 int main(int argc, char **argv)
 {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     QTemporaryDir temporary;
     check(temporary.isValid(), "temporary directory created");
     const QString bundled = QStringLiteral(SNMPB_SOURCE_DIR "/libsmi/mibs/ietf");
@@ -96,6 +99,17 @@ int main(int argc, char **argv)
                                MibDiagnosticModel::RawTextRole) ==
               bad.diagnostics.first().rawText,
           "diagnostics model exposes structured and original wording");
+    QSortFilterProxyModel diagnosticFilter;
+    diagnosticFilter.setSourceModel(&diagnosticModel);
+    diagnosticFilter.setFilterKeyColumn(MibDiagnosticModel::SeverityColumn);
+    diagnosticFilter.setFilterRegularExpression(QStringLiteral("^(Error|Warning|Info)"));
+    check(diagnosticFilter.rowCount() == diagnosticModel.rowCount(),
+          "structured diagnostic severity filtering retains original records");
+    check(MibCandidateFilter::accepts("NET-SNMP-EXAMPLE.txt") &&
+          MibCandidateFilter::accepts("VENDOR-MIB") &&
+          !MibCandidateFilter::accepts("notes.log") &&
+          !MibCandidateFilter::accepts("BROKEN-MIB-orig"),
+          "historical MIB candidate rules retain txt support and reject unrelated extensions");
 
     const QList<MibModuleRecord> inventory = service.moduleInventory();
     check(inventory.size() >= 2, "multiple loaded modules inventoried");
@@ -119,15 +133,30 @@ int main(int argc, char **argv)
     check(sysDescr.isValid() && model.data(sysDescr).toString() == "sysDescr" &&
           model.data(sysDescr, MibTreeModel::ModuleRole).toString() == "SNMPv2-MIB",
           "tree roles and OID identity are available");
+    check(!model.data(sysDescr, MibTreeModel::BaseTypeRole).toString().isEmpty() &&
+          model.data(sysDescr, MibTreeModel::AccessRole).toString() == "read-only",
+          "tree snapshot exposes value-based node details");
     check(model.parent(sysDescr).isValid(), "model parent relationship is valid");
     MibTreeFilterModel filter;
     filter.setSourceModel(&model);
     filter.setFilterFixedString("sysDescr");
     check(filter.rowCount() > 0, "recursive filtering preserves matching ancestry");
 
+    MibModelView visibleTree;
+    visibleTree.setTreeModel(&model);
+    QString details;
+    QObject::connect(&visibleTree, &MibModelView::NodeProperties,
+                     [&details](const QString &text) { details = text; });
+    visibleTree.SelectFromOid("1.3.6.1.2.1.1.1");
+    check(qobject_cast<MibTreeFilterModel *>(visibleTree.model()) &&
+          visibleTree.selectedOid() == "1.3.6.1.2.1.1.1" &&
+          details.contains("sysDescr") && details.contains("SNMPv2-MIB"),
+          "visible QTreeView uses filtered value model and value-based details");
+
     const QString retainedOid = model.oidForIndex(sysDescr);
     model.setSnapshot(service.treeSnapshot({"SNMPv2-MIB"}));
-    check(model.indexForOid(retainedOid).isValid(), "selection OID survives compatible rebuild");
+    check(model.indexForOid(retainedOid).isValid() && visibleTree.selectedOid() == retainedOid,
+          "visible selection OID survives compatible rebuild");
     model.setSnapshot(MibTreeNodeRecord{QStringLiteral("1"), QStringLiteral("MIB Tree")});
     check(!model.indexForOid(retainedOid).isValid(), "removed selection safely becomes invalid");
 

@@ -1,5 +1,6 @@
 #include "mibdiagnosticmodel.h"
 
+
 MibDiagnosticModel::MibDiagnosticModel(QObject *parent) : QAbstractTableModel(parent) {}
 
 void MibDiagnosticModel::setDiagnostics(const QList<MibDiagnosticRecord> &diagnostics)
@@ -20,7 +21,10 @@ QVariant MibDiagnosticModel::data(const QModelIndex &index, int role) const
     const auto &record = records.at(index.row());
     if (role == Qt::DisplayRole) {
         switch (index.column()) {
-        case SeverityColumn: return record.severity;
+        case SeverityColumn:
+            if (record.severity <= 3) return tr("Error (%1)").arg(record.severity);
+            if (record.severity <= 5) return tr("Warning (%1)").arg(record.severity);
+            return tr("Info (%1)").arg(record.severity);
         case SourceColumn: return record.sourcePath;
         case LineColumn: return record.line;
         case MessageColumn: return record.message;

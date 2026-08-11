@@ -22,6 +22,11 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QComboBox>
+#include <QBoxLayout>
+#include <QHeaderView>
+#include <QSortFilterProxyModel>
+#include <QTableView>
 #include <qfileinfo.h>
 #include <qpainter.h>
 #include "mibeditor.h"
@@ -44,8 +49,31 @@ MibEditor::MibEditor(Snmpb *snmpb)
              this, SLOT( VerifyMIB() ) );
     connect( s->MainUI()->actionExtractMIBfromRFC, SIGNAL( triggered() ),
              this, SLOT( ExtractMIBfromRFC() ) );
-    connect( s->MainUI()->MIBLog, SIGNAL ( itemDoubleClicked ( QListWidgetItem* ) ),
-             this, SLOT( SelectedLogEntry ( QListWidgetItem* ) ) );
+    diagnosticModel = new MibDiagnosticModel(this);
+    diagnosticFilter = new QSortFilterProxyModel(this);
+    diagnosticFilter->setSourceModel(diagnosticModel);
+    diagnosticFilter->setFilterKeyColumn(MibDiagnosticModel::SeverityColumn);
+    diagnosticFilter->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    s->MainUI()->MIBLog->setModel(diagnosticFilter);
+    s->MainUI()->MIBLog->setSortingEnabled(true);
+    s->MainUI()->MIBLog->setSelectionBehavior(QAbstractItemView::SelectRows);
+    s->MainUI()->MIBLog->setSelectionMode(QAbstractItemView::SingleSelection);
+    s->MainUI()->MIBLog->horizontalHeader()->setStretchLastSection(true);
+    s->MainUI()->MIBLog->horizontalHeader()->setSectionResizeMode(MibDiagnosticModel::SourceColumn,QHeaderView::ResizeToContents);
+    s->MainUI()->MIBLog->horizontalHeader()->setSectionResizeMode(MibDiagnosticModel::LineColumn,QHeaderView::ResizeToContents);
+    connect(s->MainUI()->MIBLog, &QTableView::doubleClicked,
+            this, &MibEditor::SelectedLogEntry);
+    auto *severityFilter = new QComboBox(s->MainUI()->MIBLog->parentWidget());
+    severityFilter->setAccessibleName(tr("Diagnostic severity filter"));
+    severityFilter->addItem(tr("All diagnostics"), QString());
+    severityFilter->addItem(tr("Errors"), QStringLiteral("^Error"));
+    severityFilter->addItem(tr("Warnings"), QStringLiteral("^Warning"));
+    severityFilter->addItem(tr("Information"), QStringLiteral("^Info"));
+    if (auto *layout = qobject_cast<QBoxLayout *>(s->MainUI()->MIBLog->parentWidget()->layout()))
+        layout->insertWidget(1, severityFilter);
+    connect(severityFilter, &QComboBox::currentIndexChanged, this, [this,severityFilter] {
+        diagnosticFilter->setFilterRegularExpression(severityFilter->currentData().toString());
+    });
     connect( s->MainUI()->MIBFile->document(), SIGNAL(modificationChanged(bool)),
              this, SLOT( MibFileModified(bool) ));
     connect( s->MainUI()->MIBFile, SIGNAL( FileLoaded( const QString& ) ),
@@ -377,9 +405,6 @@ void MibEditor::MibFileSaveAs(void)
 void MibEditor::ErrorHandler(char *path, int line, int severity, 
                          char *msg, char *tag)
 {
-    QString message = NULL;
-    QListWidgetItem *item;
-    QBrush item_brush;
     MibDiagnosticRecord diagnostic;
     diagnostic.severity = severity;
     diagnostic.sourcePath = QString::fromLocal8Bit(path ? path : "");
@@ -396,31 +421,21 @@ void MibEditor::ErrorHandler(char *path, int line, int severity,
         case 1:
         case 2:
         case 3:
-            message += tr("Error ");
             num_error++;
-            item_brush.setColor(Qt::red);
             break;
         case 4:
         case 5:
-            message += tr("Warning ");
             num_warning++;
-            item_brush.setColor(Qt::darkYellow);
             break;
         case 6:
         case 7:
         case 8:
         case 9:
-            message += tr("Info ");
             num_info++;
-            item_brush.setColor(Qt::blue);
             break;
     }
 
-    message += tr("(level %1), line %2: [%3] %4")
-                       .arg(severity).arg(line).arg(tag).arg(msg);
-    item = new QListWidgetItem(message, s->MainUI()->MIBLog);
-    item->setForeground(item_brush);
-    s->MainUI()->MIBLog->addItem(item);
+    diagnosticModel->setDiagnostics(diagnostics);
 }
 
 MibEditor *CurrentEditorObject = NULL;
@@ -438,8 +453,8 @@ void MibEditor::VerifyMIB(void)
     flags |= SMI_FLAG_NODESCR;
     smiSetFlags(flags);
 
-    s->MainUI()->MIBLog->clear();
     diagnostics.clear();
+    diagnosticModel->setDiagnostics(diagnostics);
     CurrentEditorObject = this;
     smiSetErrorHandler(ErrorHdlr);
     smiSetErrorLevel(9);
@@ -448,9 +463,7 @@ void MibEditor::VerifyMIB(void)
     num_warning = 0;
     num_info = 0;
 
-    QString start_msg = tr("Starting MIB verification...");
-    s->MainUI()->MIBLog->addItem(new QListWidgetItem(start_msg, 
-                                                     s->MainUI()->MIBLog));
+    s->MainUI()->MIBLogL->setText(tr("Verification diagnostics — running..."));
 
     smiLoadModule(QDir::toNativeSeparators(LoadedFile).toLatin1().data());
 
@@ -460,8 +473,7 @@ void MibEditor::VerifyMIB(void)
                           .arg(tr("%n warnings", "", num_warning))
                           .arg(tr("%n infos", "", num_info))
                           ;
-    s->MainUI()->MIBLog->addItem(new QListWidgetItem(stop_msg, 
-                                                     s->MainUI()->MIBLog));
+    s->MainUI()->MIBLogL->setText(stop_msg);
 
     smiSetFlags(saved_flags);
 
@@ -741,12 +753,16 @@ void MibEditor::ExtractMIBfromRFC(void)
     }
 }
 
-void MibEditor::SelectedLogEntry(QListWidgetItem *item)
+void MibEditor::SelectedLogEntry(const QModelIndex &index)
 {
-    QRegularExpression expression(" line ([1-9][0-9]*|0): ");
-    int line = expression.match(item->text()).captured(1).toInt();
-
-    s->MainUI()->MIBFileMarker->setMarker(line); 
+    const QModelIndex source = diagnosticFilter->mapToSource(index);
+    const int line = source.data(MibDiagnosticModel::LineRole).toInt();
+    if (line > 0) {
+        s->MainUI()->MIBFileMarker->setMarker(line);
+        QTextCursor cursor(s->MainUI()->MIBFile->document()->findBlockByLineNumber(line - 1));
+        s->MainUI()->MIBFile->setTextCursor(cursor);
+        s->MainUI()->MIBFile->setFocus();
+    }
 }
 
 void MibEditor::SetLineNumStatus(void)

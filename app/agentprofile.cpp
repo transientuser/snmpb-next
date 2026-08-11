@@ -95,11 +95,11 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
     connect( ap.ProfileTree, 
              SIGNAL( customContextMenuRequested ( const QPoint & ) ),
              this, SLOT( ContextMenu ( const QPoint & ) ) );
-    addAct = new QAction(tr("&New agent profile"), this);
+    addAct = new QAction(tr("&New Agent Profile"), this);
     connect(addAct, SIGNAL(triggered()), this, SLOT(Add()));
-    deleteAct = new QAction(tr("&Delete agent profile"), this);
+    deleteAct = new QAction(tr("&Delete Agent Profile"), this);
     connect(deleteAct, SIGNAL(triggered()), this, SLOT(Delete()));
-    duplicateAct = new QAction(tr("D&uplicate agent profile"), this);
+    duplicateAct = new QAction(tr("D&uplicate Agent Profile"), this);
     connect(duplicateAct, SIGNAL(triggered()), this, SLOT(DuplicateCurrent()));
 
     connect( ap.ProfileTree, 

@@ -15,6 +15,7 @@ set(SNMPB_APP_SOURCES
     discoveryscanplan.cpp
     discoverydestination.cpp
     graphmodel.cpp
+    graphdefinitioneditor.cpp
     graphasyncrunner.cpp
     graphplotpresenter.cpp
     graphmanager.cpp
@@ -31,11 +32,13 @@ set(SNMPB_APP_SOURCES
     mibeditor.cpp
     mibhighlighter.cpp
     mibmodule.cpp
+    mibcandidatefilter.cpp
     mibdiagnosticcollector.cpp
     mibdiagnosticmodel.cpp
     mibservice.cpp
     mibtreemodel.cpp
     mibnode.cpp
+    mibmodelview.cpp
     mibselection.cpp
     mibtextedit.cpp
     mibview.cpp
@@ -86,6 +89,7 @@ set(SNMPB_APP_HEADERS
     discoveryscanplan.h
     discoverydestination.h
     graphmodel.h
+    graphdefinitioneditor.h
     graphasyncrunner.h
     graphplotpresenter.h
     graphmanager.h
@@ -102,12 +106,14 @@ set(SNMPB_APP_HEADERS
     mibeditor.h
     mibhighlighter.h
     mibmodule.h
+    mibcandidatefilter.h
     mibdiagnosticcollector.h
     mibdiagnosticmodel.h
     mibrecords.h
     mibservice.h
     mibtreemodel.h
     mibnode.h
+    mibmodelview.h
     mibselection.h
     mibtextedit.h
     mibview.h
@@ -272,6 +278,7 @@ if(BUILD_TESTING)
         agentprofilerepository.cpp agentprofilerepository.h
         credentialrecords.cpp credentialrecords.h
         graphmodel.cpp graphmodel.h graphrepository.cpp graphrepository.h
+        graphdefinitioneditor.cpp graphdefinitioneditor.h
         graphasyncrunner.cpp graphasyncrunner.h
         graphplotpresenter.cpp graphplotpresenter.h
         graphpollingstate.cpp graphpollingstate.h
@@ -304,19 +311,25 @@ if(BUILD_TESTING)
     add_executable(snmpb_mib_service_test
         mibdiagnosticcollector.cpp mibdiagnosticcollector.h
         mibdiagnosticmodel.cpp mibdiagnosticmodel.h
+        mibcandidatefilter.cpp mibcandidatefilter.h
         mibrecords.h mibservice.cpp mibservice.h
-        mibtreemodel.cpp mibtreemodel.h mibservice_test.cpp)
+        mibtreemodel.cpp mibtreemodel.h
+        mibmodelview.cpp mibmodelview.h mibservice_test.cpp)
     set_target_properties(snmpb_mib_service_test PROPERTIES AUTOMOC ON)
     target_compile_definitions(snmpb_mib_service_test PRIVATE
         SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_link_libraries(snmpb_mib_service_test PRIVATE
-        Qt6::Core snmpb_libsmi)
+        Qt6::Core Qt6::Widgets snmpb_libsmi)
     if(WIN32)
         add_test(NAME snmpb.mib-service COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen"
+            "QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             $<TARGET_FILE:snmpb_mib_service_test>)
     else()
-        add_test(NAME snmpb.mib-service COMMAND $<TARGET_FILE:snmpb_mib_service_test>)
+        add_test(NAME snmpb.mib-service COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen"
+            $<TARGET_FILE:snmpb_mib_service_test>)
     endif()
 
     add_executable(snmpb_trap_pipeline_test

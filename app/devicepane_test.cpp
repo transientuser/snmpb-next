@@ -5,6 +5,7 @@
 #include <QTemporaryDir>
 #include <QTreeView>
 #include <QLineEdit>
+#include <QToolBar>
 
 #include <iostream>
 
@@ -49,6 +50,15 @@ int main(int argc, char **argv)
     DevicePane pane(temporary.filePath("device-tree.conf"), {profile});
     if (!Check(pane.model() != nullptr && pane.treeView() != nullptr,
                "pane construction failed"))
+        return 1;
+    QToolBar *toolbar = pane.findChild<QToolBar *>();
+    bool hasNewProfile = false, hasNewFolder = false;
+    for (QAction *action : toolbar ? toolbar->actions() : QList<QAction *>()) {
+        hasNewProfile |= action->text() == "New Profile" && !action->toolTip().isEmpty();
+        hasNewFolder |= action->text() == "New Folder" && !action->toolTip().isEmpty();
+    }
+    if (!Check(hasNewProfile && hasNewFolder,
+               "device toolbar does not distinguish profile and folder creation"))
         return 1;
     QModelIndex profileIndex = Find(pane.treeView()->model(), "core-01");
     if (!Check(profileIndex.isValid(), "profile missing from pane"))

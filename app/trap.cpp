@@ -5,6 +5,8 @@
 #include "trappresenter.h"
 
 #include <QTreeWidget>
+#include <QBoxLayout>
+#include <QPushButton>
 
 Trap::Trap(Snmpb *snmpb)
     : s(snmpb), trapService(snmpb->PreferencesObj()->GetTrapHistoryLimit(), this)
@@ -17,6 +19,14 @@ Trap::Trap(Snmpb *snmpb)
             s->MainUI()->TrapInfo, SLOT(setHtml(const QString&)));
     connect(&trapService, &TrapService::recordAdded, this, &Trap::RefreshHistory);
     connect(&trapService, &TrapService::historyReset, this, &Trap::RefreshHistory);
+    auto *clearButton = new QPushButton(tr("Clear History"), s->MainUI()->TrapLog->parentWidget());
+    clearButton->setToolTip(tr("Remove all retained traps from the in-memory history"));
+    clearButton->setEnabled(false);
+    if (auto *layout = qobject_cast<QBoxLayout *>(s->MainUI()->TrapLog->parentWidget()->layout()))
+        layout->insertWidget(1, clearButton, 0, Qt::AlignLeft);
+    connect(clearButton, &QPushButton::clicked, &trapService, &TrapService::clear);
+    connect(&trapService, &TrapService::recordAdded, clearButton, [clearButton] { clearButton->setEnabled(true); });
+    connect(&trapService, &TrapService::historyReset, clearButton, [clearButton] { clearButton->setEnabled(false); });
 }
 
 Trap::~Trap() { trapService.stop(); }

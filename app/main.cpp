@@ -139,11 +139,11 @@ int main( int argc, char ** argv )
                   "Devices dock created and integrated");
             check(snmpb.MainUI()->LoadedModules->topLevelItemCount() > 0,
                   "bundled MIB modules loaded");
-            check(snmpb.MainUI()->MIBTree->topLevelItemCount() > 0,
+            check(snmpb.MainUI()->MIBTree->model()->rowCount() > 0,
                   "MIB tree populated");
 
             snmpb.MainUI()->MIBTree->SelectFromOid("1.3.6.1.2.1.1");
-            check(snmpb.MainUI()->MIBTree->currentItem() != nullptr,
+            check(snmpb.MainUI()->MIBTree->currentIndex().isValid(),
                   "MIB OID selection works");
 
             if (!smoke_mib_file.isEmpty())
@@ -152,10 +152,7 @@ int main( int argc, char ** argv )
                 snmpb.MibEditorObj()->VerifyMIB();
                 check(!snmpb.MainUI()->MIBFile->toPlainText().isEmpty(),
                       "MIB editor opened and verified a local module");
-                check(snmpb.MainUI()->MIBLog->count() >= 2 &&
-                      snmpb.MainUI()->MIBLog->item(
-                          snmpb.MainUI()->MIBLog->count() - 1)->text()
-                          .startsWith("Verification complete."),
+                check(snmpb.MainUI()->MIBLogL->text().startsWith("Verification complete."),
                       "MIB editor parsing completed");
             }
 

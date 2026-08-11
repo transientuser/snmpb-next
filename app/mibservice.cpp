@@ -36,6 +36,20 @@ QString statusName(SmiStatus value)
     default: return {};
     }
 }
+
+QString baseTypeName(SmiBasetype value)
+{
+    switch (value) {
+    case SMI_BASETYPE_UNSIGNED32: return QStringLiteral("UNSIGNED32");
+    case SMI_BASETYPE_INTEGER32: return QStringLiteral("INTEGER");
+    case SMI_BASETYPE_ENUM: return QStringLiteral("ENUM");
+    case SMI_BASETYPE_OBJECTIDENTIFIER: return QStringLiteral("OBJECT IDENTIFIER");
+    case SMI_BASETYPE_OCTETSTRING: return QStringLiteral("OCTET STRING");
+    case SMI_BASETYPE_BITS: return QStringLiteral("BITS");
+    case SMI_BASETYPE_UNSIGNED64: return QStringLiteral("UNSIGNED64");
+    default: return {};
+    }
+}
 }
 
 MibService::MibService(SmiErrorHandler *restoreHandler, int restoreErrorLevel)
@@ -154,8 +168,18 @@ MibTreeNodeRecord MibService::snapshotNode(SmiNode *node)
     record.description = safe(node->description);
     record.reference = safe(node->reference);
     if (SmiType *type = smiGetNodeType(node)) {
+        if (type->decl == SMI_DECL_IMPLICIT_TYPE)
+            if (SmiType *parent = smiGetParentType(type)) type = parent;
         record.typeName = safe(type->name);
-        record.baseType = QString::number(type->basetype);
+        record.baseType = baseTypeName(type->basetype);
+        record.displayHint = safe(type->format);
+        for (SmiRange *range = smiGetFirstRange(type); range; range = smiGetNextRange(range))
+            record.ranges.append(QStringLiteral("%1 .. %2")
+                .arg(range->minValue.value.unsigned64).arg(range->maxValue.value.unsigned64));
+        for (SmiNamedNumber *number = smiGetFirstNamedNumber(type); number;
+             number = smiGetNextNamedNumber(number))
+            record.namedValues.append(QStringLiteral("%1 (%2)")
+                .arg(safe(number->name)).arg(number->value.value.unsigned32));
     }
     return record;
 }

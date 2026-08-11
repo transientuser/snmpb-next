@@ -32,6 +32,12 @@
 #include "mibview.h"
 #include "mibservice.h"
 #include "mibtreemodel.h"
+#include "mibmodelview.h"
+
+void MibModelView::RegisterToLoader(MibViewLoader *loader)
+{
+    setTreeModel(loader ? loader->TreeModel() : nullptr);
+}
 
 //
 // BasicMibView class

@@ -341,9 +341,6 @@ void Snmpb::BindToGUI(QMainWindow* mw)
 
     // Register every MIB tree to the MIB loader object
     w.MIBTree->RegisterToLoader(&loader);
-#if 0 //MART
-    w.PlotMIBTree->RegisterToLoader(&loader);
-#endif    
     TabSelected();
 }
 
@@ -550,22 +547,9 @@ void Snmpb::TabSelected(void)
         break;
     case 5: // Graphs
         SetEditorMenus(false);
-        // Set find func to MIB tree
-        MainUI()->actionFind->setEnabled(true);
-        MainUI()->actionFindNext->setEnabled(true);
         disconnect(MainUI()->actionFind, SIGNAL( triggered() ), 0, 0);
         disconnect(MainUI()->actionFindNext, SIGNAL( triggered() ), 0, 0);
-#if 0 //MART
-        connect( MainUI()->actionFind, SIGNAL( triggered() ),
-                w.PlotMIBTree, SLOT( FindFromNode() ) );
-        connect( MainUI()->actionFindNext, SIGNAL( triggered() ),
-                w.PlotMIBTree, SLOT( ExecuteFindNext() ) );
-#endif
         MainUI()->actionMultipleVarbinds->setEnabled(false);
-#if 0 //MART
-        // Refresh MIB tree if needed
-        w.PlotMIBTree->Populate();
-#endif
         break;
     case 6: // Log
         SetEditorMenus(false);
@@ -578,8 +562,8 @@ void Snmpb::TabSelected(void)
 
 void Snmpb::AboutBox(bool)
 {
-    QMessageBox::about(MainUI()->TabW, tr("About SnmpB"), tr(
-"<H2><b>SnmpB</b></H2><br>                                                       \
+    QMessageBox::about(MainUI()->TabW, tr("About SnmpB Next"), tr(
+"<H2><b>SnmpB Next</b></H2><br>                                                  \
 Version %1<br>                                                                   \
 <a href=http://sourceforge.net/projects/snmpb>                                   \
 http://sourceforge.net/projects/snmpb</a><br><br>                                \
@@ -595,7 +579,8 @@ graph plotting.<br><br>                                                         
 This program is covered by the GNU General Public License, version 2 (GPLv2),    \
 <a href=http://www.gnu.org/licenses>http://www.gnu.org/licenses</a><br><br>      \
                                                                                  \
-This program uses the following libraries, covered by their respective license:  \
+This program uses the following libraries, covered by their respective licenses. \
+The Qwt license is included in the installed license directory:<br>               \
 <br><br>                                                                         \
                                                                                  \
 Snmp++ [v%2] (<a href=http://www.agentpp.com>http://www.agentpp.com</a>)<br>     \
@@ -611,7 +596,7 @@ SNMPB_QT_ABOUT_LINE)
 #if SNMPB_ENABLE_QWT
         .arg(QWT_VERSION_STR)
 #endif
-        .arg(QT_VERSION_STR));
+        .arg(qVersion()));
 }
 
 QString Snmpb::GetDeviceTreeConfigFile(void)

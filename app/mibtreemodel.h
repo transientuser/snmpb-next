@@ -13,7 +13,9 @@ class MibTreeModel : public QAbstractItemModel
     Q_OBJECT
 public:
     enum Role { OidRole = Qt::UserRole + 1, ModuleRole, NodeKindRole,
-                AccessRole, StatusRole, TypeRole, SearchTextRole };
+                AccessRole, StatusRole, TypeRole, BaseTypeRole, DisplayHintRole,
+                RangesRole, NamedValuesRole, UnitsRole, DescriptionRole,
+                ReferenceRole, SearchTextRole };
     explicit MibTreeModel(QObject *parent = nullptr);
     void setSnapshot(const MibTreeNodeRecord &root);
     QString oidForIndex(const QModelIndex &index) const;

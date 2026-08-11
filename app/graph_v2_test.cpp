@@ -3,6 +3,7 @@
 #include "graphplotpresenter.h"
 #include "graphpollingstate.h"
 #include "graphlabelresolver.h"
+#include "graphdefinitioneditor.h"
 
 #include <QApplication>
 #include <QFile>
@@ -178,6 +179,18 @@ static bool pollingAndTransactionalEditing()
     GraphDefinition working=service.graphs().first(); working.name="Cancelled";
     ok &= check(service.graphs().first().name=="Original","cancel working copy isolation");
     working.name="Applied"; ok &= check(service.update(working) && service.graphs().first().name=="Applied","working copy apply");
+
+    GraphDefinition editable=service.graphs().first(); editable.pollIntervalSeconds=17; editable.maximumSamples=240;
+    GraphSeriesDefinition styled; styled.seriesId="series-stable"; styled.profileId="profile-stable";
+    styled.protocol=1; styled.numericOid="1.3.6.1.2.1.1.3.0"; styled.color=4; styled.width=5; styled.style=int(Qt::DashDotLine);
+    editable.series={styled};
+    GraphDefinitionEditor editor(editable,{profile("profile-stable","router")});
+    const GraphDefinition editorCopy=editor.definition();
+    ok &= check(editorCopy.pollIntervalSeconds==17&&editorCopy.maximumSamples==240,"editor exposes polling and history")
+      && check(editorCopy.series.first().profileId=="profile-stable"&&editorCopy.series.first().numericOid=="1.3.6.1.2.1.1.3.0","editor retains stable profile and numeric OID")
+      && check(editorCopy.series.first().color==4&&editorCopy.series.first().width==5&&editorCopy.series.first().style==int(Qt::DashDotLine),"editor retains series style")
+      && check(service.graphs().first().name=="Applied","editor working copy does not mutate service before OK");
+    ok &= check(service.update(editorCopy)&&service.graphs().first().maximumSamples==240,"accepted editor definition commits through service");
     return ok;
 }
 

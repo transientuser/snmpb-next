@@ -46,9 +46,11 @@ USMProfileManager::USMProfileManager(Snmpb *snmpb)
     connect( up.ProfileTree, 
              SIGNAL( customContextMenuRequested ( const QPoint & ) ),
              this, SLOT( ContextMenu ( const QPoint & ) ) );
-    addAct = new QAction(tr("&New USM profile"), this);
+    addAct = new QAction(tr("&New USM Credential"), this);
     connect(addAct, SIGNAL(triggered()), this, SLOT(Add()));
-    deleteAct = new QAction(tr("&Delete USM profile"), this);
+    duplicateAct = new QAction(tr("D&uplicate USM Credential"), this);
+    connect(duplicateAct, &QAction::triggered, this, &USMProfileManager::Duplicate);
+    deleteAct = new QAction(tr("&Delete USM Credential"), this);
     connect(deleteAct, SIGNAL(triggered()), this, SLOT(Delete()));
 
     connect( up.ProfileTree, 
@@ -191,7 +193,10 @@ void USMProfileManager::ContextMenu ( const QPoint &pos )
     QMenu menu(tr("Actions"), up.ProfileTree);
 
     menu.addAction(addAct);
+    menu.addAction(duplicateAct);
+    duplicateAct->setEnabled(currentprofile != nullptr);
     menu.addAction(deleteAct);
+    deleteAct->setEnabled(currentprofile != nullptr);
 
     menu.exec(up.ProfileTree->mapToGlobal(pos));
 }
@@ -359,6 +364,19 @@ QStringList USMProfileManager::GetUsersList(void)
         sl << record.securityName;
 
     return sl;
+}
+
+void USMProfileManager::Duplicate(void)
+{
+    if (!currentprofile) return;
+    UsmCredentialRecord copy = currentprofile->GetRecord();
+    copy.identity = credentialService->createWorkingRecord(copy.securityName + tr(" copy")).identity;
+    copy.securityName += tr(" copy");
+    auto *duplicate = new USMProfile(&up, copy);
+    users.append(duplicate);
+    up.ProfileTree->setCurrentItem(duplicate->GetUserWidgetItem());
+    up.SecName->setFocus(Qt::OtherFocusReason);
+    up.SecName->selectAll();
 }
 
 UsmCredentialService *USMProfileManager::Credentials() const

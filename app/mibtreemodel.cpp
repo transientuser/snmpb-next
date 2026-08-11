@@ -75,6 +75,13 @@ QVariant MibTreeModel::data(const QModelIndex &modelIndex, int role) const
     case AccessRole: return value.access;
     case StatusRole: return value.status;
     case TypeRole: return value.typeName;
+    case BaseTypeRole: return value.baseType;
+    case DisplayHintRole: return value.displayHint;
+    case RangesRole: return value.ranges;
+    case NamedValuesRole: return value.namedValues;
+    case UnitsRole: return value.units;
+    case DescriptionRole: return value.description;
+    case ReferenceRole: return value.reference;
     case SearchTextRole: return value.name + QLatin1Char(' ') + value.oid +
                                 QLatin1Char(' ') + value.moduleName;
     default: return {};
@@ -85,6 +92,10 @@ QHash<int, QByteArray> MibTreeModel::roleNames() const
 {
     return {{OidRole, "oid"}, {ModuleRole, "module"}, {NodeKindRole, "nodeKind"},
             {AccessRole, "access"}, {StatusRole, "status"}, {TypeRole, "type"},
+            {BaseTypeRole, "baseType"}, {UnitsRole, "units"},
+            {DisplayHintRole, "displayHint"}, {RangesRole, "ranges"},
+            {NamedValuesRole, "namedValues"},
+            {DescriptionRole, "description"}, {ReferenceRole, "reference"},
             {SearchTextRole, "searchText"}};
 }
 

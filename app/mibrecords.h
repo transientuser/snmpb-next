@@ -56,6 +56,9 @@ struct MibTreeNodeRecord
     QString status;
     QString typeName;
     QString baseType;
+    QString displayHint;
+    QStringList ranges;
+    QStringList namedValues;
     QString units;
     QString description;
     QString reference;

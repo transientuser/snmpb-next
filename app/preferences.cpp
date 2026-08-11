@@ -131,6 +131,10 @@ void Preferences::Init(void)
 
     traphistorylimit = persisted.trapHistoryLimit;
     p->TrapHistoryLimit->setValue(traphistorylimit);
+    p->TrapHistoryLimit->setSuffix(tr(" traps"));
+    p->TrapHistoryLimit->setToolTip(tr("Maximum number of traps retained in memory"));
+    p->MibLoadingEnable->setToolTip(tr("Automatically load a matching MIB during an OID walk"));
+    p->MibLoadingEnablePrompt->setToolTip(tr("Ask before loading a matching MIB during an OID walk"));
 
     automaticloading = persisted.automaticLoading;
     if (automaticloading == 1) p->MibLoadingEnable->setChecked(true);

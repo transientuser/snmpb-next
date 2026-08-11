@@ -24,12 +24,18 @@ DevicePane::DevicePane(const QString &sidecarFile,
     layout->setContentsMargins(0, 0, 0, 0);
     auto *toolbar = new QToolBar(this);
     toolbar->setIconSize(QSize(16, 16));
+    QAction *newProfile = toolbar->addAction(tr("New Profile"));
     QAction *newFolder = toolbar->addAction(QIcon::fromTheme("folder-new"),
                                             tr("New Folder"));
     QAction *importAction = toolbar->addAction(tr("Import"));
     QAction *exportAction = toolbar->addAction(tr("Export All"));
     QAction *expand = toolbar->addAction(tr("Expand All"));
     QAction *collapse = toolbar->addAction(tr("Collapse All"));
+    newProfile->setToolTip(tr("Create a new Agent Profile"));
+    newFolder->setToolTip(tr("Create an organizational folder"));
+    importAction->setToolTip(tr("Import Agent Profiles and device organization"));
+    exportAction->setToolTip(tr("Export all Agent Profiles and device organization"));
+    connect(newProfile, &QAction::triggered, this, &DevicePane::newProfile);
     connect(newFolder, &QAction::triggered, this, &DevicePane::createFolder);
     connect(importAction, &QAction::triggered, this, &DevicePane::importProfiles);
     connect(exportAction, &QAction::triggered, this, &DevicePane::exportAll);

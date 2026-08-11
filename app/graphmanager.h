@@ -25,10 +25,9 @@ public:
 private slots:
     void selectGraph();
     void addGraph();
+    void editGraph();
+    void duplicateGraph();
     void deleteGraph();
-    void addSeries();
-    void deleteSeries();
-    void applyDetails();
     void start();
     void stop();
     void clear();
@@ -46,6 +45,8 @@ private:
     QPushButton *startButton;
     QPushButton *stopButton;
     QPushButton *clearButton;
+    QPushButton *editButton;
+    QPushButton *duplicateButton;
     QLabel *statusLabel;
     QTimer timer;
     GraphAsyncRunner runner;
