@@ -782,7 +782,7 @@ void AgentProfile::ProtocolV1Support(bool checked)
         (ap->V3->checkState() == Qt::Unchecked))
     {
         QMessageBox::critical(NULL,
-                              tr("SnmpB error"),
+                              tr("MIB Navigator error"),
                               tr("At least one protocol must be selected\n"),
                               QMessageBox::Ok);
         ap->V1->setCheckState(Qt::Checked); 
@@ -807,7 +807,7 @@ void AgentProfile::ProtocolV2Support(bool checked)
         (ap->V3->checkState() == Qt::Unchecked))
     {
         QMessageBox::critical(NULL,
-                              tr("SnmpB error"),
+                              tr("MIB Navigator error"),
                               tr("At least one protocol must be selected\n"),
                               QMessageBox::Ok);
         ap->V2->setCheckState(Qt::Checked);
@@ -840,7 +840,7 @@ void AgentProfile::ProtocolV3Support(bool checked)
         (ap->V2->checkState() == Qt::Unchecked))
     {
         QMessageBox::critical(NULL,
-                              tr("SnmpB error"),
+                              tr("MIB Navigator error"),
                               tr("At least one protocol must be selected\n"),
                               QMessageBox::Ok);
         ap->V3->setCheckState(Qt::Checked); 

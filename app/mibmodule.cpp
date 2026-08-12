@@ -28,6 +28,7 @@
 #include <algorithm>
 
 #include "mibmodule.h"
+#include "diagnosticlogger.h"
 #include "agent.h"
 #include "preferences.h"
 #include "preferredmibresolver.h"
@@ -163,6 +164,7 @@ static void NormalErrorHdlr(char *path, int line, int severity,
 
 static bool MibFilenameFilter(const QString& filename)
 {
+    DiagnosticLogger::log("MIB", "MIB search-path resolution and MIB/PIB loading begin");
     // This is all futile. FIXME
     // To machine code, file extension says literally nothing about its content.
     // To a human, it *might* vaguely identify the content-type, possibly fooling the human.
@@ -333,7 +335,7 @@ QString MibModule::LoadBestModule(QString oid)
             emit StopAgentTimer();
             int ret = QMessageBox::question (
                         s->MainUI()->MIBTree,
-                        tr("SnmpB automatic MIB loading"),
+                        tr("MIB Navigator automatic MIB loading"),
                         tr("Unknown OID %1\nAttempt to load MIB module where this OID is defined?").arg(oid),
                         QMessageBox::Yes | QMessageBox::No | 
                         QMessageBox::YesToAll | QMessageBox::NoToAll,
@@ -486,7 +488,10 @@ void MibModule::Refresh()
 
     if (QString(old_smipath.get()) != QString(new_smipath.get())) {
         // trigger MIB rescan
-        RescanPath();
+    RescanPath();
+    DiagnosticLogger::log("MIB", QStringLiteral(
+        "MIB search-path resolution and MIB/PIB loading end loaded=%1 unloaded=%2")
+        .arg(Loaded.size()).arg(Unloaded.size()));
     }
 
     ReadMibPreloads();
@@ -541,7 +546,7 @@ void MibModule::RegenerateSmiConf()
     {
         QString err = tr("Unable to regenerate smi.conf!\nError opening file %1")
                 .arg(smiconf.fileName());
-        QMessageBox::critical(NULL, tr("SnmpB error"), err, QMessageBox::Ok);
+        QMessageBox::critical(NULL, tr("MIB Navigator error"), err, QMessageBox::Ok);
         return;
     }
 

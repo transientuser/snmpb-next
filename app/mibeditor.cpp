@@ -347,7 +347,7 @@ void MibEditor::MibFileOpen(QString fileName)
         }
         else
         {
-            QMessageBox::critical(nullptr, tr("SnmpB: Open MIB File"),
+            QMessageBox::critical(nullptr, tr("MIB Navigator: Open MIB File"),
                                   tr("Cannot open file %1: %2.\n")
                                   .arg(file.fileName())
                                   .arg(file.errorString()));
@@ -375,7 +375,7 @@ void MibEditor::MibFileSave(void)
     QFile file(LoadedFile);
     if (!file.open(QFile::WriteOnly))
     {
-        QMessageBox::warning(nullptr, tr("SnmpB: Save MIB File"),
+        QMessageBox::warning(nullptr, tr("MIB Navigator: Save MIB File"),
                              tr("Cannot save file %1: %2\n")
                              .arg(file.fileName())
                              .arg(file.errorString()));
@@ -516,7 +516,7 @@ void MibEditor::ExtractMIBfromRFC(void)
         file_in.setFileName(filename);
         if (!file_in.open(QFile::ReadOnly | QFile::Text))
         {
-            QMessageBox::warning(NULL, tr("SnmpB: Extract MIB from RFC"),
+            QMessageBox::warning(NULL, tr("MIB Navigator: Extract MIB from RFC"),
                                  tr("Cannot read file %1: %2\n")
                                  .arg(file_in.fileName())
                                  .arg(file_in.errorString()));
@@ -532,7 +532,7 @@ void MibEditor::ExtractMIBfromRFC(void)
 
     if (dir.isEmpty())
     {
-        QMessageBox::warning(NULL, tr("SnmpB: Extract MIB from RFC"),
+        QMessageBox::warning(NULL, tr("MIB Navigator: Extract MIB from RFC"),
                              tr("No directory selected. Aborting.\n"));
         file_in.close();
         return;
@@ -540,7 +540,7 @@ void MibEditor::ExtractMIBfromRFC(void)
 
     if (!QFileInfo(dir).isWritable())
     {
-        QMessageBox::warning(NULL, tr("SnmpB: Extract MIB from RFC"),
+        QMessageBox::warning(NULL, tr("MIB Navigator: Extract MIB from RFC"),
                 tr("Directory not writable by this user. Aborting.\n"));
         file_in.close();
         return;
@@ -571,7 +571,7 @@ void MibEditor::ExtractMIBfromRFC(void)
             file_tmpout.remove();
             if (!file_tmpout.open(QFile::ReadWrite | QFile::Text))
             {
-                QMessageBox::warning(NULL, tr("SnmpB: Extract MIB from RFC"),
+                QMessageBox::warning(NULL, tr("MIB Navigator: Extract MIB from RFC"),
                                      tr("Cannot create file %1: %2. Abort.\n")
                                      .arg(file_tmpout.fileName())
                                      .arg(file_tmpout.errorString()));
@@ -586,7 +586,7 @@ void MibEditor::ExtractMIBfromRFC(void)
             if (file_out.exists())
             {
                 QMessageBox mb(QMessageBox::Question, 
-                               tr("SnmpB: Extract MIB from RFC"), 
+                               tr("MIB Navigator: Extract MIB from RFC"),
                                tr("The file %1 already exists.\n")
                                .arg(file_out.fileName()));
                 QPushButton *ob = mb.addButton(tr("Overwrite"), 
@@ -614,7 +614,7 @@ void MibEditor::ExtractMIBfromRFC(void)
                 file_out.remove();
                 if (!file_out.open(QFile::ReadWrite | QFile::Text))
                 {
-                    QMessageBox::warning(NULL, tr("SnmpB: Extract MIB from RFC"),
+                    QMessageBox::warning(NULL, tr("MIB Navigator: Extract MIB from RFC"),
                                          tr("Cannot create file %1: %2. Skipping.\n")
                                          .arg(file_out.fileName())
                                          .arg(file_out.errorString()));
@@ -744,7 +744,7 @@ void MibEditor::ExtractMIBfromRFC(void)
  
     if(modules.size() > 0)
     {
-        QMessageBox::information(NULL, tr("SnmpB: Extract MIB from RFC"),
+        QMessageBox::information(NULL, tr("MIB Navigator: Extract MIB from RFC"),
                                  //: %n is the number of MIBs for pluralization; %1 is multiline list of that many filenames.
                                  tr("%n MIB module(s) have been extracted. "
                                     "The following MIB file(s) were created: %1",

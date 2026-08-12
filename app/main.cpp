@@ -34,6 +34,8 @@
 #include "mibview.h"
 #include "preferences.h"
 #include "snmpbapp.h"
+#include "productidentity.h"
+#include "diagnosticlogger.h"
 
 QString file_to_open;
 
@@ -63,8 +65,18 @@ int main( int argc, char ** argv )
                            smoke_config_dir);
     }
 
-    Snmpb snmpb(launch_smoke_test);
     SnmpBApplication app( argc, argv );
+    QCoreApplication::setOrganizationDomain(ProductIdentity::LegacySettingsDomain);
+    QCoreApplication::setApplicationName(ProductIdentity::LegacySettingsApplication);
+    // Keep applicationName="SnmpB" for QSettings compatibility; only the
+    // user-visible display identity is rebranded.
+    app.setApplicationDisplayName(QString::fromLatin1(ProductIdentity::Name));
+    DiagnosticLogger::initialize(QStringLiteral(SNMPB_VERSION_STRING),
+                                 QCoreApplication::arguments());
+    DiagnosticLogger::log("Startup", "QApplication creation complete");
+    DiagnosticLogger::log("Startup", "application identity setup complete");
+
+    Snmpb snmpb(launch_smoke_test);
 
     // Qt translations
     QTranslator l10n_qt;
@@ -82,6 +94,8 @@ int main( int argc, char ** argv )
     app.installTranslator(&l10n_app);
 
     QMainWindow mw;
+    DiagnosticLogger::installMainWindowLifecycle(&mw);
+    DiagnosticLogger::log("Startup", "main window construction begin");
     const auto close_visible_dialogs = []() {
         const auto top_level_widgets = QApplication::topLevelWidgets();
         for (QWidget *widget : top_level_widgets)
@@ -99,9 +113,18 @@ int main( int argc, char ** argv )
         startup_dialog_closer.start(10);
     }
     snmpb.BindToGUI(&mw);
+    DiagnosticLogger::log("Startup", "main window construction end");
     startup_dialog_closer.stop();
     mw.show();
+    DiagnosticLogger::log("Startup", "main window show request");
     app.connect(&app, SIGNAL( lastWindowClosed() ), &app, SLOT( quit() ));
+    QObject::connect(&app, &QGuiApplication::lastWindowClosed, [] {
+        DiagnosticLogger::log("Shutdown", "QApplication lastWindowClosed", false);
+    });
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&snmpb] {
+        DiagnosticLogger::log("Shutdown", "QApplication aboutToQuit", false);
+        snmpb.Shutdown();
+    });
 
     // Load a file specified as argument in the Mib Editor
     if (!launch_smoke_test &&
@@ -191,5 +214,10 @@ int main( int argc, char ** argv )
         });
     }
 
-    return app.exec();
+    DiagnosticLogger::log("Startup", "event-loop entry");
+    const int result = app.exec();
+    DiagnosticLogger::log("Shutdown",
+                          QStringLiteral("event loop returned code=%1").arg(result), false);
+    DiagnosticLogger::shutdown();
+    return result;
 }

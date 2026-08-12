@@ -42,6 +42,25 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir dir;
     bool ok = check(dir.isValid(), "temporary directory");
+    UsmCredentialRecord noAuth = usm("no-auth", 0, 0);
+    noAuth.authSecret = {}; noAuth.privacySecret = {};
+    UsmCredentialRecord authNoPriv = usm("auth-only", 4, 0);
+    authNoPriv.authSecret = {}; authNoPriv.privacySecret = {};
+    UsmCredentialRecord authPriv = usm("auth-priv", 4, 3);
+    authPriv.authSecret = {}; authPriv.privacySecret = {};
+    ok &= check(UsmCredentialService::requirementsSatisfied(noAuth),
+                "noAuth/noPriv rejected a valid security name");
+    ok &= check(!UsmCredentialService::requirementsSatisfied(authNoPriv),
+                "AuthNoPriv accepted a missing authentication secret");
+    ok &= check(!UsmCredentialService::requirementsSatisfied(authPriv),
+                "AuthPriv accepted missing authentication/privacy secrets");
+    authNoPriv.authSecret = CredentialSecret("auth-secret");
+    authPriv.authSecret = CredentialSecret("auth-secret");
+    authPriv.privacySecret = CredentialSecret("privacy-secret");
+    ok &= check(UsmCredentialService::requirementsSatisfied(authNoPriv),
+                "AuthNoPriv rejected complete requirements");
+    ok &= check(UsmCredentialService::requirementsSatisfied(authPriv),
+                "AuthPriv rejected complete requirements");
     const QString identityFile = dir.filePath("credential-identities.conf");
     UsmCredentialRepository repository(identityFile);
 
@@ -85,6 +104,16 @@ int main(int argc, char **argv)
     UsmCredentialService renamedReload({usm("renamed")}, repository);
     ok &= check(renamedReload.records().first().identity.credentialId == stableId,
                 "rename remains stable across save/load");
+    ProfileMetadataRecord explicitBinding;
+    explicitBinding.profileId = "explicit-profile";
+    explicitBinding.usmCredentialId = stableId;
+    ok &= check(renamedReload.validate(profile("stale-shadow"), explicitBinding).status ==
+                    UsmReferenceStatus::Valid,
+                "explicit stable ID remains valid across credential rename");
+    explicitBinding.usmCredentialId = "broken-id";
+    ok &= check(renamedReload.validate(profile("renamed"), explicitBinding).status ==
+                    UsmReferenceStatus::Missing,
+                "broken explicit ID did not silently rebind by security name");
 
     QList<UsmCredentialRecord> working = renamedReload.records();
     working.first().authProtocol = 2;
@@ -177,6 +206,15 @@ int main(int argc, char **argv)
                     stableId, profiles.profiles(), &references) ==
                     UsmDeleteAssessment::Referenced && references == 2,
                 "referenced delete assessment");
+    AgentProfileRecord explicitProfile = profile("unrelated-shadow");
+    explicitProfile.profileId = "explicit-profile";
+    ProfileMetadataRecord deleteBinding;
+    deleteBinding.profileId = explicitProfile.profileId;
+    deleteBinding.usmCredentialId = stableId;
+    ok &= check(renamedReload.assessDelete(stableId, {explicitProfile}, {deleteBinding},
+                                           &references) ==
+                    UsmDeleteAssessment::Referenced && references == 1,
+                "stable metadata reference participates in delete safety");
     ok &= check(profiles.renameSecurityNameReferences(
                     "renamed-again", "propagated") &&
                 profiles.securityNameReferenceIds("propagated").size() == 2,

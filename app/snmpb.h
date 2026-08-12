@@ -50,6 +50,7 @@ class Snmpb: public QObject
     
 public:
     Snmpb(bool offline = false);
+    ~Snmpb() override;
     void BindToGUI(QMainWindow *mw);
     Ui_MainW* MainUI(void);
     Agent* AgentObj(void);
@@ -65,6 +66,7 @@ public:
     UsmCredentialService* UsmCredentials(void);
     CommunityCredentialService* CommunityCredentials(void);
     Preferences* PreferencesObj(void);
+    void Shutdown();
 
     void CheckForConfigFiles(void);
     QString GetBootCounterConfigFile(void);

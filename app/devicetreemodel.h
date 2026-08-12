@@ -14,6 +14,7 @@ class DeviceTreeModel : public QAbstractItemModel
     Q_OBJECT
 
 public:
+    enum class SortMode { Manual = 0, NameAscending = 1, NameDescending = 2 };
     enum Roles
     {
         NodeTypeRole = Qt::UserRole + 1,
@@ -23,7 +24,7 @@ public:
         SearchTextRole,
         CredentialHealthRole
     };
-    enum class NodeType { Root, Folder, Profile, Unfiled };
+    enum class NodeType { Root, Connections, Folder, Profile, Unfiled };
 
     DeviceTreeModel(const QString &sidecarFile,
                     const QList<AgentProfileRecord> &profiles,
@@ -52,8 +53,10 @@ public:
                              const QModelIndex &parent = QModelIndex());
     bool deleteFolder(const QModelIndex &index);
     bool moveProfile(const QString &profileId,
-                     const QModelIndex &destinationFolder);
+                     const QModelIndex &destinationFolder, int row = -1);
     bool moveProfileToFolderId(const QString &profileId, const QString &folderId);
+    bool moveFolder(const QString &folderId, const QModelIndex &destinationFolder,
+                    int row = -1);
     bool importState(const DeviceTreeState &state);
     void reload();
     void setProfiles(const QList<AgentProfileRecord> &profiles);
@@ -64,8 +67,11 @@ public:
     QString profileId(const QModelIndex &index) const;
     QString profileName(const QModelIndex &index) const;
     bool isFolder(const QModelIndex &index) const;
+    bool isConnections(const QModelIndex &index) const;
     bool isProfile(const QModelIndex &index) const;
     bool isUnfiled(const QModelIndex &index) const;
+    SortMode sortMode(const QModelIndex &index) const;
+    bool setSortMode(const QModelIndex &index, SortMode mode);
     const DeviceTreeState &state() const;
 
 signals:
@@ -86,6 +92,7 @@ private:
     Node *nodeForIndex(const QModelIndex &index) const;
     QModelIndex indexForNode(Node *node) const;
     void rebuild();
+    void sortChildren(Node *parent, SortMode mode, bool keepUnfiledFirst = false);
     bool persist();
     const AgentProfileRecord *profile(const QString &profileId) const;
     const ProfileMetadataRecord *metadata(const QString &profileId) const;

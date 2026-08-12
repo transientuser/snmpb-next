@@ -4,6 +4,7 @@
 #include "credentialrecords.h"
 #include "usmcredentialrepository.h"
 #include "agentprofilerepository.h"
+#include "profilemetadatarepository.h"
 #include <QObject>
 
 enum class UsmReferenceStatus
@@ -37,12 +38,22 @@ public:
     bool rename(const QString &credentialId, const QString &securityName);
     bool remove(const QString &credentialId);
     UsmReferenceResult validate(const AgentProfileRecord &profile) const;
+    UsmReferenceResult validate(const AgentProfileRecord &profile,
+                                const ProfileMetadataRecord &metadata) const;
+    const UsmCredentialRecord *find(const QString &credentialId) const;
     UsmCredentialRecord createWorkingRecord(const QString &securityName) const;
     bool validateWorkingCopy(const QList<UsmCredentialRecord> &records) const;
+    static int securityLevel(const UsmCredentialRecord &record);
+    static bool requirementsSatisfied(const UsmCredentialRecord &record);
     void applyCommitted(const QList<UsmCredentialRecord> &records);
     UsmDeleteAssessment assessDelete(
         const QString &credentialId,
         const QList<AgentProfileRecord> &profiles,
+        int *referenceCount = nullptr) const;
+    UsmDeleteAssessment assessDelete(
+        const QString &credentialId,
+        const QList<AgentProfileRecord> &profiles,
+        const QList<ProfileMetadataRecord> &metadata,
         int *referenceCount = nullptr) const;
     bool isSecurityNameUnambiguous(const QString &securityName) const;
 

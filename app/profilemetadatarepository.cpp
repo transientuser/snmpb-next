@@ -30,6 +30,20 @@ QList<ProfileMetadataRecord> ProfileMetadataRepository::load() const
         if (version >= 2)
             record.preferredMibs = normalizeMibs(
                 settings.value("preferredMibs").toStringList());
+        if (version >= 3)
+        {
+            record.hasActiveProtocol = settings.contains("activeProtocol");
+            record.activeProtocol = settings.value("activeProtocol").toInt();
+            record.usmCredentialId = settings.value("usmCredentialId").toString();
+            record.hasRequestSettingsMode = settings.contains("requestSettingsMode");
+            record.requestSettingsMode = settings.value("requestSettingsMode").toInt();
+            record.overrideTimeout = settings.value("overrideTimeout", 3).toInt();
+            record.overrideRetries = settings.value("overrideRetries", 1).toInt();
+            record.overrideBulkNonRepeaters =
+                settings.value("overrideBulkNonRepeaters", 0).toInt();
+            record.overrideBulkMaxRepetitions =
+                settings.value("overrideBulkMaxRepetitions", 10).toInt();
+        }
         if (record.profileId.isEmpty() || seen.contains(record.profileId))
             continue;
         seen.insert(record.profileId);
@@ -56,6 +70,23 @@ bool ProfileMetadataRepository::save(
         settings.setValue("notes", source.notes);
         settings.setValue("tags", normalizeTags(source.tags));
         settings.setValue("preferredMibs", normalizeMibs(source.preferredMibs));
+        if (source.hasActiveProtocol)
+            settings.setValue("activeProtocol", source.activeProtocol);
+        if (!source.usmCredentialId.isEmpty())
+            settings.setValue("usmCredentialId", source.usmCredentialId);
+        if (source.hasRequestSettingsMode)
+        {
+            settings.setValue("requestSettingsMode", source.requestSettingsMode);
+            if (source.requestSettingsMode == 2)
+            {
+                settings.setValue("overrideTimeout", source.overrideTimeout);
+                settings.setValue("overrideRetries", source.overrideRetries);
+                settings.setValue("overrideBulkNonRepeaters",
+                                  source.overrideBulkNonRepeaters);
+                settings.setValue("overrideBulkMaxRepetitions",
+                                  source.overrideBulkMaxRepetitions);
+            }
+        }
     }
     settings.endArray();
     settings.sync();

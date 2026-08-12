@@ -40,6 +40,10 @@ int main(int argc, char **argv)
         check(defaults.selectedProfile == "localhost" &&
               defaults.selectedProfileId.isEmpty() &&
               defaults.selectedProtocol == 0, "agent selection defaults preserved");
+        check(defaults.requestTimeout == 3 && defaults.requestRetries == 1 &&
+              defaults.bulkNonRepeaters == 0 &&
+              defaults.bulkMaxRepetitions == 10,
+              "SNMP request defaults preserved");
         check(defaults.mibPaths.isEmpty() && defaults.mibPreloads.isEmpty(),
               "MIB arrays are empty before application default initialization");
     }
@@ -57,6 +61,10 @@ int main(int argc, char **argv)
     expected.selectedProfile = "router-lab";
     expected.selectedProfileId = "11111111-2222-4333-8444-555555555555";
     expected.selectedProtocol = 2;
+    expected.requestTimeout = 11;
+    expected.requestRetries = 5;
+    expected.bulkNonRepeaters = 2;
+    expected.bulkMaxRepetitions = 45;
     expected.mibPaths = {"C:/MIBs/vendor", "D:/MIBs/ietf"};
     expected.mibPreloads = {"SNMPv2-MIB", "IF-MIB"};
     expected.windowSize = QSize(1280, 800);
@@ -100,6 +108,11 @@ int main(int argc, char **argv)
               "selected Agent Profile ID round-trips");
         check(actual.selectedProtocol == expected.selectedProtocol,
               "selected SNMP protocol round-trips");
+        check(actual.requestTimeout == expected.requestTimeout &&
+              actual.requestRetries == expected.requestRetries &&
+              actual.bulkNonRepeaters == expected.bulkNonRepeaters &&
+              actual.bulkMaxRepetitions == expected.bulkMaxRepetitions,
+              "SNMP request defaults round-trip");
         check(actual.expandTrapBinding == expected.expandTrapBinding &&
               actual.showAgentName == expected.showAgentName &&
               actual.trapHistoryLimit == expected.trapHistoryLimit,
@@ -142,6 +155,9 @@ int main(int argc, char **argv)
               loaded.selectedProtocol == 1, "existing selection is compatible");
         check(loaded.trapHistoryLimit == 1000,
               "legacy settings receive bounded trap-history default");
+        check(loaded.requestTimeout == 3 && loaded.requestRetries == 1 &&
+              loaded.bulkNonRepeaters == 0 && loaded.bulkMaxRepetitions == 10,
+              "legacy settings receive established request defaults");
         check(loaded.mibPaths == QStringList{"C:/legacy/mibs"} &&
               loaded.mibPreloads == QStringList{"IF-MIB"},
               "existing MIB arrays are compatible");

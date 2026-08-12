@@ -42,6 +42,10 @@ PreferencesSettings PreferencesSettings::load(QSettings &settings)
     result.selectedProfile = settings.value("ui/selectedprofile", "localhost").toString();
     result.selectedProfileId = settings.value("ui/selectedprofileid").toString();
     result.selectedProtocol = settings.value("ui/selectedproto", 0).toInt();
+    result.requestTimeout = settings.value("request/timeout", 3).toInt();
+    result.requestRetries = settings.value("request/retries", 1).toInt();
+    result.bulkNonRepeaters = settings.value("request/nonrepeaters", 0).toInt();
+    result.bulkMaxRepetitions = settings.value("request/maxrepetitions", 10).toInt();
     result.mibPaths = readArray(settings, "mibpaths", "dir");
     result.mibPreloads = readArray(settings, "mibpreloads", "mib");
     result.windowSize = settings.value("mainwindow/size").toSize();
@@ -66,6 +70,10 @@ void PreferencesSettings::save(QSettings &settings) const
     else
         settings.remove("ui/selectedprofileid");
     settings.setValue("ui/selectedproto", selectedProtocol);
+    settings.setValue("request/timeout", requestTimeout);
+    settings.setValue("request/retries", requestRetries);
+    settings.setValue("request/nonrepeaters", bulkNonRepeaters);
+    settings.setValue("request/maxrepetitions", bulkMaxRepetitions);
     writeArray(settings, "mibpaths", "dir", mibPaths);
     writeArray(settings, "mibpreloads", "mib", mibPreloads);
     if (windowSize.isValid())

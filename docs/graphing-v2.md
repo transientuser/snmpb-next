@@ -82,7 +82,7 @@ cmake --install build-graph-release --config Release --prefix "$PWD\build-graph-
 ```
 
 The generated install script discovers and stages the Qt runtime DLLs and
-plugins required by `snmpb.exe`; no developer Qt path or fixed DLL list is
+plugins required by `mib-navigator.exe`; no developer Qt path or fixed DLL list is
 encoded in the project. Qwt is linked statically and therefore requires no
 separate Qwt runtime DLL. Bundled MIBs, PIBs, and upstream Qwt license material
 are installed by the same command.

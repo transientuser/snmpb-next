@@ -1,6 +1,6 @@
 # Manual real-device acceptance checklist
 
-This checklist applies to **SnmpB Next 1.0.0-rc1**. Before testing, record the
+This checklist applies to **MIB Navigator 1.0.0-rc1**. Before testing, record the
 exact archive filename and SHA-256, About-box version, OS, device
 model/firmware, profile, tester, and test time. Mark every applicable item PASS,
 FAIL, or N/A. Use only authorized lab devices and a deliberately safe writable

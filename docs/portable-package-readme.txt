@@ -1,8 +1,8 @@
-SnmpB Next 1.0.0-rc1 portable package
+MIB Navigator 1.0.0-rc1 portable package
 =====================================
 
 Extract the complete archive to a writable or read-only application folder and
-run bin/snmpb.exe. Keep bin, plugins, share, and the documentation files
+run bin/mib-navigator.exe. Keep bin, plugins, share, and the documentation files
 together. User preferences, profiles, credentials, graphs, logs, and other
 runtime state are stored in the current user's Qt configuration location; they
 are not written into this package.

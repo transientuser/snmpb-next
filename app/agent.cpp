@@ -22,11 +22,18 @@
 #include <QDate>
 #include <QDialog>
 #include <QEventLoop>
+#include <QSettings>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 
 #include "mibview.h"
 #include "agent.h"
 #include "communitycredentialservice.h"
+#include "connectionrequestsettings.h"
+#include "diagnosticlogger.h"
+#include "udpportowner.h"
+#include "profilemetadataservice.h"
+#include "preferencesettings.h"
 #include "mibmodule.h"
 #include "snmp_pp/notifyqueue.h"
 #include "preferences.h"
@@ -104,6 +111,9 @@ Agent::Agent(Snmpb *snmpb, bool offline_mode)
     bool v6 = s->PreferencesObj()->GetEnableIPv6();
     int port4 = s->PreferencesObj()->GetTrapPort4();
     int port6 = s->PreferencesObj()->GetTrapPort6();
+    DiagnosticLogger::log("Traps", QStringLiteral(
+        "trap bind configuration IPv4=%1 address=0.0.0.0 port=%2 IPv6=%3 address=:: port=%4")
+        .arg(v4).arg(port4).arg(v6).arg(port6));
 
     start_err = ""; 
     start_result = true;
@@ -184,11 +194,32 @@ Agent::Agent(Snmpb *snmpb, bool offline_mode)
     status = snmp->notify_register(oidc, targetc, callback_trap, this);
     if (status != SNMP_CLASS_SUCCESS)
     {
+        QString diagnostics;
+        if (status == SNMP_CLASS_TL_IN_USE) {
+            const UdpPortOwner owner4 = v4 ?
+                UdpPortOwnerLookup::lookup(port4, false) : UdpPortOwner{};
+            const UdpPortOwner owner6 = v6 ?
+                UdpPortOwnerLookup::lookup(port6, true) : UdpPortOwner{};
+            if (v4)
+                diagnostics += UdpPortOwnerLookup::conflictDescription(port4, owner4);
+            if (v6 && (port6 != port4 || !owner4.found)) {
+                if (!diagnostics.isEmpty()) diagnostics += QStringLiteral("\n");
+                diagnostics += UdpPortOwnerLookup::conflictDescription(port6, owner6);
+            }
+        } else {
+            diagnostics = tr("Native socket error details are not exposed by this SNMP++ operation.");
+        }
         start_err = tr("Could not bind on either IPv4 trap\nport \
 %1 or IPv6 trap port %2.\n\n%3\nTrap reception disabled.")
             .arg(port4)
             .arg(port6)
             .arg(Snmp::error_msg(status));
+        start_err += QStringLiteral("\n\n") + diagnostics;
+        DiagnosticLogger::log("Traps", QStringLiteral(
+            "trap bind failed SNMP++ status=%1 error=%2; %3; trap reception disabled")
+            .arg(status).arg(QString::fromLocal8Bit(Snmp::error_msg(status)), diagnostics));
+    } else {
+        DiagnosticLogger::log("Traps", "IPv4/IPv6 trap bind registration succeeded");
     }
 }
 
@@ -296,7 +327,7 @@ void Agent::Init(void)
     {
         QString err = tr("Error loading snmpEngineBoots counter: %1\n")
                               .arg(status);
-        QMessageBox::warning ( NULL, "SnmpB", err, 
+        QMessageBox::warning ( NULL, "MIB Navigator", err,
                                QMessageBox::Ok, Qt::NoButton);
     }
     
@@ -310,7 +341,7 @@ void Agent::Init(void)
     {
         QString err = tr("Error saving snmpEngineBoots counter: %1\n")
                               .arg(status);
-        QMessageBox::warning ( NULL, "SnmpB", err, 
+        QMessageBox::warning ( NULL, "MIB Navigator", err,
                                QMessageBox::Ok, Qt::NoButton);
     }
     
@@ -320,7 +351,7 @@ void Agent::Init(void)
     {
         QString err = tr("Could not create v3MP object:\n")
                               .arg(Snmp::error_msg(status));
-        QMessageBox::warning ( NULL, "SnmpB", err, 
+        QMessageBox::warning ( NULL, "MIB Navigator", err,
                                QMessageBox::Ok, Qt::NoButton);
     }
     
@@ -480,14 +511,20 @@ AgentSelectionError Agent::ResolveCurrentSelection(
             selection->profile).values;
         selection->hasResolvedCredentials = true;
     }
+    if (error == AgentSelectionError::None && selection)
+    {
+        QSettings settings;
+        selection->profile = ConnectionRequestSettings::effectiveProfile(
+            selection->profile,
+            s->ProfileMetadata()->metadataForProfile(selection->profile.profileId),
+            PreferencesSettings::load(settings));
+    }
     return error;
 }
 
 Agent::~Agent()
 {
-    timer.stop();
-    if (snmp)
-        snmp->notify_unregister();
+    Shutdown();
     tableRunner->cancel();
     tableRunner->wait();
     instanceRunner->cancel();
@@ -495,6 +532,18 @@ Agent::~Agent()
     delete snmp;
     snmp = nullptr;
     Snmp::socket_cleanup();
+}
+
+void Agent::Shutdown()
+{
+    if (shutdownComplete) return;
+    shutdownComplete = true;
+    DiagnosticLogger::log("Traps", "Agent cooperative shutdown begin", false);
+    timer.stop();
+    if (snmp) snmp->notify_unregister();
+    if (tableRunner) tableRunner->cancel();
+    if (instanceRunner) instanceRunner->cancel();
+    DiagnosticLogger::log("Traps", "Agent cooperative shutdown end", false);
 }
 
 void Agent::SelectProfileByName(const QString &profileName)
@@ -506,9 +555,26 @@ void Agent::SelectProfileByName(const QString &profileName)
 
 void Agent::SelectProfileById(const QString &profileId)
 {
+    DiagnosticLogger::log("Connections", QStringLiteral(
+        "hidden legacy control synchronization begin profile=%1").arg(profileId));
     const int index = s->MainUI()->AgentProfile->findData(profileId);
-    if (index >= 0)
+    if (index < 0) return;
+    int legacyProtocol = s->MainUI()->AgentProtoV3->isChecked() ? 2
+        : (s->MainUI()->AgentProtoV2->isChecked() ? 1 : 0);
+    const AgentProfileRecord *profile =
+        s->APManagerObj()->GetAgentProfileRecord(profileId);
+    if (!profile) return;
+    const int protocol = ConnectionRequestSettings::activeProtocol(
+        *profile, s->ProfileMetadata()->metadataForProfile(profileId),
+        legacyProtocol);
+    {
+        const QSignalBlocker blocker(s->MainUI()->AgentProfile);
         s->MainUI()->AgentProfile->setCurrentIndex(index);
+    }
+    SelectAgentProfile(nullptr, protocol);
+    DiagnosticLogger::log("Connections", QStringLiteral(
+        "hidden legacy control synchronization end profile=%1 protocol=%2")
+        .arg(profileId).arg(protocol));
 }
 
 int Agent::SetupFromCurrentSelection(const QString& oid, SnmpTarget **t,
@@ -544,7 +610,7 @@ int Agent::Setup(const AgentRequestSelection &selection, const QString& oid,
     {
         QString err = tr("Invalid Address or DNS Name: %1\n")
                               .arg(config.address);
-        QMessageBox::warning ( NULL, "SnmpB", err, 
+        QMessageBox::warning ( NULL, "MIB Navigator", err,
                                QMessageBox::Ok, Qt::NoButton);
         return -1;
     }

@@ -23,6 +23,7 @@
 #include "usmcredentialservice.h"
 #include "usmcredentialcoordinator.h"
 #include "agentprofileservice.h"
+#include "profilemetadataservice.h"
 #include <QMessageBox>
 
 USMProfileManager::USMProfileManager(Snmpb *snmpb)
@@ -83,7 +84,19 @@ USMProfileManager::USMProfileManager(Snmpb *snmpb)
 
 void USMProfileManager::Execute (void)
 {
+    ExecuteEditor(false);
+}
+
+void USMProfileManager::ExecuteNewCredential(void)
+{
+    ExecuteEditor(true);
+}
+
+void USMProfileManager::ExecuteEditor(bool createCredential)
+{
     RebuildEditor();
+    if (createCredential)
+        Add();
     if(upw.exec() == QDialog::Accepted)
     {
         const QList<UsmCredentialRecord> before = credentialService->records();
@@ -91,7 +104,9 @@ void USMProfileManager::Execute (void)
         if (!credentialService->validateWorkingCopy(after))
         {
             QMessageBox::warning(&upw, tr("USM Profiles"),
-                                 tr("Security names must be non-empty and unique."));
+                                 tr("Security names must be non-empty and unique. "
+                                    "Selected authentication and privacy protocols "
+                                    "also require their corresponding secrets."));
             return;
         }
         USM* usm = s->AgentObj()->GetUSMObj();
@@ -225,7 +240,8 @@ void USMProfileManager::Delete(void)
             int references = 0;
             const UsmDeleteAssessment assessment = credentialService->assessDelete(
                 currentprofile->GetRecord().identity.credentialId,
-                s->AgentProfiles()->profiles(), &references);
+                s->AgentProfiles()->profiles(),
+                s->ProfileMetadata()->allMetadata(), &references);
             if ((assessment == UsmDeleteAssessment::Referenced ||
                  assessment == UsmDeleteAssessment::Ambiguous) &&
                 QMessageBox::warning(

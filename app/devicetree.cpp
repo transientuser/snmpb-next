@@ -17,6 +17,8 @@ DeviceTreeState DeviceTree::Reconcile(const DeviceTreeState &state,
                                       const QList<AgentProfileRecord> &profiles)
 {
     DeviceTreeState result;
+    result.rootSortMode = qBound(0, state.rootSortMode, 2);
+    result.unfiledSortMode = qBound(0, state.unfiledSortMode, 2);
     QSet<QString> usedIds;
     QSet<QString> folderIds;
 
@@ -27,6 +29,7 @@ DeviceTreeState DeviceTree::Reconcile(const DeviceTreeState &state,
             continue;
         DeviceFolderRecord folder = source;
         folder.order = qMax(0, folder.order);
+        folder.sortMode = qBound(0, folder.sortMode, 2);
         result.folders.append(folder);
         usedIds.insert(folder.id);
         folderIds.insert(folder.id);

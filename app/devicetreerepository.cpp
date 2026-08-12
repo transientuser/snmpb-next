@@ -11,6 +11,8 @@ DeviceTreeState DeviceTreeRepository::Load() const
 {
     QSettings settings(filename, QSettings::IniFormat);
     DeviceTreeState state;
+    state.rootSortMode = settings.value("sort/connections", 0).toInt();
+    state.unfiledSortMode = settings.value("sort/unfiled", 0).toInt();
     const int folderCount = settings.beginReadArray("folders");
     for (int i = 0; i < folderCount; ++i)
     {
@@ -20,6 +22,7 @@ DeviceTreeState DeviceTreeRepository::Load() const
         folder.parentId = settings.value("parent").toString();
         folder.name = settings.value("name").toString();
         folder.order = settings.value("order", i).toInt();
+        folder.sortMode = settings.value("sortMode", 0).toInt();
         state.folders.append(folder);
     }
     settings.endArray();
@@ -45,6 +48,10 @@ bool DeviceTreeRepository::Save(const DeviceTreeState &state) const
     QSettings settings(filename, QSettings::IniFormat);
     settings.clear();
     settings.setValue("schema/version", 2);
+    if (state.rootSortMode != 0)
+        settings.setValue("sort/connections", state.rootSortMode);
+    if (state.unfiledSortMode != 0)
+        settings.setValue("sort/unfiled", state.unfiledSortMode);
     settings.beginWriteArray("folders");
     for (int i = 0; i < state.folders.size(); ++i)
     {
@@ -54,6 +61,8 @@ bool DeviceTreeRepository::Save(const DeviceTreeState &state) const
         settings.setValue("parent", folder.parentId);
         settings.setValue("name", folder.name);
         settings.setValue("order", folder.order);
+        if (folder.sortMode != 0)
+            settings.setValue("sortMode", folder.sortMode);
     }
     settings.endArray();
     settings.beginWriteArray("profiles");

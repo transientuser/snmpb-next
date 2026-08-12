@@ -12,6 +12,7 @@ struct DeviceFolderRecord
     QString parentId;
     QString name;
     int order = 0;
+    int sortMode = 0;
 };
 
 struct DeviceProfilePlacement
@@ -27,6 +28,8 @@ struct DeviceTreeState
 {
     QList<DeviceFolderRecord> folders;
     QList<DeviceProfilePlacement> placements;
+    int rootSortMode = 0;
+    int unfiledSortMode = 0;
 };
 
 class DeviceTree

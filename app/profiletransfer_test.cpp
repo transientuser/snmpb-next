@@ -32,18 +32,31 @@ int main(int argc, char **argv)
     source.metadata = {{"profile-a", "core note", {"Core", "Lab"},
                         {"IF-MIB", "SNMPv2-MIB"}},
                        {"profile-b", "edge note", {"Edge"}, {}}};
+    source.metadata[0].hasActiveProtocol = true;
+    source.metadata[0].activeProtocol = 1;
+    source.metadata[0].usmCredentialId = "local-only-usm-id";
+    source.metadata[0].hasRequestSettingsMode = true;
+    source.metadata[0].requestSettingsMode = 2;
+    source.metadata[0].overrideTimeout = 9;
+    source.metadata[0].overrideRetries = 4;
+    source.metadata[0].overrideBulkNonRepeaters = 2;
+    source.metadata[0].overrideBulkMaxRepetitions = 31;
     source.tree.folders = {{"folder-root", "", "Datacenter", 0},
                            {"folder-child", "folder-root", "Core", 1}};
+    source.tree.rootSortMode = 1;
+    source.tree.unfiledSortMode = 2;
+    source.tree.folders[0].sortMode = 2;
     source.tree.placements = {{"place-a", "folder-child", "profile-a", "", 2},
                               {"place-b", "folder-root", "profile-b", "", 3}};
     const ProfileTransferDocument before = source;
     const QByteArray json = ProfileTransfer::exportJson(source);
-    ok &= check(json.contains("snmpb-next-profile-transfer") && json.contains("\"version\": 2"),
+    ok &= check(json.contains("snmpb-next-profile-transfer") && json.contains("\"version\": 3"),
                 "schema and version missing");
     ok &= check(!json.contains("read-secret") && !json.contains("write-secret") &&
                 !json.contains("readcomm") && !json.contains("writecomm") &&
                 !json.contains("communityCredentialId") &&
                 !json.contains("credential-bindings") &&
+                !json.contains("local-only-usm-id") &&
                 json.contains("credentialsOmitted"), "default export exposed credentials");
     ok &= check(source.profiles.first().readcomm == before.profiles.first().readcomm,
                 "export mutated source state");
@@ -60,14 +73,24 @@ int main(int argc, char **argv)
                 plan.profiles.size() == 2 && plan.metadata.size() == 2 &&
                 plan.tree.folders.size() == 2 && plan.tree.placements.size() == 2,
                 "valid import round-trip plan");
+    ok &= check(plan.tree.rootSortMode == 1 && plan.tree.unfiledSortMode == 2 &&
+                    plan.tree.folders[0].sortMode == 2,
+                "optional sort metadata did not round-trip");
     ok &= check(plan.profiles.first().readcomm.isEmpty() &&
                 plan.profiles.first().writecomm.isEmpty() &&
                 plan.profiles.first().secname == "unavailable-usm-reference",
                 "credential-free/missing USM reference import policy");
     ok &= check(plan.metadata.first().preferredMibs ==
                     QStringList({"IF-MIB", "SNMPv2-MIB"}) &&
+                plan.metadata.first().hasActiveProtocol &&
+                plan.metadata.first().activeProtocol == 1 &&
+                plan.metadata.first().hasRequestSettingsMode &&
+                plan.metadata.first().requestSettingsMode == 2 &&
+                plan.metadata.first().overrideTimeout == 9 &&
+                plan.metadata.first().overrideBulkMaxRepetitions == 31 &&
+                plan.metadata.first().usmCredentialId.isEmpty() &&
                 !json.contains("BEGIN") && !json.contains("C:\\\\"),
-                "preferred MIB transfer exported content/path or lost names");
+                "portable metadata round-trip or local credential exclusion");
     QTemporaryDir directory;
     const QString agentsFile = directory.filePath("agents.conf");
     const QString metadataFile = directory.filePath("profile-metadata.conf");

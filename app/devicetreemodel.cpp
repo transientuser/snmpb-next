@@ -9,6 +9,7 @@
 namespace
 {
 constexpr auto ProfileMimeType = "application/x-snmpb-profile-name";
+constexpr auto FolderMimeType = "application/x-snmpb-folder-id";
 }
 
 DeviceTreeModel::DeviceTreeModel(const QString &sidecarFile,
@@ -126,8 +127,10 @@ Qt::ItemFlags DeviceTreeModel::flags(const QModelIndex &modelIndex) const
         return Qt::ItemIsDropEnabled;
     Node *node = nodeForIndex(modelIndex);
     Qt::ItemFlags result = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-    if (node->type == NodeType::Folder)
-        result |= Qt::ItemIsEditable | Qt::ItemIsDropEnabled;
+    if (node->type == NodeType::Connections)
+        result |= Qt::ItemIsDropEnabled;
+    else if (node->type == NodeType::Folder)
+        result |= Qt::ItemIsEditable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled;
     else if (node->type == NodeType::Unfiled)
         result |= Qt::ItemIsDropEnabled;
     else if (node->type == NodeType::Profile)
@@ -157,7 +160,7 @@ bool DeviceTreeModel::setData(const QModelIndex &modelIndex,
 
 QStringList DeviceTreeModel::mimeTypes() const
 {
-    return {ProfileMimeType};
+    return {ProfileMimeType, FolderMimeType};
 }
 
 QMimeData *DeviceTreeModel::mimeData(const QModelIndexList &indexes) const
@@ -169,26 +172,39 @@ QMimeData *DeviceTreeModel::mimeData(const QModelIndexList &indexes) const
             mime->setData(ProfileMimeType, profileId(modelIndex).toUtf8());
             break;
         }
+        else if (isFolder(modelIndex))
+        {
+            mime->setData(FolderMimeType,
+                          modelIndex.data(FolderIdRole).toString().toUtf8());
+            break;
+        }
     return mime;
 }
 
 bool DeviceTreeModel::canDropMimeData(const QMimeData *mime, Qt::DropAction action,
                                       int, int, const QModelIndex &parentIndex) const
 {
-    if (!mime || !mime->hasFormat(ProfileMimeType) ||
+    if (!mime || (!mime->hasFormat(ProfileMimeType) &&
+                  !mime->hasFormat(FolderMimeType)) ||
         (action != Qt::MoveAction && action != Qt::IgnoreAction))
         return false;
-    return !parentIndex.isValid() || isFolder(parentIndex) || isUnfiled(parentIndex);
+    if (mime->hasFormat(FolderMimeType))
+        return isConnections(parentIndex) || isFolder(parentIndex);
+    return !parentIndex.isValid() || isConnections(parentIndex) ||
+           isFolder(parentIndex) || isUnfiled(parentIndex);
 }
 
 bool DeviceTreeModel::dropMimeData(const QMimeData *mime, Qt::DropAction action,
-                                   int, int, const QModelIndex &parentIndex)
+                                   int row, int, const QModelIndex &parentIndex)
 {
     if (action == Qt::IgnoreAction)
         return true;
     if (!canDropMimeData(mime, action, -1, -1, parentIndex))
         return false;
-    return moveProfile(QString::fromUtf8(mime->data(ProfileMimeType)), parentIndex);
+    if (mime->hasFormat(FolderMimeType))
+        return moveFolder(QString::fromUtf8(mime->data(FolderMimeType)),
+                          parentIndex, row);
+    return moveProfile(QString::fromUtf8(mime->data(ProfileMimeType)), parentIndex, row);
 }
 
 Qt::DropActions DeviceTreeModel::supportedDropActions() const
@@ -204,9 +220,11 @@ QModelIndex DeviceTreeModel::createFolder(const QString &rawName,
     QString parentId;
     if (parentIndex.isValid())
     {
-        if (!parentNode || parentNode->type != NodeType::Folder)
+        if (!parentNode || (parentNode->type != NodeType::Folder &&
+                            parentNode->type != NodeType::Connections))
             return {};
-        parentId = parentNode->id;
+        if (parentNode->type == NodeType::Folder)
+            parentId = parentNode->id;
     }
     if (name.isEmpty())
         return {};
@@ -250,30 +268,90 @@ bool DeviceTreeModel::deleteFolder(const QModelIndex &modelIndex)
 }
 
 bool DeviceTreeModel::moveProfile(const QString &id,
-                                  const QModelIndex &destinationFolder)
+                                  const QModelIndex &destinationFolder, int row)
 {
     QString parentId;
     if (destinationFolder.isValid())
     {
         Node *destination = nodeForIndex(destinationFolder);
         if (!destination || (destination->type != NodeType::Folder &&
-                             destination->type != NodeType::Unfiled))
+                             destination->type != NodeType::Unfiled &&
+                             destination->type != NodeType::Connections))
             return false;
         if (destination->type == NodeType::Folder)
             parentId = destination->id;
     }
     if (!profile(id))
         return false;
-    if (parentId.isEmpty())
-        treeState.placements.removeIf([&id](const DeviceProfilePlacement &placement) {
-            return placement.profileId == id;
-        });
-    else if (!DeviceTree::MoveProfile(&treeState, id, parentId))
+    const SortMode destinationMode = destinationFolder.isValid() ?
+        sortMode(destinationFolder) : static_cast<SortMode>(treeState.unfiledSortMode);
+    const int requestedOrder = destinationMode == SortMode::Manual ? row : -1;
+    if (!DeviceTree::MoveProfile(&treeState, id, parentId, requestedOrder))
         return false;
+    if (destinationMode == SortMode::Manual)
+    {
+        QList<DeviceProfilePlacement *> siblings;
+        DeviceProfilePlacement *moved = nullptr;
+        for (DeviceProfilePlacement &placement : treeState.placements)
+            if (placement.parentId == parentId) {
+                if (placement.profileId == id) moved = &placement;
+                else siblings.append(&placement);
+            }
+        std::stable_sort(siblings.begin(), siblings.end(), [](const auto *a, const auto *b) {
+            return a->order < b->order;
+        });
+        int folderRows = 0;
+        for (const DeviceFolderRecord &folder : treeState.folders)
+            if (folder.parentId == parentId) ++folderRows;
+        const int position = row < 0 ? siblings.size() :
+            qBound(0, row - folderRows, siblings.size());
+        if (moved) siblings.insert(position, moved);
+        for (int i = 0; i < siblings.size(); ++i) siblings[i]->order = i;
+    }
     persist();
     beginResetModel();
     rebuild();
     endResetModel();
+    return true;
+}
+
+bool DeviceTreeModel::moveFolder(const QString &id,
+                                 const QModelIndex &destinationFolder, int row)
+{
+    Node *destination = nodeForIndex(destinationFolder);
+    if (!destination || (destination->type != NodeType::Connections &&
+                         destination->type != NodeType::Folder))
+        return false;
+    DeviceFolderRecord *moved = nullptr;
+    for (DeviceFolderRecord &folder : treeState.folders)
+        if (folder.id == id) { moved = &folder; break; }
+    if (!moved || destination->id == id) return false;
+    QString ancestor = destination->type == NodeType::Folder ? destination->id : QString();
+    while (!ancestor.isEmpty()) {
+        if (ancestor == id) return false;
+        QString parentId;
+        for (const DeviceFolderRecord &folder : treeState.folders)
+            if (folder.id == ancestor) { parentId = folder.parentId; break; }
+        ancestor = parentId;
+    }
+    const QString parentId = destination->type == NodeType::Folder ?
+        destination->id : QString();
+    moved->parentId = parentId;
+    const SortMode mode = sortMode(destinationFolder);
+    if (mode == SortMode::Manual) {
+        QList<DeviceFolderRecord *> siblings;
+        for (DeviceFolderRecord &folder : treeState.folders)
+            if (folder.parentId == parentId && folder.id != id) siblings.append(&folder);
+        std::stable_sort(siblings.begin(), siblings.end(), [](const auto *a, const auto *b) {
+            return a->order < b->order;
+        });
+        int position = row < 0 ? siblings.size() : row;
+        if (destination->type == NodeType::Connections && position > 0) --position;
+        siblings.insert(qBound(0, position, siblings.size()), moved);
+        for (int i = 0; i < siblings.size(); ++i) siblings[i]->order = i;
+    }
+    if (!persist()) return false;
+    beginResetModel(); rebuild(); endResetModel();
     return true;
 }
 
@@ -384,6 +462,12 @@ bool DeviceTreeModel::isFolder(const QModelIndex &modelIndex) const
     return node && node->type == NodeType::Folder;
 }
 
+bool DeviceTreeModel::isConnections(const QModelIndex &modelIndex) const
+{
+    Node *node = nodeForIndex(modelIndex);
+    return node && node->type == NodeType::Connections;
+}
+
 bool DeviceTreeModel::isProfile(const QModelIndex &modelIndex) const
 {
     Node *node = nodeForIndex(modelIndex);
@@ -394,6 +478,39 @@ bool DeviceTreeModel::isUnfiled(const QModelIndex &modelIndex) const
 {
     Node *node = nodeForIndex(modelIndex);
     return node && node->type == NodeType::Unfiled;
+}
+
+DeviceTreeModel::SortMode DeviceTreeModel::sortMode(const QModelIndex &modelIndex) const
+{
+    Node *node = nodeForIndex(modelIndex);
+    if (!node) return SortMode::Manual;
+    if (node->type == NodeType::Connections)
+        return static_cast<SortMode>(qBound(0, treeState.rootSortMode, 2));
+    if (node->type == NodeType::Unfiled)
+        return static_cast<SortMode>(qBound(0, treeState.unfiledSortMode, 2));
+    if (node->type == NodeType::Folder)
+        for (const DeviceFolderRecord &folder : treeState.folders)
+            if (folder.id == node->id)
+                return static_cast<SortMode>(qBound(0, folder.sortMode, 2));
+    return SortMode::Manual;
+}
+
+bool DeviceTreeModel::setSortMode(const QModelIndex &modelIndex, SortMode mode)
+{
+    Node *node = nodeForIndex(modelIndex);
+    if (!node || (node->type != NodeType::Connections &&
+                  node->type != NodeType::Unfiled && node->type != NodeType::Folder))
+        return false;
+    if (node->type == NodeType::Connections)
+        treeState.rootSortMode = static_cast<int>(mode);
+    else if (node->type == NodeType::Unfiled)
+        treeState.unfiledSortMode = static_cast<int>(mode);
+    else
+        for (DeviceFolderRecord &folder : treeState.folders)
+            if (folder.id == node->id) folder.sortMode = static_cast<int>(mode);
+    if (!persist()) return false;
+    beginResetModel(); rebuild(); endResetModel();
+    return true;
 }
 
 const DeviceTreeState &DeviceTreeModel::state() const
@@ -420,6 +537,20 @@ QModelIndex DeviceTreeModel::indexForNode(Node *node) const
 void DeviceTreeModel::rebuild()
 {
     root = std::make_unique<Node>();
+    auto connections = std::make_unique<Node>();
+    connections->type = NodeType::Connections;
+    connections->text = tr("Connections");
+    connections->parent = root.get();
+    Node *connectionsNode = connections.get();
+    root->children.push_back(std::move(connections));
+
+    auto unfiledNode = std::make_unique<Node>();
+    unfiledNode->type = NodeType::Unfiled;
+    unfiledNode->text = tr("Unfiled");
+    unfiledNode->parent = connectionsNode;
+    Node *unfiledRoot = unfiledNode.get();
+    connectionsNode->children.push_back(std::move(unfiledNode));
+
     QHash<QString, Node *> folderNodes;
     QList<DeviceFolderRecord> pending = treeState.folders;
     std::stable_sort(pending.begin(), pending.end(), [](const auto &a, const auto &b) {
@@ -431,7 +562,7 @@ void DeviceTreeModel::rebuild()
         for (int i = 0; i < pending.size();)
         {
             const DeviceFolderRecord folder = pending[i];
-            Node *parentNode = folder.parentId.isEmpty() ? root.get() :
+            Node *parentNode = folder.parentId.isEmpty() ? connectionsNode :
                                folderNodes.value(folder.parentId, nullptr);
             if (!parentNode)
             {
@@ -459,7 +590,7 @@ void DeviceTreeModel::rebuild()
     });
     for (const DeviceProfilePlacement &placement : placements)
     {
-        Node *parentNode = placement.parentId.isEmpty() ? root.get() :
+        Node *parentNode = placement.parentId.isEmpty() ? unfiledRoot :
                            folderNodes.value(placement.parentId, nullptr);
         if (!parentNode)
             continue;
@@ -479,10 +610,6 @@ void DeviceTreeModel::rebuild()
     const QStringList unfiled = DeviceTree::UnfiledProfiles(treeState, profiles);
     if (!unfiled.isEmpty())
     {
-        auto unfiledNode = std::make_unique<Node>();
-        unfiledNode->type = NodeType::Unfiled;
-        unfiledNode->text = tr("Unfiled");
-        unfiledNode->parent = root.get();
         for (const QString &id : unfiled)
         {
             const AgentProfileRecord *record = profile(id);
@@ -493,11 +620,34 @@ void DeviceTreeModel::rebuild()
             node->text = record->name;
             node->profileId = record->profileId;
             node->profileName = record->name;
-            node->parent = unfiledNode.get();
-            unfiledNode->children.push_back(std::move(node));
+            node->parent = unfiledRoot;
+            unfiledRoot->children.push_back(std::move(node));
         }
-        root->children.push_back(std::move(unfiledNode));
     }
+
+    sortChildren(unfiledRoot, static_cast<SortMode>(qBound(0, treeState.unfiledSortMode, 2)));
+    for (auto entry = folderNodes.cbegin(); entry != folderNodes.cend(); ++entry)
+        for (const DeviceFolderRecord &folder : treeState.folders)
+            if (folder.id == entry.key())
+                sortChildren(entry.value(), static_cast<SortMode>(qBound(0, folder.sortMode, 2)));
+    sortChildren(connectionsNode,
+                 static_cast<SortMode>(qBound(0, treeState.rootSortMode, 2)), true);
+}
+
+void DeviceTreeModel::sortChildren(Node *parent, SortMode mode, bool keepUnfiledFirst)
+{
+    if (!parent || mode == SortMode::Manual) return;
+    std::stable_sort(parent->children.begin(), parent->children.end(),
+        [mode, keepUnfiledFirst](const auto &left, const auto &right) {
+            if (keepUnfiledFirst && (left->type == NodeType::Unfiled ||
+                                     right->type == NodeType::Unfiled))
+                return left->type == NodeType::Unfiled;
+            const bool leftFolder = left->type != NodeType::Profile;
+            const bool rightFolder = right->type != NodeType::Profile;
+            if (leftFolder != rightFolder) return leftFolder;
+            const int compared = QString::localeAwareCompare(left->text, right->text);
+            return mode == SortMode::NameAscending ? compared < 0 : compared > 0;
+        });
 }
 
 bool DeviceTreeModel::persist()

@@ -20,6 +20,10 @@ struct PreferencesSettings
     QString selectedProfile = QStringLiteral("localhost");
     QString selectedProfileId;
     int selectedProtocol = 0;
+    int requestTimeout = 3;
+    int requestRetries = 1;
+    int bulkNonRepeaters = 0;
+    int bulkMaxRepetitions = 10;
     QStringList mibPaths;
     QStringList mibPreloads;
     QSize windowSize;

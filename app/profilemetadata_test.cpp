@@ -38,6 +38,11 @@ int main(int argc, char **argv)
     ProfileMetadataRecord first{"id-a", "Core router notes",
                                 {" core ", "LAB", "Core", ""}};
     first.preferredMibs = {" IF-MIB ", "SNMPv2-MIB", "IF-MIB"};
+    first.hasActiveProtocol = true; first.activeProtocol = 2;
+    first.usmCredentialId = "stable-usm-id";
+    first.hasRequestSettingsMode = true; first.requestSettingsMode = 2;
+    first.overrideTimeout = 8; first.overrideRetries = 4;
+    first.overrideBulkNonRepeaters = 2; first.overrideBulkMaxRepetitions = 30;
     ok &= check(service.update(first), "metadata update");
     const ProfileMetadataRecord normalized = service.metadataForProfile("id-a");
     ok &= check(normalized.tags == QStringList({"core", "LAB"}),
@@ -54,6 +59,14 @@ int main(int argc, char **argv)
     ok &= check(reloaded.metadataForProfile("id-a").preferredMibs ==
                     QStringList({"IF-MIB", "SNMPv2-MIB"}),
                 "preferred MIBs round-trip");
+    const ProfileMetadataRecord connection = reloaded.metadataForProfile("id-a");
+    ok &= check(connection.hasActiveProtocol && connection.activeProtocol == 2 &&
+                connection.usmCredentialId == "stable-usm-id" &&
+                connection.hasRequestSettingsMode && connection.requestSettingsMode == 2 &&
+                connection.overrideTimeout == 8 && connection.overrideRetries == 4 &&
+                connection.overrideBulkNonRepeaters == 2 &&
+                connection.overrideBulkMaxRepetitions == 30,
+                "optional connection metadata round-trip");
     const QByteArray beforeCancel = contents(metadataFile);
     ProfileMetadataRecord cancelled = reloaded.metadataForProfile("id-a");
     cancelled.notes = "cancelled edit";
@@ -94,7 +107,10 @@ int main(int argc, char **argv)
     const QList<ProfileMetadataRecord> loaded =
         ProfileMetadataRepository(malformed).load();
     ok &= check(loaded.size() == 1 && loaded.first().notes == "kept" &&
-                loaded.first().preferredMibs.isEmpty(),
+                loaded.first().preferredMibs.isEmpty() &&
+                !loaded.first().hasActiveProtocol &&
+                loaded.first().usmCredentialId.isEmpty() &&
+                !loaded.first().hasRequestSettingsMode,
                 "v1 schema upgrade and malformed records");
     return ok ? 0 : 1;
 }

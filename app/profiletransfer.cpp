@@ -45,6 +45,10 @@ QByteArray ProfileTransfer::exportJson(const ProfileTransferDocument &document)
     root["format"] = "snmpb-next-profile-transfer";
     root["version"] = CurrentVersion;
     root["credentialPolicy"] = "omitted";
+    if (document.tree.rootSortMode != 0)
+        root["connectionsSortMode"] = document.tree.rootSortMode;
+    if (document.tree.unfiledSortMode != 0)
+        root["unfiledSortMode"] = document.tree.unfiledSortMode;
     QJsonArray profiles;
     for (const AgentProfileRecord &profile : document.profiles)
         profiles.append(profileJson(profile));
@@ -58,6 +62,21 @@ QByteArray ProfileTransfer::exportJson(const ProfileTransferDocument &document)
         QJsonArray preferredMibs;
         for (const QString &name : record.preferredMibs) preferredMibs.append(name);
         o["preferredMibs"] = preferredMibs;
+        if (record.hasActiveProtocol)
+            o["activeProtocol"] = record.activeProtocol;
+        if (record.hasRequestSettingsMode)
+        {
+            o["requestSettingsMode"] = record.requestSettingsMode;
+            if (record.requestSettingsMode == 2)
+            {
+                o["overrideTimeout"] = record.overrideTimeout;
+                o["overrideRetries"] = record.overrideRetries;
+                o["overrideBulkNonRepeaters"] = record.overrideBulkNonRepeaters;
+                o["overrideBulkMaxRepetitions"] =
+                    record.overrideBulkMaxRepetitions;
+            }
+        }
+        // usmCredentialId is deliberately local-only and never exported.
         metadata.append(o);
     }
     root["metadata"] = metadata;
@@ -65,7 +84,9 @@ QByteArray ProfileTransfer::exportJson(const ProfileTransferDocument &document)
     for (const DeviceFolderRecord &folder : document.tree.folders)
     {
         QJsonObject o; o["id"] = folder.id; o["parentId"] = folder.parentId;
-        o["name"] = folder.name; o["order"] = folder.order; folders.append(o);
+        o["name"] = folder.name; o["order"] = folder.order;
+        if (folder.sortMode != 0) o["sortMode"] = folder.sortMode;
+        folders.append(o);
     }
     root["folders"] = folders;
     QJsonArray placements;
@@ -191,8 +212,11 @@ ProfileTransferError ProfileTransfer::planImport(
         f.id = usedFolderIds.contains(incomingId) ? newId() : incomingId;
         usedFolderIds.insert(f.id); proposed.folderIdMap[incomingId] = f.id;
         f.parentId = o.value("parentId").toString(); f.order = o.value("order").toInt();
+        f.sortMode = qBound(0, o.value("sortMode").toInt(), 2);
         proposed.tree.folders.append(f);
     }
+    proposed.tree.rootSortMode = qBound(0, root.value("connectionsSortMode").toInt(), 2);
+    proposed.tree.unfiledSortMode = qBound(0, root.value("unfiledSortMode").toInt(), 2);
     for (DeviceFolderRecord &f : proposed.tree.folders)
     {
         if (f.parentId.isEmpty()) continue;
@@ -219,6 +243,21 @@ ProfileTransferError ProfileTransfer::planImport(
             for (const QJsonValue &name : o.value("preferredMibs").toArray())
                 if (name.isString()) preferredMibs.append(name.toString());
             m.preferredMibs = ProfileMetadataRepository::normalizeMibs(preferredMibs);
+            proposed.metadata.last() = m;
+        }
+        if (version >= 3)
+        {
+            m.hasActiveProtocol = o.contains("activeProtocol");
+            m.activeProtocol = o.value("activeProtocol").toInt();
+            m.hasRequestSettingsMode = o.contains("requestSettingsMode");
+            m.requestSettingsMode = o.value("requestSettingsMode").toInt();
+            m.overrideTimeout = o.value("overrideTimeout").toInt(3);
+            m.overrideRetries = o.value("overrideRetries").toInt(1);
+            m.overrideBulkNonRepeaters =
+                o.value("overrideBulkNonRepeaters").toInt(0);
+            m.overrideBulkMaxRepetitions =
+                o.value("overrideBulkMaxRepetitions").toInt(10);
+            m.usmCredentialId.clear();
             proposed.metadata.last() = m;
         }
     }

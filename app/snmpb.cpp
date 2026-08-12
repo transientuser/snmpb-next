@@ -25,6 +25,9 @@
 #include <QFileDialog>
 #include <QFile>
 #include <qdockwidget.h>
+#include <QGridLayout>
+#include <QLabel>
+#include <QSplitter>
 #include <qmenu.h>
 #include "snmpb.h"
 #include "mibmodule.h"
@@ -37,6 +40,9 @@
 #include "mibeditor.h"
 #include "discovery.h"
 #include "devicepane.h"
+#include "mainwindowlayout.h"
+#include "productidentity.h"
+#include "diagnosticlogger.h"
 
 #include "agentprofile.h"
 #include "agentprofileservice.h"
@@ -83,10 +89,12 @@
 
 Snmpb::Snmpb(bool offline)
 {
+    DiagnosticLogger::log("Startup", "settings initialization begin");
     // First thing to do is to give up root privileges that allow permission to
     // bind on privileged ports (<1024). This is needed to bind on 
     // the RFC-defined trap port number 162 on UNIX machines.
     prefs = new Preferences(this);
+    DiagnosticLogger::log("Startup", "preferences load complete");
 #ifndef WIN32 
     // Allows to bind on privileged ports only if it is the standard trap port...
     if (! (prefs->ShouldListenStdTrapPort4() || prefs->ShouldListenStdTrapPort6()))
@@ -95,6 +103,7 @@ Snmpb::Snmpb(bool offline)
     }
 #endif
     agent = new Agent(this, offline);
+    DiagnosticLogger::log("Traps", "trap receiver construction complete");
     start_issuccess = agent->GetStartupResult(start_msg);    
 #ifndef WIN32 
     // Drop root privileges
@@ -106,13 +115,20 @@ Snmpb::Snmpb(bool offline)
     // Note: beware as anything BEFORE this point is run as root on UNIX ... 
 
     CheckForConfigFiles();
+    DiagnosticLogger::log("Startup", "settings initialization complete");
+}
+
+Snmpb::~Snmpb()
+{
+    delete agent;
+    agent = nullptr;
 }
 
 void Snmpb::BindToGUI(QMainWindow* mw)
 {
     if (start_issuccess == false)
     {
-        QMessageBox::critical(nullptr, tr("SnmpB"), start_msg, QMessageBox::Ok);
+        QMessageBox::critical(nullptr, tr("MIB Navigator"), start_msg, QMessageBox::Ok);
 
         // Desperate measures: delete the preferences file so 
         // at the next startup, the app might have a chance to start
@@ -123,11 +139,17 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     else
     {
         if (start_msg != "")
-            QMessageBox::warning(nullptr, tr("SnmpB"), start_msg, QMessageBox::Ok);
+            QMessageBox::warning(nullptr, tr("MIB Navigator"), start_msg, QMessageBox::Ok);
         agent->StartTrapTimer();
     }
 
     w.setupUi(mw);
+    DiagnosticLogger::log("UI", "main window UI setup complete");
+    // The Connections navigator is the visible authoritative selector. These
+    // controls remain hidden temporarily as compatibility state for legacy
+    // request consumers while selection is synchronized by stable profile ID.
+    w.AgentProperties->hide();
+    w.actionManageAgentProfiles->setVisible(false);
     prefs->RestoreWindowGeometry(*mw);
     static auto saver = std::bind(&Preferences::SaveWindowGeometry, std::ref(*mw));
     connect(QApplication::instance(), &QCoreApplication::aboutToQuit, saver);
@@ -137,12 +159,17 @@ void Snmpb::BindToGUI(QMainWindow* mw)
 
     // Creation order is VERY important here
     logsnmpb = new LogSnmpb(this);
+    DiagnosticLogger::attachLogWidget(w.LogOutput);
     modules = new MibModule(this);
     profileService = new AgentProfileService(GetAgentsConfigFile(), this);
+    DiagnosticLogger::log("Connections", QStringLiteral("profiles loaded count=%1")
+                          .arg(profileService->profiles().size()));
     communityCredentialService = new CommunityCredentialService(
         GetCommunityCredentialsConfigFile(), GetCredentialBindingsConfigFile(), this);
     profileMetadataService = new ProfileMetadataService(
         GetProfileMetadataConfigFile(), this);
+    DiagnosticLogger::log("Connections", QStringLiteral("profile metadata loaded count=%1")
+                          .arg(profileMetadataService->allMetadata().size()));
     devicePlacementService = new DeviceTreePlacementService(
         GetDeviceTreeConfigFile(), this);
     apm = new AgentProfileManager(this, profileService, profileMetadataService);
@@ -160,12 +187,41 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     editor = new MibEditor(this);
     discovery = new Discovery(this);
 
+    auto *contextWidget = new QWidget(w.widget);
+    contextWidget->setObjectName(QStringLiteral("CurrentDeviceContext"));
+    auto *contextLayout = new QVBoxLayout(contextWidget);
+    contextLayout->setContentsMargins(10, 6, 10, 6);
+    contextLayout->setSpacing(1);
+    auto *contextName = new QLabel(tr("No device selected"), contextWidget);
+    contextName->setObjectName(QStringLiteral("CurrentDeviceName"));
+    QFont contextFont = contextName->font(); contextFont.setBold(true);
+    contextName->setFont(contextFont);
+    auto *contextSummary = new QLabel(tr("Select a device from the sidebar"), contextWidget);
+    contextSummary->setObjectName(QStringLiteral("CurrentDeviceSummary"));
+    contextLayout->addWidget(contextName);
+    contextLayout->addWidget(contextSummary);
+    if (auto *centralLayout = qobject_cast<QGridLayout *>(w.widget->layout())) {
+        centralLayout->removeWidget(w.TabW);
+        centralLayout->setContentsMargins(8, 8, 8, 8);
+        centralLayout->setSpacing(6);
+        centralLayout->addWidget(contextWidget, 0, 0);
+        centralLayout->addWidget(w.TabW, 1, 0);
+        centralLayout->setRowStretch(1, 1);
+    }
+
     devicesDock = new QDockWidget(tr("Devices"), mw);
     devicesDock->setObjectName("DevicesDock");
-    devicesDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    devicesDock->setAllowedAreas(Qt::LeftDockWidgetArea);
+    devicesDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    auto *dockTitle = new QWidget(devicesDock);
+    dockTitle->setFixedHeight(0);
+    devicesDock->setTitleBarWidget(dockTitle);
     devicePane = new DevicePane(GetDeviceTreeConfigFile(),
                                 apm->GetAgentProfileRecords(),
-                                profileMetadataService->allMetadata(), devicesDock);
+                                profileMetadataService->allMetadata(),
+                                profileService, profileMetadataService,
+                                communityCredentialService, UsmCredentials(), devicesDock);
+    DiagnosticLogger::log("Connections", "Connections model and Device Details constructed");
     devicesDock->setWidget(devicePane);
     auto refreshCredentialHealth = [this]() {
         QHash<QString, QString> health;
@@ -174,7 +230,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             QString text;
             if (profile.v3)
             {
-                const UsmReferenceResult result = UsmCredentials()->validate(profile);
+                const UsmReferenceResult result = UsmCredentials()->validate(
+                    profile, profileMetadataService->metadataForProfile(profile.profileId));
                 switch (result.status) {
                 case UsmReferenceStatus::Valid: text = tr("SNMPv3 credential available"); break;
                 case UsmReferenceStatus::Missing: text = tr("SNMPv3 credential missing"); break;
@@ -199,13 +256,31 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             devicePane, refreshCredentialHealth);
     connect(UsmCredentials(), &UsmCredentialService::credentialsChanged,
             devicePane, refreshCredentialHealth);
-    devicesDock->setMinimumWidth(190);
+    devicesDock->setMinimumWidth(280);
     mw->addDockWidget(Qt::LeftDockWidgetArea, devicesDock);
-    QMenu *viewMenu = w.MenuBar->addMenu(tr("&View"));
-    viewMenu->addAction(devicesDock->toggleViewAction());
+    mw->resizeDocks({devicesDock}, {330}, Qt::Horizontal);
 
     connect(devicePane, &DevicePane::profileSelected,
             agent, &Agent::SelectProfileById);
+    connect(devicePane, &DevicePane::currentContextChanged, mw,
+            [contextName, contextSummary](const QString &name, const QString &summary) {
+        DiagnosticLogger::log("UI", QStringLiteral(
+            "current-profile header update begin name=%1").arg(name));
+        contextName->setText(name.isEmpty() ? QObject::tr("No device selected") : name);
+        contextSummary->setText(summary.isEmpty() ?
+            QObject::tr("Select a device from the sidebar") : summary);
+        DiagnosticLogger::log("UI", "current-profile header update end");
+    });
+    connect(devicePane->detailsEditor(), &DeviceDetailsEditor::profileApplied,
+            devicePane, [this](const QString &profileId) {
+        DiagnosticLogger::log("Connections", QStringLiteral(
+            "model refresh begin profile=%1").arg(profileId));
+        devicePane->setProfiles(profileService->profiles());
+        DiagnosticLogger::log("Connections", QStringLiteral(
+            "tree reselection begin profile=%1").arg(profileId));
+        agent->SelectProfileById(profileId);
+        DiagnosticLogger::log("Connections", "tree reselection/model refresh end");
+    });
     connect(devicePane, &DevicePane::editProfileRequested,
             apm, &AgentProfileManager::EditProfile);
     connect(devicePane, &DevicePane::duplicateProfileRequested,
@@ -216,6 +291,18 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             apm, &AgentProfileManager::DeleteProfile);
     connect(apm, &AgentProfileManager::NewProfileCompleted,
             devicePane, &DevicePane::placeCreatedProfile);
+    connect(apm, &AgentProfileManager::NewProfileCompleted, this,
+            [this](const QString &profileId) {
+        const AgentProfileRecord *profile = profileService->findById(profileId);
+        if (!profile) return;
+        ProfileMetadataRecord metadata =
+            profileMetadataService->metadataForProfile(profileId);
+        metadata.hasActiveProtocol = true;
+        metadata.activeProtocol = profile->v1 ? 0 : (profile->v2 ? 1 : 2);
+        metadata.hasRequestSettingsMode = true;
+        metadata.requestSettingsMode = 1;
+        profileMetadataService->update(metadata);
+    });
     connect(devicePane, &DevicePane::organizationPersisted,
             apm, &AgentProfileManager::PersistProfiles);
     connect(devicePane, &DevicePane::organizationPersisted,
@@ -250,6 +337,9 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             [this](const QString &profileId) {
         modules->LoadPreferredModules(
             profileMetadataService->metadataForProfile(profileId).preferredMibs);
+    });
+    connect(devicePane, &DevicePane::manageUsmCredentialsRequested, this, [this]() {
+        if (upm) upm->ExecuteNewCredential();
     });
     connect(devicePane, &DevicePane::exportRequested, this,
             [this](int scope, const QString &id) {
@@ -312,12 +402,18 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     });
 
     QSettings windowSettings;
-    if (windowSettings.contains("mainwindow/state"))
-        mw->restoreState(windowSettings.value("mainwindow/state").toByteArray());
+    RestoreMainWindowStateWithRequiredDevicesDock(
+        mw, devicesDock, windowSettings.value("mainwindow/state").toByteArray());
+    DiagnosticLogger::log("UI", "saved QMainWindow state restore complete");
+    if (windowSettings.contains("mainwindow/device-sidebar-sizes"))
+        devicePane->verticalSplitter()->restoreState(
+            windowSettings.value("mainwindow/device-sidebar-sizes").toByteArray());
     connect(QApplication::instance(), &QCoreApplication::aboutToQuit,
-            mw, [mw]() {
+            mw, [this, mw]() {
                 QSettings settings;
                 settings.setValue("mainwindow/state", mw->saveState());
+                settings.setValue("mainwindow/device-sidebar-sizes",
+                                  devicePane->verticalSplitter()->saveState());
             });
 
     // Connect some signals
@@ -379,6 +475,13 @@ AgentProfileManager* Snmpb::APManagerObj(void)
     return (apm);
 }
 
+void Snmpb::Shutdown()
+{
+    DiagnosticLogger::log("Shutdown", "trap listener shutdown begin", false);
+    if (agent) agent->Shutdown();
+    DiagnosticLogger::log("Shutdown", "trap listener shutdown end", false);
+}
+
 AgentProfileService* Snmpb::AgentProfiles(void)
 {
     return profileService;
@@ -420,8 +523,8 @@ void Snmpb::CheckForConfigFiles(void)
 
     if (!settings.isWritable())
     {
-        QMessageBox::warning(nullptr, tr("SnmpB"),
-                             tr("SnmpB config file is not writable:\n%1\n"
+        QMessageBox::warning(nullptr, tr("MIB Navigator"),
+                             tr("MIB Navigator config file is not writable:\n%1\n"
                                 "If it continues to be, changes in preferences will not be saved!")
                              .arg(settings.fileName()),
                              QMessageBox::Ok);
@@ -562,41 +665,18 @@ void Snmpb::TabSelected(void)
 
 void Snmpb::AboutBox(bool)
 {
-    QMessageBox::about(MainUI()->TabW, tr("About SnmpB Next"), tr(
-"<H2><b>SnmpB Next</b></H2><br>                                                  \
-Version %1<br>                                                                   \
-<a href=http://sourceforge.net/projects/snmpb>                                   \
-http://sourceforge.net/projects/snmpb</a><br><br>                                \
-                                                                                 \
-Copyright (c) <b>Martin Jolicoeur</b> (<a href=\"mailto:snmpb1@gmail.com\">\
-snmpb1@gmail.com</a>), 2004-2017<br><br>                                         \
-                                                                                 \
-SnmpB is an SNMP MIB browser (Simple Network Management Protocol) written in QT. \
-It supports SNMPv1, SNMPv2c and SNMPv3. SnmpB can browse/edit/load/add MIB files \
-and can query SNMP agents. It also supports agent discovery, trap events, and    \
-graph plotting.<br><br>                                                          \
-                                                                                 \
-This program is covered by the GNU General Public License, version 2 (GPLv2),    \
-<a href=http://www.gnu.org/licenses>http://www.gnu.org/licenses</a><br><br>      \
-                                                                                 \
-This program uses the following libraries, covered by their respective licenses. \
-The Qwt license is included in the installed license directory:<br>               \
-<br><br>                                                                         \
-                                                                                 \
-Snmp++ [v%2] (<a href=http://www.agentpp.com>http://www.agentpp.com</a>)<br>     \
-Libtomcrypt [v%3] (<a href=http://libtom.net>http://libtom.net</a>)<br>          \
-Libsmi [v%4] (<a href=http://www.ibr.cs.tu-bs.de/projects/libsmi>                \
-http://www.ibr.cs.tu-bs.de/projects/libsmi</a>)<br>"
-SNMPB_QWT_ABOUT_LINE
-SNMPB_QT_ABOUT_LINE)
-        .arg(SNMPB_VERSION_STRING)
+    QString dependencies = QStringLiteral(
+        "SNMP++ %1; LibTomCrypt %2; libsmi %3; Qt %4")
         .arg(SNMP_PP_VERSION_STRING)
         .arg(SCRYPT)
         .arg(SMI_VERSION_STRING)
+        .arg(qVersion());
 #if SNMPB_ENABLE_QWT
-        .arg(QWT_VERSION_STR)
+    dependencies += QStringLiteral("; Qwt %1").arg(QWT_VERSION_STR);
 #endif
-        .arg(qVersion()));
+    QMessageBox::about(MainUI()->TabW, tr("About MIB Navigator"),
+                       ProductIdentity::aboutHtml(SNMPB_VERSION_STRING,
+                                                  dependencies));
 }
 
 QString Snmpb::GetDeviceTreeConfigFile(void)

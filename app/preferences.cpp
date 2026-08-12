@@ -23,10 +23,15 @@
 #include <qmessagebox.h> 
 #include <qfileinfo.h>
 #include <qtextstream.h>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QSpinBox>
+#include <QVBoxLayout>
 
 #include "mibmodule.h"
 #include "preferences.h"
 #include "preferencesettings.h"
+#include "productidentity.h"
 
 const char default_mib_config[] = R"(
 IF-MIB
@@ -47,8 +52,10 @@ Preferences::Preferences(Snmpb *snmpb)
 
     // setup defaults for the default constructor of QSettings
     QSettings::setDefaultFormat(QSettings::IniFormat);
-    QCoreApplication::setOrganizationDomain("snmpb.sourceforge.net");
-    QCoreApplication::setApplicationName("SnmpB");
+    // These legacy identifiers intentionally remain unchanged so upgrades
+    // retain every existing preference and application data file.
+    QCoreApplication::setOrganizationDomain(ProductIdentity::LegacySettingsDomain);
+    QCoreApplication::setApplicationName(ProductIdentity::LegacySettingsApplication);
 
     // read early settings necessary to decide when to drop root
     QSettings settings;
@@ -83,6 +90,23 @@ void Preferences::Init(void)
     modules->setText(0, tr("Modules"));
     traps = new QTreeWidgetItem(p->PreferencesTree);
     traps->setText(0, tr("Traps"));
+    requestDefaults = new QTreeWidgetItem(p->PreferencesTree);
+    requestDefaults->setText(0, tr("SNMP Request Defaults"));
+    auto *requestPage = new QWidget(p->PreferencesProps);
+    auto *requestPageLayout = new QVBoxLayout(requestPage);
+    auto *requestGroup = new QGroupBox(tr("SNMP Request Defaults"), requestPage);
+    auto *requestForm = new QFormLayout(requestGroup);
+    requestTimeoutSpin = new QSpinBox(requestGroup);
+    requestTimeoutSpin->setRange(1, 3600); requestTimeoutSpin->setSuffix(tr(" seconds"));
+    requestRetriesSpin = new QSpinBox(requestGroup); requestRetriesSpin->setRange(0, 100);
+    bulkNonRepeatersSpin = new QSpinBox(requestGroup); bulkNonRepeatersSpin->setRange(0, 65535);
+    bulkMaxRepetitionsSpin = new QSpinBox(requestGroup); bulkMaxRepetitionsSpin->setRange(0, 65535);
+    requestForm->addRow(tr("Timeout"), requestTimeoutSpin);
+    requestForm->addRow(tr("Retries"), requestRetriesSpin);
+    requestForm->addRow(tr("GETBULK non-repeaters"), bulkNonRepeatersSpin);
+    requestForm->addRow(tr("GETBULK max repetitions"), bulkMaxRepetitionsSpin);
+    requestPageLayout->addWidget(requestGroup); requestPageLayout->addStretch();
+    p->PreferencesProps->addWidget(requestPage);
 
     connect( p->PreferencesTree, 
              SIGNAL( currentItemChanged( QTreeWidgetItem *, QTreeWidgetItem * ) ),
@@ -144,6 +168,10 @@ void Preferences::Init(void)
     curprofile = persisted.selectedProfile;
     curprofileid = persisted.selectedProfileId;
     curproto = persisted.selectedProtocol;
+    requestTimeoutSpin->setValue(persisted.requestTimeout);
+    requestRetriesSpin->setValue(persisted.requestRetries);
+    bulkNonRepeatersSpin->setValue(persisted.bulkNonRepeaters);
+    bulkMaxRepetitionsSpin->setValue(persisted.bulkMaxRepetitions);
 
     // reset to default MIB paths if needed
     if (settings.value("mibpaths/size", 0) == 0) {
@@ -178,8 +206,8 @@ void Preferences::Execute (void)
     if (edited.networkRestartRequired(PreferencesSettings::load(settings)))
         QMessageBox::information(NULL,
                                  tr("Restart needed"),
-                                 tr("SnmpB transport protocol or trap port has changed.\n"
-                                    "Please restart SnmpB for the changes to take effect."),
+                                 tr("MIB Navigator transport protocol or trap port has changed.\n"
+                                    "Please restart MIB Navigator for the changes to take effect."),
                                  QMessageBox::Ok);
 
     Save();
@@ -203,6 +231,10 @@ void Preferences::Save()
     values.selectedProfile = curprofile;
     values.selectedProfileId = curprofileid;
     values.selectedProtocol = curproto;
+    values.requestTimeout = requestTimeoutSpin->value();
+    values.requestRetries = requestRetriesSpin->value();
+    values.bulkNonRepeaters = bulkNonRepeatersSpin->value();
+    values.bulkMaxRepetitions = bulkMaxRepetitionsSpin->value();
 
     QList<QListWidgetItem *> l = p->ModulePaths->findItems("*", Qt::MatchWildcard);
     for (int i = 0; i < l.size(); i++)
@@ -254,7 +286,7 @@ void Preferences::MibPathDelete()
     // Protection
     if (todel.size() >= total.size())
     {
-        QMessageBox::warning(NULL, tr("SnmpB warning"),
+        QMessageBox::warning(NULL, tr("MIB Navigator warning"),
                              tr("Must have at least one defined path. Delete failed."),
                              QMessageBox::Ok);
         return;
@@ -374,7 +406,7 @@ void Preferences::SetEnableIPv4(bool checked)
 {
     if (!checked && !enableipv6)
     {
-        QMessageBox::critical(NULL, tr("SnmpB error"),
+        QMessageBox::critical(NULL, tr("MIB Navigator error"),
                               tr("Must enable at least one transport protocol."),
                               QMessageBox::Ok);
         p->EnableIPv4->setCheckState(Qt::Checked);
@@ -388,7 +420,7 @@ void Preferences::SetEnableIPv6(bool checked)
 {
     if (!checked && !enableipv4)
     {
-        QMessageBox::critical(NULL, tr("SnmpB error"),
+        QMessageBox::critical(NULL, tr("MIB Navigator error"),
                               tr("Must enable at least one transport protocol."),
                               QMessageBox::Ok);
         p->EnableIPv6->setCheckState(Qt::Checked);
@@ -532,5 +564,7 @@ void Preferences::SelectedPreferences(QTreeWidgetItem * item, QTreeWidgetItem *)
         p->ExpandTrapBinding->setCheckState(expandtrapbinding==true?Qt::Checked:Qt::Unchecked);
         p->ShowAgentName->setCheckState(showagentname==true?Qt::Checked:Qt::Unchecked);
     }
+    else if (item == requestDefaults)
+        p->PreferencesProps->setCurrentIndex(4);
 }
 

@@ -1,6 +1,6 @@
-# SnmpB Next 1.0.0-rc1 release notes
+# MIB Navigator 1.0.0-rc1 release notes
 
-SnmpB Next 1.0.0-rc1 is the first controlled release candidate of the Qt 6
+MIB Navigator 1.0.0-rc1 is the first controlled release candidate of the Qt 6
 modernization. It is intended for manual acceptance testing, not yet for broad
 production deployment.
 

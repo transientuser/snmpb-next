@@ -2,7 +2,7 @@
 
 ## Ownership
 
-SnmpB Next keeps three configuration responsibilities separate:
+MIB Navigator keeps three configuration responsibilities separate:
 
 - `agents.conf` contains SNMP endpoint and request configuration.
 - `device-tree.conf` contains folder hierarchy, profile placement, and order.

@@ -1,6 +1,6 @@
 # Credential storage security notes
 
-SnmpB Next 1.0.0-rc1 stores runtime configuration in the current user's
+MIB Navigator 1.0.0-rc1 stores runtime configuration in the current user's
 configuration directory. Access to that directory should be restricted to the
 user account running SnmpB.
 

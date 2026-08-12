@@ -37,7 +37,7 @@ enum class ProfileTransferError
 class ProfileTransfer
 {
 public:
-    static constexpr int CurrentVersion = 2;
+    static constexpr int CurrentVersion = 3;
 
     static QByteArray exportJson(const ProfileTransferDocument &document);
     static ProfileTransferDocument selectProfiles(

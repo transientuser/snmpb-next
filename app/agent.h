@@ -103,6 +103,7 @@ public slots:
     void VarbindsFrom(const QString& oid);
     void GetTypedTableInstance(void);
     void StopTimer(void);
+    void Shutdown();
 
 protected slots:
     void TimerExpired(void);    
@@ -131,6 +132,7 @@ private:
     Snmpb *s;
     bool start_result;
     bool offline;
+    bool shutdownComplete = false;
     QString start_err;
  
     Snmp *snmp;

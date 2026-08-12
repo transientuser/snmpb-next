@@ -35,7 +35,8 @@ bool ProfileMetadataService::update(const ProfileMetadataRecord &source)
         return false;
     const int index = indexOf(record.profileId);
     if (record.notes.isEmpty() && record.tags.isEmpty() &&
-        record.preferredMibs.isEmpty())
+        record.preferredMibs.isEmpty() && !record.hasActiveProtocol &&
+        record.usmCredentialId.isEmpty() && !record.hasRequestSettingsMode)
     {
         if (index < 0) return true;
         records.removeAt(index);

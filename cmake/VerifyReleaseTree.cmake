@@ -22,11 +22,12 @@ set(required_files
     "security.md"
     "manual-real-device-acceptance.md"
     "third-party-dependencies.md"
+    "NOTICE.md"
 )
 
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
     list(APPEND required_files
-        "bin/snmpb.exe"
+        "bin/mib-navigator.exe"
         "bin/qt.conf"
         "bin/mibs/SNMPv2-MIB"
         "bin/pibs/COPS-PR-SPPI"
@@ -39,16 +40,16 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
     set(mib_root "bin")
 elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     list(APPEND required_files
-        "snmpb.app/Contents/MacOS/snmpb"
-        "snmpb.app/Contents/Resources/mibs/SNMPv2-MIB"
-        "snmpb.app/Contents/Resources/pibs/COPS-PR-SPPI"
-        "snmpb.app/Contents/Frameworks/QtCore.framework"
-        "snmpb.app/Contents/PlugIns/platforms/libqcocoa.dylib"
+        "MIB Navigator.app/Contents/MacOS/MIB Navigator"
+        "MIB Navigator.app/Contents/Resources/mibs/SNMPv2-MIB"
+        "MIB Navigator.app/Contents/Resources/pibs/COPS-PR-SPPI"
+        "MIB Navigator.app/Contents/Frameworks/QtCore.framework"
+        "MIB Navigator.app/Contents/PlugIns/platforms/libqcocoa.dylib"
     )
-    set(mib_root "snmpb.app/Contents/Resources")
+    set(mib_root "MIB Navigator.app/Contents/Resources")
 else()
     list(APPEND required_files
-        "bin/snmpb"
+        "bin/mib-navigator"
         "share/snmpb/mibs/SNMPv2-MIB"
         "share/snmpb/pibs/COPS-PR-SPPI"
     )

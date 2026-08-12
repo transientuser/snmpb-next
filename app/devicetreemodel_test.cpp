@@ -1,6 +1,7 @@
 #include "devicetreemodel.h"
 
 #include <QCoreApplication>
+#include <QMimeData>
 #include <QTemporaryDir>
 
 #include <iostream>
@@ -59,8 +60,12 @@ int main(int argc, char **argv)
     QModelIndex core = Find(model, "core-01");
     QModelIndex unfiled = Find(model, "Unfiled");
     QModelIndex newlyAdded = Find(model, "new");
-    if (!Check(dc.isValid() && lab.isValid() && core.isValid(),
+    QModelIndex connections = Find(model, "Connections");
+    if (!Check(connections.isValid() && dc.isValid() && lab.isValid() && core.isValid(),
                "hierarchy missing") ||
+        !Check(model.isConnections(connections) && model.parent(dc) == connections &&
+                   model.parent(unfiled) == connections && unfiled.row() == 0,
+               "system Connections/Unfiled hierarchy incorrect") ||
         !Check(model.parent(lab) == dc, "folder parent incorrect") ||
         !Check(model.parent(core) == dc, "profile parent incorrect") ||
         !Check(model.isFolder(dc) && model.isProfile(core), "node type incorrect") ||
@@ -101,7 +106,7 @@ int main(int argc, char **argv)
     branch = Find(model, "Branch Office");
     newlyAdded = Find(model, "new");
     if (!Check(model.parent(newlyAdded) == branch, "moved profile parent incorrect") ||
-        !Check(!Find(model, "Unfiled").isValid(), "empty Unfiled remained"))
+        !Check(Find(model, "Unfiled").isValid(), "permanent Unfiled disappeared"))
         return 1;
 
     coreProfile.name = "core-renamed";
@@ -149,6 +154,121 @@ int main(int argc, char **argv)
                duplicates.index(1, 0, sameFirst.parent()).data(
                    DeviceTreeModel::ProfileIdRole).toString(),
                "same-name profile nodes lack distinct identities"))
+        return 1;
+
+    AgentProfileRecord zulu = Profile("zulu", "192.0.2.20");
+    AgentProfileRecord alpha = Profile("Alpha", "192.0.2.21");
+    const QString sortedFile = temporary.filePath("sorted.conf");
+    DeviceTreeModel sorted(sortedFile, {zulu, alpha});
+    QModelIndex sortedRoot = Find(sorted, "Connections");
+    QModelIndex betaFolder = sorted.createFolder("Beta", sortedRoot);
+    sortedRoot = Find(sorted, "Connections");
+    QModelIndex alphaFolder = sorted.createFolder("alpha-folder", sortedRoot);
+    betaFolder = Find(sorted, "Beta");
+    if (!Check(sorted.moveProfile(zulu.profileId, betaFolder),
+               "sorted-folder profile move failed"))
+        return 1;
+    betaFolder = Find(sorted, "Beta");
+    if (!Check(sorted.moveProfile(alpha.profileId, betaFolder),
+               "second sorted-folder profile move failed"))
+        return 1;
+    betaFolder = Find(sorted, "Beta");
+    sorted.createFolder("gamma-subfolder", betaFolder);
+    betaFolder = Find(sorted, "Beta");
+    sorted.createFolder("Delta-subfolder", betaFolder);
+    betaFolder = Find(sorted, "Beta");
+    if (!Check(sorted.setSortMode(betaFolder,
+                                  DeviceTreeModel::SortMode::NameAscending),
+               "ascending sort could not be set"))
+        return 1;
+    betaFolder = Find(sorted, "Beta");
+    if (!Check(sorted.index(0, 0, betaFolder).data().toString() ==
+                   "Delta-subfolder" &&
+                   sorted.index(1, 0, betaFolder).data().toString() ==
+                   "gamma-subfolder" &&
+                   sorted.index(2, 0, betaFolder).data().toString() == "Alpha" &&
+                   sorted.index(3, 0, betaFolder).data().toString() == "zulu",
+               "ascending folders-first mixed sort is incorrect") ||
+        !Check(sorted.setSortMode(betaFolder,
+                                  DeviceTreeModel::SortMode::NameDescending),
+               "descending sort could not be set"))
+        return 1;
+    betaFolder = Find(sorted, "Beta");
+    if (!Check(sorted.index(0, 0, betaFolder).data().toString() ==
+                   "gamma-subfolder" &&
+                   sorted.index(1, 0, betaFolder).data().toString() ==
+                   "Delta-subfolder" &&
+                   sorted.index(2, 0, betaFolder).data().toString() == "zulu" &&
+                   sorted.index(3, 0, betaFolder).data().toString() == "Alpha",
+               "descending folders-first mixed sort is incorrect"))
+        return 1;
+    QModelIndex gammaFolder = Find(sorted, "gamma-subfolder");
+    sorted.createFolder("zeta-nested", gammaFolder);
+    gammaFolder = Find(sorted, "gamma-subfolder");
+    sorted.createFolder("alpha-nested", gammaFolder);
+    gammaFolder = Find(sorted, "gamma-subfolder");
+    if (!Check(sorted.setSortMode(gammaFolder,
+                                  DeviceTreeModel::SortMode::NameAscending),
+               "nested folder sort could not be set"))
+        return 1;
+    gammaFolder = Find(sorted, "gamma-subfolder");
+    if (!Check(sorted.index(0, 0, gammaFolder).data().toString() ==
+                   "alpha-nested" &&
+                   sorted.index(1, 0, gammaFolder).data().toString() ==
+                   "zeta-nested",
+               "nested folder did not obey its own ascending sort mode"))
+        return 1;
+    if (!Check(sorted.setSortMode(betaFolder, DeviceTreeModel::SortMode::Manual),
+               "manual sort could not be restored"))
+        return 1;
+    betaFolder = Find(sorted, "Beta");
+    QModelIndex zuluIndex = Find(sorted, "zulu");
+    std::unique_ptr<QMimeData> profileMime(sorted.mimeData({zuluIndex}));
+    if (!Check(sorted.dropMimeData(profileMime.get(), Qt::MoveAction, 0, 0,
+                                   betaFolder),
+               "manual drag/drop reorder failed"))
+        return 1;
+    betaFolder = Find(sorted, "Beta");
+    if (!Check(sorted.index(2, 0, betaFolder).data().toString() == "zulu",
+               "manual drag/drop order was not presented") ||
+        !Check(sorted.setSortMode(betaFolder,
+                                  DeviceTreeModel::SortMode::NameDescending),
+               "descending sort could not be restored"))
+        return 1;
+    sortedRoot = Find(sorted, "Connections");
+    if (!Check(sorted.setSortMode(sortedRoot,
+                                  DeviceTreeModel::SortMode::NameAscending),
+               "root sort could not be set"))
+        return 1;
+    sortedRoot = Find(sorted, "Connections");
+    if (!Check(sorted.index(0, 0, sortedRoot).data().toString() == "Unfiled" &&
+                   sorted.index(1, 0, sortedRoot).data().toString() == "alpha-folder" &&
+                   sorted.index(2, 0, sortedRoot).data().toString() == "Beta",
+               "root sort did not keep Unfiled first and sort folders") ||
+        !Check(sorted.sortMode(Find(sorted, "alpha-folder")) ==
+                   DeviceTreeModel::SortMode::Manual,
+               "folder sort modes are not independent"))
+        return 1;
+    DeviceTreeModel sortedReloaded(sortedFile, {zulu, alpha});
+    if (!Check(sortedReloaded.sortMode(Find(sortedReloaded, "Connections")) ==
+                   DeviceTreeModel::SortMode::NameAscending &&
+                   sortedReloaded.sortMode(Find(sortedReloaded, "Beta")) ==
+                   DeviceTreeModel::SortMode::NameDescending,
+               "sort modes did not persist across reload"))
+        return 1;
+    QModelIndex reloadedAlphaFolder = Find(sortedReloaded, "alpha-folder");
+    QModelIndex reloadedBetaFolder = Find(sortedReloaded, "Beta");
+    std::unique_ptr<QMimeData> folderMime(
+        sortedReloaded.mimeData({reloadedAlphaFolder}));
+    if (!Check(sortedReloaded.dropMimeData(folderMime.get(), Qt::MoveAction,
+                                           -1, 0, reloadedBetaFolder),
+               "folder drag/drop into a sorted folder failed") ||
+        !Check(sortedReloaded.parent(Find(sortedReloaded, "alpha-folder")) ==
+                   Find(sortedReloaded, "Beta"),
+               "dragged folder did not move to its destination") ||
+        !Check(!sortedReloaded.moveFolder("folder-does-not-exist",
+                                          Find(sortedReloaded, "Beta")),
+               "invalid folder move unexpectedly succeeded"))
         return 1;
     return 0;
 }

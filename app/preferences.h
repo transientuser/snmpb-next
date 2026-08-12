@@ -26,6 +26,8 @@
 #include <qtreewidget.h>
 #include <qsettings.h>
 
+class QSpinBox;
+
 class Preferences: public QObject
 {
     Q_OBJECT
@@ -83,6 +85,11 @@ private:
     QTreeWidgetItem *mibtree;
     QTreeWidgetItem *modules;
     QTreeWidgetItem *traps;
+    QTreeWidgetItem *requestDefaults;
+    QSpinBox *requestTimeoutSpin;
+    QSpinBox *requestRetriesSpin;
+    QSpinBox *bulkNonRepeatersSpin;
+    QSpinBox *bulkMaxRepetitionsSpin;
 
     bool horizontalsplit;
     int trapport4;

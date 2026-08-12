@@ -6,7 +6,7 @@ project(SnmpBNext
 )
 
 set(SNMPB_RELEASE_LABEL "${PROJECT_VERSION}-rc1" CACHE STRING
-    "SnmpB Next display and package release label")
+    "MIB Navigator display and package release label")
 configure_file(
     cmake/snmpb_version.h.in
     generated/snmpb_version.h
@@ -16,7 +16,7 @@ configure_file(
 include(CTest)
 include(GNUInstallDirs)
 
-option(SNMPB_ENABLE_QWT "Build SnmpB with Qwt 6.3.0 graph presentation" ON)
+option(SNMPB_ENABLE_QWT "Build MIB Navigator with Qwt 6.3.0 graph presentation" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,7 +24,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 6.10 REQUIRED COMPONENTS Core Widgets)
 
 message(STATUS "Qt version: ${Qt6_VERSION}")
-message(STATUS "SnmpB Next Qt/CMake environment configured successfully")
+message(STATUS "MIB Navigator Qt/CMake environment configured successfully")
 
 add_subdirectory(libsmi)
 add_subdirectory(libtomcrypt)
@@ -56,6 +56,7 @@ install(FILES app/icons/feathericons/LICENSE.txt
     DESTINATION "${SNMPB_LICENSE_INSTALL_DIR}/icons/feathericons")
 install(FILES app/icons/ionicons/LICENSE.txt
     DESTINATION "${SNMPB_LICENSE_INSTALL_DIR}/icons/ionicons")
+install(FILES NOTICE.md DESTINATION .)
 install(FILES
     third_party/qwt-6.3.0/COPYING
     third_party/qwt-6.3.0/README
@@ -97,18 +98,18 @@ endif()
 if(WIN32)
     set(CPACK_GENERATOR ZIP)
     set(CPACK_PACKAGE_FILE_NAME
-        "SnmpB-Next-${SNMPB_RELEASE_LABEL}-windows-x64")
+        "MIB-Navigator-${SNMPB_RELEASE_LABEL}-windows-x64")
 elseif(APPLE)
     set(CPACK_GENERATOR TGZ)
     set(CPACK_PACKAGE_FILE_NAME
-        "SnmpB-Next-${SNMPB_RELEASE_LABEL}-macos-${CMAKE_SYSTEM_PROCESSOR}")
+        "MIB-Navigator-${SNMPB_RELEASE_LABEL}-macos-${CMAKE_SYSTEM_PROCESSOR}")
 else()
     set(CPACK_GENERATOR TGZ)
     set(CPACK_PACKAGE_FILE_NAME
-        "SnmpB-Next-${SNMPB_RELEASE_LABEL}-linux-${CMAKE_SYSTEM_PROCESSOR}")
+        "MIB-Navigator-${SNMPB_RELEASE_LABEL}-linux-${CMAKE_SYSTEM_PROCESSOR}")
 endif()
-set(CPACK_PACKAGE_NAME "SnmpB Next")
-set(CPACK_PACKAGE_VENDOR "SnmpB Next contributors")
+set(CPACK_PACKAGE_NAME "MIB Navigator")
+set(CPACK_PACKAGE_VENDOR "MIB Navigator contributors")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
     "Cross-platform graphical SNMP and MIB browser")
 set(CPACK_PACKAGE_VERSION "${SNMPB_RELEASE_LABEL}")

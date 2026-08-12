@@ -41,8 +41,11 @@ int main(int argc, char **argv)
         return 1;
 
     DeviceTreeState source;
+    source.rootSortMode = 1;
+    source.unfiledSortMode = 2;
     source.folders = {{"dc", "", "Datacenter", 1},
                       {"lab", "dc", "Lab", 2}};
+    source.folders[0].sortMode = 2;
     source.placements = {{"p1", "dc", "id-core", "", 3},
                          {"p2", "lab", "id-switch", "", 1}};
     if (!Check(repository.Save(source), "sidecar save failed"))
@@ -51,7 +54,10 @@ int main(int argc, char **argv)
     if (!Check(loaded.folders.size() == 2 && loaded.placements.size() == 2,
                "round-trip count changed") ||
         !Check(loaded.folders[1].parentId == "dc", "hierarchy changed") ||
-        !Check(loaded.placements[0].order == 3, "ordering changed"))
+        !Check(loaded.placements[0].order == 3, "ordering changed") ||
+        !Check(loaded.rootSortMode == 1 && loaded.unfiledSortMode == 2 &&
+                   loaded.folders[0].sortMode == 2,
+               "sort metadata did not round-trip"))
         return 1;
 
     DeviceTreeState malformed = loaded;
@@ -114,6 +120,10 @@ int main(int argc, char **argv)
                "unique legacy reference did not migrate") ||
         !Check(DeviceTree::UnfiledProfiles(migrated, duplicateNames).size() == 2,
                "ambiguous profiles not preserved in Unfiled"))
+        return 1;
+    if (!Check(migrated.rootSortMode == 0 && migrated.unfiledSortMode == 0 &&
+                   migrated.folders[0].sortMode == 0,
+               "legacy tree did not preserve manual ordering defaults"))
         return 1;
     if (!Check(legacyRepository.Save(migrated), "migrated sidecar save failed"))
         return 1;

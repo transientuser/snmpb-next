@@ -10,6 +10,7 @@ set(SNMPB_APP_SOURCES
     communitycredentialrepository.cpp
     communitycredentialservice.cpp
     communitycredentialmanager.cpp
+    connectionrequestsettings.cpp
     credentialrecords.cpp
     discovery.cpp
     discoveryscanplan.cpp
@@ -24,6 +25,10 @@ set(SNMPB_APP_SOURCES
     graphrepository.cpp
     graphservice.cpp
     devicepane.cpp
+    devicedetailseditor.cpp
+    diagnosticlogger.cpp
+    mainwindowlayout.cpp
+    productidentity.cpp
     devicetree.cpp
     devicetreemodel.cpp
     devicetreerepository.cpp
@@ -69,6 +74,7 @@ set(SNMPB_APP_SOURCES
     usmcredentialcoordinator.cpp
     usmcredentialruntime.cpp
     usmcredentialservice.cpp
+    udpportowner.cpp
     main.cpp
 )
 
@@ -84,6 +90,7 @@ set(SNMPB_APP_HEADERS
     communitycredentialrepository.h
     communitycredentialservice.h
     communitycredentialmanager.h
+    connectionrequestsettings.h
     credentialrecords.h
     discovery.h
     discoveryscanplan.h
@@ -98,6 +105,10 @@ set(SNMPB_APP_HEADERS
     graphrepository.h
     graphservice.h
     devicepane.h
+    devicedetailseditor.h
+    diagnosticlogger.h
+    mainwindowlayout.h
+    productidentity.h
     devicetree.h
     devicetreemodel.h
     devicetreerepository.h
@@ -146,6 +157,7 @@ set(SNMPB_APP_HEADERS
     usmcredentialcoordinator.h
     usmcredentialruntime.h
     usmcredentialservice.h
+    udpportowner.h
 )
 
 set(SNMPB_APP_FORMS
@@ -172,13 +184,18 @@ add_executable(snmpb
 )
 
 set_target_properties(snmpb PROPERTIES
+    OUTPUT_NAME "mib-navigator"
     AUTOMOC ON
     AUTOUIC ON
     AUTORCC ON
     AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
+    MACOSX_BUNDLE_BUNDLE_NAME "MIB Navigator"
 )
+if(APPLE)
+    set_target_properties(snmpb PROPERTIES OUTPUT_NAME "MIB Navigator")
+endif()
 
 target_compile_definitions(snmpb
     PRIVATE
@@ -206,6 +223,17 @@ target_link_libraries(snmpb
         snmpb_snmp_pp
         snmpb_libtomcrypt
 )
+if(WIN32)
+    target_link_libraries(snmpb PRIVATE iphlpapi ws2_32)
+endif()
+if(MSVC)
+    # Retain release optimization while producing symbols for field crash
+    # diagnosis. /OPT options preserve the normal optimized Release layout.
+    target_link_options(snmpb PRIVATE
+        $<$<CONFIG:Release>:/DEBUG>
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>)
+endif()
 if(SNMPB_ENABLE_QWT)
     target_link_libraries(snmpb PRIVATE Qwt::Qwt)
 endif()
@@ -227,7 +255,7 @@ add_custom_command(TARGET snmpb POST_BUILD
         -DSNMPB_SOURCE_DIR=${PROJECT_SOURCE_DIR}
         -DSNMPB_RUNTIME_DATA_DIR=$<TARGET_FILE_DIR:snmpb>
         -P ${PROJECT_SOURCE_DIR}/cmake/StageSnmpbMibs.cmake
-    COMMENT "Staging bundled MIBs and PIBs beside SnmpB"
+    COMMENT "Staging bundled MIBs and PIBs beside MIB Navigator"
     VERBATIM
 )
 
@@ -262,7 +290,7 @@ endif()
 if(WIN32)
     set(SNMPB_INSTALL_DATA_DIR ${CMAKE_INSTALL_BINDIR})
 elseif(APPLE)
-    set(SNMPB_INSTALL_DATA_DIR "snmpb.app/Contents/Resources")
+    set(SNMPB_INSTALL_DATA_DIR "MIB Navigator.app/Contents/Resources")
 else()
     set(SNMPB_INSTALL_DATA_DIR "${CMAKE_INSTALL_DATADIR}/snmpb")
 endif()
@@ -275,6 +303,50 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_stability_diagnostics_test
+        diagnosticlogger.cpp diagnosticlogger.h
+        udpportowner.cpp udpportowner.h
+        stabilitydiagnostics_test.cpp)
+    target_link_libraries(snmpb_stability_diagnostics_test PRIVATE Qt6::Core Qt6::Widgets)
+    if(WIN32)
+        target_link_libraries(snmpb_stability_diagnostics_test PRIVATE iphlpapi ws2_32)
+        add_test(NAME snmpb.stability-diagnostics COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_stability_diagnostics_test>)
+    else()
+        add_test(NAME snmpb.stability-diagnostics COMMAND
+            $<TARGET_FILE:snmpb_stability_diagnostics_test>)
+    endif()
+
+    add_executable(snmpb_connection_request_settings_test
+        agentprofilerepository.cpp agentprofilerepository.h
+        preferencesettings.cpp preferencesettings.h
+        connectionrequestsettings.cpp connectionrequestsettings.h
+        connectionrequestsettings_test.cpp)
+    target_link_libraries(snmpb_connection_request_settings_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.connection-request-settings COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_connection_request_settings_test>)
+    else()
+        add_test(NAME snmpb.connection-request-settings COMMAND
+            $<TARGET_FILE:snmpb_connection_request_settings_test>)
+    endif()
+
+    add_executable(snmpb_product_identity_test
+        productidentity.cpp productidentity.h productidentity_test.cpp)
+    target_include_directories(snmpb_product_identity_test PRIVATE
+        ${PROJECT_BINARY_DIR}/generated)
+    target_link_libraries(snmpb_product_identity_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.product-identity COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_product_identity_test>)
+    else()
+        add_test(NAME snmpb.product-identity COMMAND
+            $<TARGET_FILE:snmpb_product_identity_test>)
+    endif()
+
     add_executable(snmpb_graph_v2_test
         agentprofilerepository.cpp agentprofilerepository.h
         credentialrecords.cpp credentialrecords.h
@@ -566,10 +638,40 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_device_pane_test
+        agentprofileoperations.cpp
+        agentprofileoperations.h
         agentprofilerepository.cpp
         agentprofilerepository.h
         devicepane.cpp
         devicepane.h
+        devicedetailseditor.cpp
+        devicedetailseditor.h
+        diagnosticlogger.cpp
+        diagnosticlogger.h
+        connectionrequestsettings.cpp
+        connectionrequestsettings.h
+        preferencesettings.cpp
+        preferencesettings.h
+        mainwindowlayout.cpp
+        mainwindowlayout.h
+        agentprofileservice.cpp
+        agentprofileservice.h
+        profilemetadatarepository.cpp
+        profilemetadatarepository.h
+        profilemetadataservice.cpp
+        profilemetadataservice.h
+        communitybindingrepository.cpp
+        communitybindingrepository.h
+        communitycredentialrepository.cpp
+        communitycredentialrepository.h
+        communitycredentialservice.cpp
+        communitycredentialservice.h
+        credentialrecords.cpp
+        credentialrecords.h
+        usmcredentialrepository.cpp
+        usmcredentialrepository.h
+        usmcredentialservice.cpp
+        usmcredentialservice.h
         devicetree.cpp
         devicetree.h
         devicetreemodel.cpp
@@ -583,6 +685,7 @@ if(BUILD_TESTING)
     if(WIN32)
         add_test(NAME snmpb.device-pane COMMAND ${CMAKE_COMMAND} -E env
             "QT_QPA_PLATFORM=offscreen"
+            "QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             $<TARGET_FILE:snmpb_device_pane_test>)
     else()

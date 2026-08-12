@@ -18,10 +18,12 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "logsnmpb.h"
+#include "diagnosticlogger.h"
 
 LogSnmpb::LogSnmpb(Snmpb *snmpb)
 {
     s = snmpb;
+    DiagnosticLogger::attachLogWidget(s->MainUI()->LogOutput);
 
     settings = new QSettings(s->GetLogConfigFile(), QSettings::IniFormat, this);
  

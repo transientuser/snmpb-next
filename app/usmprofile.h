@@ -69,6 +69,7 @@ class USMProfileManager: public QObject
 public:
     USMProfileManager(Snmpb *snmpb);
     void Execute(void);
+    void ExecuteNewCredential(void);
 
     QStringList GetUsersList(void);
     class UsmCredentialService *Credentials() const;
@@ -101,6 +102,7 @@ protected slots:
     int LibPrivToUiPriv(int prot);
 
 private:
+    void ExecuteEditor(bool createCredential);
     void RebuildEditor();
     QList<UsmCredentialRecord> EditorRecords();
     Snmpb *s;

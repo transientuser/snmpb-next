@@ -1,4 +1,4 @@
-# SnmpB Next 1.0.0-rc1 validation
+# MIB Navigator 1.0.0-rc1 validation
 
 ## Build prerequisites
 
@@ -25,13 +25,13 @@ cmake -DSNMPB_PACKAGE_DIR=<archive-directory> -DSNMPB_EXTRACT_DIR=<temporary-ext
 ```
 
 On Windows, run these commands from the appropriate Qt/MSVC developer
-environment. CPack produces `SnmpB-Next-1.0.0-rc1-windows-x64.zip`. It uses the
+environment. CPack produces `MIB-Navigator-1.0.0-rc1-windows-x64.zip`. It uses the
 same explicit install rules as the verified staging tree and Qt's supported
 deployment helper; no Qt installation path is hard-coded.
 
 Linux CPack produces
-`SnmpB-Next-1.0.0-rc1-linux-<architecture>.tar.gz`. macOS CPack produces
-`SnmpB-Next-1.0.0-rc1-macos-<architecture>.tar.gz`. The CI matrix creates,
+`MIB-Navigator-1.0.0-rc1-linux-<architecture>.tar.gz`. macOS CPack produces
+`MIB-Navigator-1.0.0-rc1-macos-<architecture>.tar.gz`. The CI matrix creates,
 extracts, verifies, and uploads these archives for manual inspection; native
 package validation is established only by a successful CI run containing
 those steps.
@@ -101,5 +101,8 @@ automated suite deliberately does not contact SNMP devices.
 
 The numeric CMake project version remains `1.0.0`; the canonical release label
 is `1.0.0-rc1` and feeds the About display and CPack filenames. The established
-QSettings organization/application identity remains unchanged. Promote to
+QSettings organization/application identity remains unchanged.
+
+Public release under the "MIB Navigator" name requires release-owner
+name/trademark clearance. Promote to
 `1.0.0` only after native package and manual device acceptance gates pass.
