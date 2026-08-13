@@ -43,6 +43,7 @@ class CommunityCredentialService;
 class Preferences;
 class DevicePane;
 class QDockWidget;
+class MibLibraryWidget;
 
 class Snmpb: public QObject
 {
@@ -113,6 +114,7 @@ private:
     Discovery *discovery;
     DevicePane *devicePane;
     QDockWidget *devicesDock;
+    MibLibraryWidget *mibLibrary;
 
     QString start_msg;
     bool start_issuccess;

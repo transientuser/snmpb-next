@@ -21,7 +21,7 @@ option(SNMPB_ENABLE_QWT "Build MIB Navigator with Qwt 6.3.0 graph presentation" 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.10 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 6.10 REQUIRED COMPONENTS Core Widgets Network)
 
 message(STATUS "Qt version: ${Qt6_VERSION}")
 message(STATUS "MIB Navigator Qt/CMake environment configured successfully")
@@ -69,6 +69,7 @@ install(FILES
     docs/security.md
     docs/manual-real-device-acceptance.md
     docs/third-party-dependencies.md
+    docs/mib-library-v1.md
     DESTINATION .
 )
 

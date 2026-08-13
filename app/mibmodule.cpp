@@ -28,6 +28,7 @@
 #include <algorithm>
 
 #include "mibmodule.h"
+#include "miblibrary.h"
 #include "diagnosticlogger.h"
 #include "agent.h"
 #include "preferences.h"
@@ -465,6 +466,10 @@ void MibModule::ReadMibPaths()
         paths << settings.value("dir").toString();
     }
 
+    const QString userLibrary = MibLibraryService().downloadedPath();
+    if (!paths.contains(userLibrary))
+        paths.append(userLibrary);
+
     smiSetPath(paths.join(SMI_PATH_SEPARATOR).toLocal8Bit().data());
 }
 
@@ -478,6 +483,33 @@ void MibModule::ReadMibPreloads()
         settings.setArrayIndex(i);
         Wanted << settings.value("mib").toString();
     }
+}
+
+bool MibModule::ValidateModuleFile(const QString &path, QString *error,
+                                   MibValidationLevel level)
+{
+    DiagnosticLogger::log("MIB", QStringLiteral("Downloaded MIB validation begin file=%1")
+                          .arg(path));
+    const int savedFlags = smiGetFlags();
+    int validationFlags = savedFlags | SMI_FLAG_ERRORS | SMI_FLAG_NODESCR;
+    if (MibValidationRecursive(level)) validationFlags |= SMI_FLAG_RECURSIVE;
+    else validationFlags &= ~SMI_FLAG_RECURSIVE;
+    smiSetFlags(validationFlags);
+    smiSetErrorHandler(NormalErrorHdlr);
+    smiSetErrorLevel(MibValidationErrorLevel(level));
+    char *module = smiLoadModule(QDir::toNativeSeparators(path).toLocal8Bit().constData());
+    smiSetFlags(savedFlags);
+    smiSetErrorHandler(NormalErrorHdlr);
+    smiSetErrorLevel(3);
+    if (!module) {
+        if (error) *error = tr("libsmi validation failed; see MIB diagnostics and Log");
+        DiagnosticLogger::log("MIB", QStringLiteral("Downloaded MIB validation failed file=%1")
+                              .arg(path));
+        return false;
+    }
+    DiagnosticLogger::log("MIB", QStringLiteral("Downloaded MIB validation succeeded module=%1")
+                          .arg(QString::fromLocal8Bit(module)));
+    return true;
 }
 
 void MibModule::Refresh()

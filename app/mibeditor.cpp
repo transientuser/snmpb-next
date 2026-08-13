@@ -31,6 +31,7 @@
 #include <qpainter.h>
 #include "mibeditor.h"
 #include "mibmodule.h"
+#include "miblibrary.h"
 
 MibEditor::MibEditor(Snmpb *snmpb)
 {
@@ -69,8 +70,19 @@ MibEditor::MibEditor(Snmpb *snmpb)
     severityFilter->addItem(tr("Errors"), QStringLiteral("^Error"));
     severityFilter->addItem(tr("Warnings"), QStringLiteral("^Warning"));
     severityFilter->addItem(tr("Information"), QStringLiteral("^Info"));
-    if (auto *layout = qobject_cast<QBoxLayout *>(s->MainUI()->MIBLog->parentWidget()->layout()))
+    validationLevel = new QComboBox(s->MainUI()->MIBLog->parentWidget());
+    validationLevel->setAccessibleName(tr("MIB validation level"));
+    validationLevel->addItem(tr("Validation: Errors"),
+                             static_cast<int>(MibValidationLevel::Errors));
+    validationLevel->addItem(tr("Validation: Errors + Warnings"),
+                             static_cast<int>(MibValidationLevel::ErrorsAndWarnings));
+    validationLevel->addItem(tr("Validation: Full Review"),
+                             static_cast<int>(MibValidationLevel::FullReview));
+    validationLevel->setCurrentIndex(1);
+    if (auto *layout = qobject_cast<QBoxLayout *>(s->MainUI()->MIBLog->parentWidget()->layout())) {
+        layout->insertWidget(1, validationLevel);
         layout->insertWidget(1, severityFilter);
+    }
     connect(severityFilter, &QComboBox::currentIndexChanged, this, [this,severityFilter] {
         diagnosticFilter->setFilterRegularExpression(severityFilter->currentData().toString());
     });
@@ -451,13 +463,16 @@ void MibEditor::VerifyMIB(void)
     int saved_flags = flags;
     flags |= SMI_FLAG_ERRORS;
     flags |= SMI_FLAG_NODESCR;
+    const auto level = static_cast<MibValidationLevel>(validationLevel->currentData().toInt());
+    if (MibValidationRecursive(level)) flags |= SMI_FLAG_RECURSIVE;
+    else flags &= ~SMI_FLAG_RECURSIVE;
     smiSetFlags(flags);
 
     diagnostics.clear();
     diagnosticModel->setDiagnostics(diagnostics);
     CurrentEditorObject = this;
     smiSetErrorHandler(ErrorHdlr);
-    smiSetErrorLevel(9);
+    smiSetErrorLevel(MibValidationErrorLevel(level));
 
     num_error = 0;
     num_warning = 0;
@@ -465,7 +480,16 @@ void MibEditor::VerifyMIB(void)
 
     s->MainUI()->MIBLogL->setText(tr("Verification diagnostics — running..."));
 
-    smiLoadModule(QDir::toNativeSeparators(LoadedFile).toLatin1().data());
+    const QString validationDirectory = QFileInfo(LoadedFile).absolutePath();
+    QString stagingError;
+    if (!MibValidationStaging::validate(
+            s->MainUI()->MIBFile->toPlainText().toUtf8(), validationDirectory,
+            [](const QString &path) {
+                return smiLoadModule(QDir::toNativeSeparators(path).toLocal8Bit().constData()) != nullptr;
+            }, &stagingError) && !stagingError.isEmpty()) {
+        ErrorHandler(nullptr, 0, 2, stagingError.toLocal8Bit().data(),
+                     const_cast<char *>("validation-staging"));
+    }
 
     //: %1, %2, %3 are placeholders for pluralized num. of errors, warnings, infos
     QString stop_msg = tr("Verification complete. %1, %2, %3")

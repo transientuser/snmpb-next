@@ -36,6 +36,9 @@ set(SNMPB_APP_SOURCES
     markerwidget.cpp
     mibeditor.cpp
     mibhighlighter.cpp
+    miblibrary.cpp
+    mibdownloadtransport.cpp
+    miblibrarywidget.cpp
     mibmodule.cpp
     mibcandidatefilter.cpp
     mibdiagnosticcollector.cpp
@@ -116,6 +119,9 @@ set(SNMPB_APP_HEADERS
     markerwidget.h
     mibeditor.h
     mibhighlighter.h
+    miblibrary.h
+    mibdownloadtransport.h
+    miblibrarywidget.h
     mibmodule.h
     mibcandidatefilter.h
     mibdiagnosticcollector.h
@@ -219,6 +225,7 @@ target_link_libraries(snmpb
     PRIVATE
         Qt6::Core
         Qt6::Widgets
+        Qt6::Network
         snmpb_libsmi
         snmpb_snmp_pp
         snmpb_libtomcrypt
@@ -403,6 +410,23 @@ if(BUILD_TESTING)
         add_test(NAME snmpb.mib-service COMMAND ${CMAKE_COMMAND} -E env
             "QT_QPA_PLATFORM=offscreen"
             $<TARGET_FILE:snmpb_mib_service_test>)
+    endif()
+
+    add_executable(snmpb_mib_library_test
+        mibdownloadtransport.cpp mibdownloadtransport.h
+        mibdiagnosticcollector.cpp mibdiagnosticcollector.h mibrecords.h
+        miblibrary.cpp miblibrary.h miblibrary_test.cpp)
+    set_target_properties(snmpb_mib_library_test PROPERTIES AUTOMOC ON)
+    target_compile_definitions(snmpb_mib_library_test PRIVATE
+        SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(snmpb_mib_library_test PRIVATE
+        Qt6::Core Qt6::Network snmpb_libsmi)
+    if(WIN32)
+        add_test(NAME snmpb.mib-library COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_library_test>)
+    else()
+        add_test(NAME snmpb.mib-library COMMAND $<TARGET_FILE:snmpb_mib_library_test>)
     endif()
 
     add_executable(snmpb_trap_pipeline_test

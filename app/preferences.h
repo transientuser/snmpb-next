@@ -52,6 +52,7 @@ public:
                             int proto);
     int GetCurrentProfile(QString &name);
     QString GetCurrentProfileId(void) const;
+    QStringList DefaultMibPaths() const;
 
 public slots:
     void SetEnableIPv4(bool checked);
@@ -75,8 +76,6 @@ protected slots:
     void MibPreloadsReset();
 
 private:
-    QStringList DefaultMibPaths() const;
-
     Snmpb *s;
     Ui_Preferences *p;
     QDialog *pw;

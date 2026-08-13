@@ -33,6 +33,7 @@
 #include "ui_replace.h"
 
 class QSortFilterProxyModel;
+class QComboBox;
 
 class MibEditor: public QObject
 {
@@ -88,6 +89,7 @@ private:
     QList<MibDiagnosticRecord> diagnostics;
     MibDiagnosticModel *diagnosticModel;
     QSortFilterProxyModel *diagnosticFilter;
+    QComboBox *validationLevel;
 
     QTextDocument::FindFlags ff;
     QStringList find_strings;

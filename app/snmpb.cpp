@@ -43,6 +43,7 @@
 #include "mainwindowlayout.h"
 #include "productidentity.h"
 #include "diagnosticlogger.h"
+#include "miblibrarywidget.h"
 
 #include "agentprofile.h"
 #include "agentprofileservice.h"
@@ -185,6 +186,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     w.TabW->setTabVisible(w.TabW->indexOf(w.GraphsTab), false);
 #endif
     editor = new MibEditor(this);
+    mibLibrary = new MibLibraryWidget(modules, prefs->DefaultMibPaths(), w.TabW);
+    w.TabW->insertTab(3, mibLibrary, tr("MIB Library"));
     discovery = new Discovery(this);
 
     auto *contextWidget = new QWidget(w.widget);
@@ -640,21 +643,26 @@ void Snmpb::TabSelected(void)
                 editor, SLOT( ExecuteFindNext() ) );
         MainUI()->actionMultipleVarbinds->setEnabled(false);
         break;
-    case 3: // Discovery
+    case 3: // MIB Library
+        SetEditorMenus(false);
+        MainUI()->actionMultipleVarbinds->setEnabled(false);
+        mibLibrary->refresh();
+        break;
+    case 4: // Discovery
         SetEditorMenus(false);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
         break;
-    case 4: // Traps
+    case 5: // Traps
         SetEditorMenus(false);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
         break;
-    case 5: // Graphs
+    case 6: // Graphs
         SetEditorMenus(false);
         disconnect(MainUI()->actionFind, SIGNAL( triggered() ), 0, 0);
         disconnect(MainUI()->actionFindNext, SIGNAL( triggered() ), 0, 0);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
         break;
-    case 6: // Log
+    case 7: // Log
         SetEditorMenus(false);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
         break;

@@ -24,6 +24,7 @@
 #include "mibview.h"
 #include "smi.h"
 #include "mibrecords.h"
+#include "miblibrary.h"
 
 #define SMI_PATH_SEPARATOR ';'
 
@@ -60,6 +61,8 @@ public:
     QStringList AvailableModuleNames() const;
     QStringList LoadedModuleNames() const;
     QStringList LoadPreferredModules(const QStringList &modules);
+    bool ValidateModuleFile(const QString &path, QString *error = nullptr,
+                            MibValidationLevel level = MibValidationLevel::ErrorsAndWarnings);
 
 public slots:
     void Refresh();
