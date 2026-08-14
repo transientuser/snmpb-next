@@ -113,7 +113,7 @@ void DiagnosticLogger::log(const QString &category, const QString &message,
 {
     const QString safe = redact(message);
     const QString line = QStringLiteral("%1 [%2] [tid=%3] [%4] %5\n")
-        .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs), sessionId)
+        .arg(structuredTimestamp(), sessionId)
         .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()), 0, 16)
         .arg(category, safe);
     {
@@ -143,6 +143,26 @@ QString DiagnosticLogger::redact(const QString &message)
 QString DiagnosticLogger::logFilePath() { QMutexLocker lock(&mutex); return path; }
 QString DiagnosticLogger::logDirectory() { return QFileInfo(logFilePath()).absolutePath(); }
 void DiagnosticLogger::attachLogWidget(QTextEdit *widget) { logWidget = widget; }
+void DiagnosticLogger::clearDisplayedLog()
+{
+    if (!logWidget) return;
+    QMetaObject::invokeMethod(logWidget.data(), [] {
+        if (logWidget) logWidget->clear();
+    }, Qt::QueuedConnection);
+}
+
+QString DiagnosticLogger::structuredTimestamp(const QDateTime &dateTime)
+{
+    const QDateTime local = dateTime.toLocalTime();
+    const int offset = local.offsetFromUtc();
+    const QChar sign = offset < 0 ? QLatin1Char('-') : QLatin1Char('+');
+    const int absoluteOffset = qAbs(offset);
+    return QStringLiteral("%1%2%3:%4")
+        .arg(local.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss.zzz")))
+        .arg(sign)
+        .arg(absoluteOffset / 3600, 2, 10, QLatin1Char('0'))
+        .arg((absoluteOffset % 3600) / 60, 2, 10, QLatin1Char('0'));
+}
 
 void DiagnosticLogger::installMainWindowLifecycle(QWidget *window)
 {

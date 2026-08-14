@@ -2,6 +2,7 @@
 #define DIAGNOSTICLOGGER_H
 
 #include <QObject>
+#include <QDateTime>
 #include <QString>
 #include <QStringList>
 
@@ -20,6 +21,8 @@ public:
     static QString logFilePath();
     static QString logDirectory();
     static void attachLogWidget(QTextEdit *widget);
+    static void clearDisplayedLog();
+    static QString structuredTimestamp(const QDateTime &dateTime = QDateTime::currentDateTime());
     static void installMainWindowLifecycle(QWidget *window);
 
 protected:

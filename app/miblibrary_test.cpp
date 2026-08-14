@@ -52,6 +52,33 @@ int main(int argc, char **argv)
     QCoreApplication application(argc, argv);
     bool ok = true;
     QString error;
+    MibLibraryRecord origin;
+    origin.status = MibLibraryStatus::Bundled;
+    ok &= check(MibLibraryOriginText(origin) == "Built-in", "built-in origin label");
+    origin.status = MibLibraryStatus::Installed; origin.sourceId = "iana";
+    ok &= check(MibLibraryOriginText(origin) == "IANA", "IANA origin label");
+    origin.sourceId.clear(); origin.sourceName.clear(); origin.localPath = "local.mib";
+    ok &= check(MibLibraryOriginText(origin) == "Imported", "imported origin label");
+    origin.status = MibLibraryStatus::Bundled; origin.sourceName = "Bundled";
+    const MibLibraryFileInfo builtInInfo = MibLibraryFileInformation(origin);
+    ok &= check(builtInInfo.origin == "Built-in" && !builtInInfo.showProvider &&
+                !builtInInfo.showSourceUrl && !builtInInfo.showTimestamp &&
+                !builtInInfo.showSha256 && !builtInInfo.showState,
+                "built-in file info hides redundant/non-applicable provenance");
+    MibLibraryRecord ianaInfoRecord;
+    ianaInfoRecord.moduleName = "IANA-FIXTURE-MIB";
+    ianaInfoRecord.status = MibLibraryStatus::Installed;
+    ianaInfoRecord.sourceId = "iana"; ianaInfoRecord.sourceName = "IANA";
+    ianaInfoRecord.sourceUrl = "https://www.iana.org/assignments/fixture/fixture";
+    ianaInfoRecord.localPath = "downloaded/fixture.mib";
+    ianaInfoRecord.sourceFilename = "fixture.mib";
+    ianaInfoRecord.sha256 = "abc123";
+    ianaInfoRecord.downloadedAt = QDateTime::fromSecsSinceEpoch(1, Qt::UTC);
+    const MibLibraryFileInfo ianaInfo = MibLibraryFileInformation(ianaInfoRecord);
+    ok &= check(ianaInfo.origin == "IANA" && ianaInfo.provider == "IANA" &&
+                ianaInfo.showProvider && ianaInfo.showSourceUrl &&
+                ianaInfo.showTimestamp && ianaInfo.showSha256 && !ianaInfo.showState,
+                "IANA file info retains useful provenance without repetitive state");
     const QByteArray formatted = R"(-- FROM IGNORED-MIB
 A-MIB DEFINITIONS ::= BEGIN
 IMPORTS
@@ -70,6 +97,12 @@ END
                 "no IMPORTS");
     ok &= check(MibImportScanner::scan("BAD DEFINITIONS ::= BEGIN\nIMPORTS x FROM Y")
                     .malformedImports, "malformed IMPORTS");
+    const auto pibScan = MibImportScanner::scan(
+        "ACCOUNTING-FRAMEWORK-PIB PIB-DEFINITIONS ::= BEGIN\n"
+        "IMPORTS x FROM COPS-PR-SPPI;\nEND\n");
+    ok &= check(pibScan.moduleNames == QStringList{"ACCOUNTING-FRAMEWORK-PIB"} &&
+                pibScan.importsByModule.value("ACCOUNTING-FRAMEWORK-PIB") == QStringList{"COPS-PR-SPPI"},
+                "SPPI PIB-DEFINITIONS declaration and imports discovered");
 
     const QByteArray ianaIndex = R"(<html><body>
       <h2>IANA-Maintained MIBs</h2>
@@ -264,13 +297,22 @@ END
                 QFileInfo::exists(installed.localPath) &&
                 QFileInfo::exists(QDir(library.metadataPath()).filePath("VENDOR-MIB.json")),
                 "validation/provenance/install files");
-    const auto inventory = library.inventory({bundled}, catalog);
-    bool bundledFound = false, downloadedFound = false;
+    MibModuleRecord localOne;
+    localOne.name = "DECLARED-LOCAL-MIB";
+    localOne.path = QDir(bundled).filePath("physical-vendor-bundle.mib");
+    MibModuleRecord localTwo = localOne; localTwo.name = "SECOND-DECLARED-LOCAL-MIB";
+    const auto inventory = library.inventory({bundled}, catalog, {localOne, localTwo});
+    bool bundledFound = false, downloadedFound = false, localOneFound = false, localTwoFound = false;
     for (const auto &record : inventory) {
         bundledFound |= record.moduleName == "BASE-MIB" && record.status == MibLibraryStatus::Bundled;
         downloadedFound |= record.moduleName == "VENDOR-MIB" && record.status == MibLibraryStatus::Installed;
+        localOneFound |= record.moduleName == localOne.name && record.localPath == localOne.path &&
+            MibLibraryOriginText(record) == "Imported";
+        localTwoFound |= record.moduleName == localTwo.name && record.localPath == localTwo.path &&
+            MibLibraryOriginText(record) == "Imported";
     }
-    ok &= check(bundledFound && downloadedFound, "bundled/downloaded inventory");
+    ok &= check(bundledFound && downloadedFound && localOneFound && localTwoFound,
+                "bundled/downloaded and multiple declared local identities enter inventory");
 
     MibCatalogEntry mismatch = entry("EXPECTED"); mismatch.filename = "mismatch.mib";
     ok &= check(!library.install(mismatch, mib("ACTUAL"), {bundled}, nullptr, &error),

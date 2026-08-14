@@ -1,9 +1,11 @@
 #include "diagnosticlogger.h"
 #include "udpportowner.h"
 
-#include <QCoreApplication>
+#include <QApplication>
 #include <QFile>
+#include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QTextEdit>
 #include <iostream>
 
 namespace {
@@ -16,13 +18,31 @@ bool check(bool condition, const char *message)
 
 int main(int argc, char **argv)
 {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     QTemporaryDir temporary;
     bool ok = check(temporary.isValid(), "temporary log directory");
     ok &= check(DiagnosticLogger::initialize("test", app.arguments(), temporary.path()),
                 "logger initialization");
+    QTextEdit displayed;
+    DiagnosticLogger::attachLogWidget(&displayed);
     DiagnosticLogger::log("Test",
         "community=public password=hunter2 authSecret=alpha privacySecret=beta");
+    QCoreApplication::processEvents();
+    ok &= check(displayed.toPlainText().contains("[Test]"),
+                "structured message appears in displayed log");
+    DiagnosticLogger::clearDisplayedLog();
+    QCoreApplication::processEvents();
+    ok &= check(displayed.toPlainText().isEmpty(), "Clear Log clears displayed session text");
+    DiagnosticLogger::log("Test", "message after clear");
+    QCoreApplication::processEvents();
+    ok &= check(displayed.toPlainText().contains("message after clear"),
+                "messages continue after Clear Log");
+    const QString timestamp = DiagnosticLogger::structuredTimestamp();
+    ok &= check(QRegularExpression(
+        QStringLiteral("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}[+-]\\d{2}:\\d{2}$"))
+        .match(timestamp).hasMatch(), "local ISO timestamp has milliseconds and numeric offset");
+    ok &= check(QDateTime::fromString(timestamp, Qt::ISODateWithMs).offsetFromUtc() ==
+        QDateTime::currentDateTime().offsetFromUtc(), "timestamp uses current OS local offset");
     const QString path = DiagnosticLogger::logFilePath();
     DiagnosticLogger::shutdown();
     QFile log(path);

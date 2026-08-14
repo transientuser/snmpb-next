@@ -37,6 +37,23 @@ void MibModelView::setTreeModel(MibTreeModel *source)
     connect(source, &QAbstractItemModel::modelReset, this, &MibModelView::restoreSelection);
 }
 
+void MibModelView::setVisibleModules(const QStringList &modules)
+{
+    filterModel->setVisibleModules(modules);
+    expandToDepth(1);
+}
+
+QStringList MibModelView::visibleModules() const
+{
+    return filterModel->visibleModules();
+}
+
+void MibModelView::showAllModules()
+{
+    filterModel->showAllModules();
+    expandToDepth(1);
+}
+
 void MibModelView::Populate()
 {
     if (model() && model()->rowCount()) {

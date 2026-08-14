@@ -34,6 +34,32 @@ int main(int argc, char **argv)
     check(temporary.isValid(), "temporary directory created");
     const QString bundled = QStringLiteral(SNMPB_SOURCE_DIR "/libsmi/mibs/ietf");
 
+    const auto writeFixture = [&](const QString &name, const QString &text) {
+        QFile file(temporary.filePath(name));
+        check(file.open(QIODevice::WriteOnly | QIODevice::Text), "custom-path fixture created");
+        QTextStream(&file) << text;
+        return file.fileName();
+    };
+    const QString vendorBasePath = writeFixture("VENDOR-BASE-MIB",
+        "VENDOR-BASE-MIB DEFINITIONS ::= BEGIN\n"
+        "IMPORTS enterprises FROM RFC1155-SMI;\n"
+        "vendorBase OBJECT IDENTIFIER ::= { enterprises 424242 }\nEND\n");
+    const QString vendorChildPath = writeFixture("different-physical-name.my",
+        "VENDOR-CHILD-MIB DEFINITIONS ::= BEGIN\n"
+        "IMPORTS vendorBase FROM VENDOR-BASE-MIB;\n"
+        "vendorChild OBJECT IDENTIFIER ::= { vendorBase 1 }\nEND\n");
+    const QString missingDependencyPath = writeFixture("VENDOR-MISSING-MIB",
+        "VENDOR-MISSING-MIB DEFINITIONS ::= BEGIN\n"
+        "IMPORTS missingRoot FROM NO-SUCH-VENDOR-BASE-MIB;\n"
+        "vendorMissing OBJECT IDENTIFIER ::= { missingRoot 1 }\nEND\n");
+    const QString multiModulePath = writeFixture("vendor-multi-bundle.mib",
+        "VENDOR-MULTI-ONE-MIB DEFINITIONS ::= BEGIN\n"
+        "IMPORTS enterprises FROM RFC1155-SMI;\n"
+        "vendorMultiOne OBJECT IDENTIFIER ::= { enterprises 424243 }\nEND\n"
+        "VENDOR-MULTI-TWO-MIB DEFINITIONS ::= BEGIN\n"
+        "IMPORTS enterprises FROM RFC1155-SMI;\n"
+        "vendorMultiTwo OBJECT IDENTIFIER ::= { enterprises 424244 }\nEND\n");
+
     const QString malformedPath = temporary.filePath("BROKEN-TEST-MIB");
     QFile malformed(malformedPath);
     check(malformed.open(QIODevice::WriteOnly | QIODevice::Text), "malformed fixture created");
@@ -52,11 +78,44 @@ int main(int argc, char **argv)
     malformed2.close();
 
     smiInit("snmpb-mib-service-test");
-    smiSetFlags(smiGetFlags() | SMI_FLAG_ERRORS | SMI_FLAG_NODESCR);
+    smiSetFlags((smiGetFlags() | SMI_FLAG_ERRORS) & ~SMI_FLAG_NODESCR);
     MibService service;
     service.setSearchPaths({temporary.path(), bundled});
     check(service.searchPaths() == QStringList{temporary.path(), bundled},
           "configured path order is retained");
+
+    MibLoadResult vendorBaseLoad = service.loadModules(
+        {QDir::toNativeSeparators(vendorBasePath)}, 9);
+    check(vendorBaseLoad.status == MibLoadStatus::Success &&
+          vendorBaseLoad.loadedModules == QStringList{"VENDOR-BASE-MIB"},
+          "custom-path module loads from physical file");
+    MibLoadResult vendorChildLoad = service.loadModules(
+        {QDir::toNativeSeparators(vendorChildPath)}, 9);
+    check(vendorChildLoad.status == MibLoadStatus::Success &&
+          vendorChildLoad.loadedModules == QStringList{"VENDOR-CHILD-MIB"} &&
+          smiIsLoaded("VENDOR-BASE-MIB"),
+          "filename-different module loads by declared identity with vendor dependency resolved");
+    const QList<MibModuleRecord> childRecords = service.modulesFromFile(vendorChildPath);
+    check(childRecords.size() == 1 && childRecords.first().name == "VENDOR-CHILD-MIB" &&
+          QFileInfo(childRecords.first().path).canonicalFilePath() ==
+              QFileInfo(vendorChildPath).canonicalFilePath(),
+          "custom file snapshots declared identity without retaining libsmi pointers");
+    MibLoadResult multiModuleLoad = service.loadModules(
+        {QDir::toNativeSeparators(multiModulePath)}, 9);
+    const QList<MibModuleRecord> multiRecords = service.modulesFromFile(multiModulePath);
+    QStringList multiNames;
+    for (const MibModuleRecord &record : multiRecords) multiNames.append(record.name);
+    check(multiModuleLoad.status == MibLoadStatus::Success &&
+          multiNames.contains("VENDOR-MULTI-ONE-MIB") &&
+          multiNames.contains("VENDOR-MULTI-TWO-MIB"),
+          "multiple declared modules in one physical file remain discoverable");
+    MibLoadResult missingDependency = service.loadModules(
+        {QDir::toNativeSeparators(missingDependencyPath)}, 9);
+    check(!missingDependency.diagnostics.isEmpty() && smiIsLoaded("VENDOR-CHILD-MIB") &&
+          (missingDependency.loadedModules.contains("VENDOR-MISSING-MIB") ||
+           missingDependency.unavailableModules.contains(
+               QDir::toNativeSeparators(missingDependencyPath))),
+          "missing dependency is diagnosed in isolation without removing valid vendor modules");
 
     MibLoadResult first = service.loadModules({"SNMPv2-MIB"}, 9);
     check(first.status == MibLoadStatus::Success &&
@@ -73,6 +132,26 @@ int main(int argc, char **argv)
     MibLoadResult preloads = service.loadPreloads({"IF-MIB", "SNMPv2-MIB"}, 9);
     check(preloads.alreadyLoadedModules == QStringList({"IF-MIB", "SNMPv2-MIB"}),
           "preload handling preserves request ordering and loaded state");
+    MibLoadResult metadataLoads = service.loadModules(
+        {"ACCOUNTING-CONTROL-MIB", "BRIDGE-MIB"}, 9);
+    check(metadataLoads.status == MibLoadStatus::Success,
+          "representative metadata modules load");
+    const MibModuleRecord accounting = MibService::snapshotModule(
+        smiGetModule("ACCOUNTING-CONTROL-MIB"));
+    check(accounting.name == "ACCOUNTING-CONTROL-MIB" &&
+          accounting.rootOid == "1.3.6.1.2.1.60",
+          "MODULE-IDENTITY name and numeric OID snapshot");
+    check(accounting.organization == "IETF AToM MIB Working Group" &&
+          accounting.contactInfo.contains("Cisco Systems, Inc.") &&
+          accounting.contactInfo.contains('\n') && accounting.description.contains('\n') &&
+          accounting.description.contains("collection and storage of"),
+          "organization/contact/description preserve multiline metadata");
+    check(accounting.lastRevision.toUTC() ==
+          QDateTime(QDate(1998, 9, 28), QTime(10, 0), Qt::UTC) &&
+          !accounting.revisions.isEmpty(), "latest revision date snapshot");
+    const MibModuleRecord bridge = MibService::snapshotModule(smiGetModule("BRIDGE-MIB"));
+    check(bridge.name == "BRIDGE-MIB" && bridge.reference.isEmpty(),
+          "missing optional module reference is represented safely");
     MibLoadResult bad = service.loadModules({malformedPath}, 9);
     check(!bad.diagnostics.isEmpty(), "malformed-MIB diagnostics captured");
     MibLoadResult badAgain = service.loadModules({malformedPath2}, 9);
@@ -167,6 +246,12 @@ int main(int argc, char **argv)
     const QByteArray after = [&] { QFile f(settings.fileName()); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); }();
     check(before == after, "viewing inventory does not rewrite settings");
 
+    const QString retainedOrganization = accounting.organization;
+    const QString retainedContact = accounting.contactInfo;
+    const QString retainedMetadataOid = accounting.rootOid;
     smiExit();
+    check(retainedOrganization == "IETF AToM MIB Working Group" &&
+          retainedContact.contains("kzm@cisco.com") && retainedMetadataOid == "1.3.6.1.2.1.60",
+          "metadata values remain valid after libsmi lifetime ends");
     return failures == 0 ? 0 : 1;
 }

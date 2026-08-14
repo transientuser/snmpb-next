@@ -28,6 +28,7 @@
 #include <QSettings>
 #include <QTextStream>
 #include <QTimer>
+#include <QElapsedTimer>
 #include "snmpb.h"
 #include "agentprofile.h"
 #include "mibeditor.h"
@@ -93,6 +94,7 @@ int main( int argc, char ** argv )
     Q_UNUSED(app_translation_loaded);
     app.installTranslator(&l10n_app);
 
+    QElapsedTimer mainWindowTimer; mainWindowTimer.start();
     QMainWindow mw;
     DiagnosticLogger::installMainWindowLifecycle(&mw);
     DiagnosticLogger::log("Startup", "main window construction begin");
@@ -113,10 +115,10 @@ int main( int argc, char ** argv )
         startup_dialog_closer.start(10);
     }
     snmpb.BindToGUI(&mw);
-    DiagnosticLogger::log("Startup", "main window construction end");
+    DiagnosticLogger::log("Startup", QStringLiteral("main window construction end elapsed_ms=%1").arg(mainWindowTimer.elapsed()));
     startup_dialog_closer.stop();
     mw.show();
-    DiagnosticLogger::log("Startup", "main window show request");
+    DiagnosticLogger::log("Startup", QStringLiteral("main window show request elapsed_ms=%1").arg(mainWindowTimer.elapsed()));
     app.connect(&app, SIGNAL( lastWindowClosed() ), &app, SLOT( quit() ));
     QObject::connect(&app, &QGuiApplication::lastWindowClosed, [] {
         DiagnosticLogger::log("Shutdown", "QApplication lastWindowClosed", false);

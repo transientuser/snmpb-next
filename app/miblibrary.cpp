@@ -79,11 +79,14 @@ MibImportScanner::Result MibImportScanner::scan(const QByteArray &content)
     QString text = QString::fromUtf8(content);
     text.remove(QRegularExpression(QStringLiteral("--[^\\r\\n]*")));
     QRegularExpression moduleRe(
-        QStringLiteral("(?mi)^\\s*([A-Za-z][A-Za-z0-9-]*)\\s+DEFINITIONS\\s*::="));
+        QStringLiteral("(?mi)^\\s*([A-Za-z][A-Za-z0-9-]*)\\s+(?:PIB-)?DEFINITIONS\\s*::="));
     auto modules = moduleRe.globalMatch(text);
+    QList<QPair<QString, int>> declarations;
     while (modules.hasNext()) {
-        const QString name = normalizedModule(modules.next().captured(1));
+        const auto declaration = modules.next();
+        const QString name = normalizedModule(declaration.captured(1));
         if (!result.moduleNames.contains(name)) result.moduleNames.append(name);
+        declarations.append({name, declaration.capturedStart()});
     }
     const QRegularExpression updatedRe(
         QStringLiteral("\\bLAST-UPDATED\\s+\"([0-9]{8,14}Z)\""),
@@ -105,6 +108,20 @@ MibImportScanner::Result MibImportScanner::scan(const QByteArray &content)
             const QString dependency = normalizedModule(from.next().captured(1));
             if (!result.imports.contains(dependency)) result.imports.append(dependency);
         }
+    }
+    for (int i = 0; i < declarations.size(); ++i) {
+        const int begin = declarations[i].second;
+        const int end = i + 1 < declarations.size() ? declarations[i + 1].second : text.size();
+        const QString moduleText = text.mid(begin, end - begin); QStringList direct;
+        auto moduleStarts = startRe.globalMatch(moduleText);
+        while (moduleStarts.hasNext()) {
+            const auto match = moduleStarts.next(); const int blockEnd = moduleText.indexOf(';', match.capturedEnd());
+            if (blockEnd < 0) break;
+            auto from = QRegularExpression(QStringLiteral("\\bFROM\\s+([A-Za-z][A-Za-z0-9-]*)"),
+                QRegularExpression::CaseInsensitiveOption).globalMatch(moduleText.mid(match.capturedEnd(), blockEnd - match.capturedEnd()));
+            while (from.hasNext()) { const QString dependency = normalizedModule(from.next().captured(1)); if (!direct.contains(dependency)) direct.append(dependency); }
+        }
+        result.importsByModule.insert(declarations[i].first, direct);
     }
     return result;
 }
@@ -319,7 +336,8 @@ bool MibLibraryService::safeFilename(const QString &name)
 }
 
 QList<MibLibraryRecord> MibLibraryService::inventory(const QStringList &bundledPaths,
-                                                      const MibCatalog &catalog) const
+                                                      const MibCatalog &catalog,
+                                                      const QList<MibModuleRecord> &localModules) const
 {
     QMap<QString, MibLibraryRecord> records;
     auto scan = [&](const QStringList &paths, MibLibraryStatus status, const QString &source) {
@@ -340,6 +358,17 @@ QList<MibLibraryRecord> MibLibraryService::inventory(const QStringList &bundledP
     };
     scan(bundledPaths, MibLibraryStatus::Bundled, QStringLiteral("Bundled"));
     scan({downloadedPath()}, MibLibraryStatus::Installed, QStringLiteral("Downloaded"));
+    for (const MibModuleRecord &module : localModules) {
+        if (module.name.isEmpty() || module.path.isEmpty() || records.contains(module.name)) continue;
+        MibLibraryRecord record;
+        record.moduleName = module.name;
+        record.localPath = module.path;
+        record.revision = module.lastRevision.isValid()
+            ? module.lastRevision.toUTC().toString(Qt::ISODate) : QString();
+        record.sourceName = QStringLiteral("Local");
+        record.status = MibLibraryStatus::Installed;
+        records.insert(record.moduleName, record);
+    }
     for (auto iterator = records.begin(); iterator != records.end(); ++iterator) {
         QFile metadata(QDir(metadataPath()).filePath(iterator.key() + ".json"));
         if (!metadata.open(QIODevice::ReadOnly)) continue;
@@ -427,6 +456,45 @@ QString MibLibraryStatusText(MibLibraryStatus status)
     case MibLibraryStatus::Conflict: return "Conflict";
     default: return "Unresolved";
     }
+}
+
+QString MibLibraryOriginText(const MibLibraryRecord &record)
+{
+    if (record.status == MibLibraryStatus::Bundled) return QStringLiteral("Built-in");
+    if (record.sourceId.compare(IanaMibSourceProvider::id(), Qt::CaseInsensitive) == 0 ||
+        record.sourceName.compare(QStringLiteral("IANA"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("IANA");
+    if (!record.localPath.isEmpty()) return QStringLiteral("Imported");
+    return record.sourceName.isEmpty() ? QStringLiteral("Catalog") : record.sourceName;
+}
+
+MibLibraryFileInfo MibLibraryFileInformation(const MibLibraryRecord &record,
+                                              const QString &failureReason)
+{
+    const QString unavailable = QStringLiteral("—");
+    MibLibraryFileInfo info;
+    info.origin = MibLibraryOriginText(record);
+    info.revision = record.revision.isEmpty() ? unavailable : record.revision;
+    info.filename = record.sourceFilename.isEmpty()
+        ? QFileInfo(record.localPath).fileName() : record.sourceFilename;
+    if (info.filename.isEmpty()) info.filename = unavailable;
+    info.localPath = record.localPath.isEmpty() ? unavailable : record.localPath;
+    info.provider = record.sourceName;
+    info.sourceUrl = record.sourceUrl;
+    info.timestamp = record.downloadedAt.isValid()
+        ? record.downloadedAt.toLocalTime().toString(Qt::ISODate) : QString();
+    info.sha256 = record.sha256;
+    info.showProvider = record.status != MibLibraryStatus::Bundled && !info.provider.isEmpty();
+    info.showSourceUrl = !info.sourceUrl.isEmpty();
+    info.showTimestamp = record.downloadedAt.isValid();
+    info.showSha256 = !info.sha256.isEmpty();
+    info.showState = !failureReason.isEmpty() ||
+        record.status == MibLibraryStatus::Downloading ||
+        record.status == MibLibraryStatus::Failed || record.status == MibLibraryStatus::Invalid ||
+        record.status == MibLibraryStatus::Conflict;
+    info.state = failureReason.isEmpty() ? MibLibraryStatusText(record.status)
+                                        : QObject::tr("Failed: %1").arg(failureReason);
+    return info;
 }
 
 bool MibValidationStaging::validate(const QByteArray &content, const QString &directory,

@@ -1,0 +1,134 @@
+#include "mibdependencyindex.h"
+
+#include <QCoreApplication>
+#include <QFile>
+#include <QFileInfo>
+#include <QSet>
+#include <QTemporaryDir>
+#include <QThread>
+#include <iostream>
+
+namespace {
+bool check(bool value, const char *message) { if (!value) std::cerr << "FAIL: " << message << '\n'; return value; }
+bool writeFile(const QString &path, const QByteArray &value) { QFile f(path); return f.open(QIODevice::WriteOnly) && f.write(value) == value.size(); }
+QByteArray mib(const QString &name, const QStringList &imports = {}) {
+    QByteArray value = name.toUtf8() + " DEFINITIONS ::= BEGIN\n";
+    if (!imports.isEmpty()) { value += "IMPORTS\n  thing FROM " + imports.join("\n  other FROM ").toUtf8() + ";\n"; }
+    return value + "END\n";
+}
+}
+
+int main(int argc, char **argv)
+{
+    QCoreApplication app(argc, argv); bool ok = true; QTemporaryDir temp;
+    const QString productionPath = MibDependencyIndex::defaultPath();
+    const QString originalApplicationName = QCoreApplication::applicationName();
+    QCoreApplication::setApplicationName(QStringLiteral("Acceptance Utility With Another Name"));
+    ok &= check(MibDependencyIndex::defaultPath() == productionPath,
+                "production index path is independent of utility application name");
+    QCoreApplication::setApplicationName(originalApplicationName);
+    ok &= check(QDir::fromNativeSeparators(productionPath).endsWith(
+        QStringLiteral("/SnmpB/mibs/dependency-index-v1.json")),
+        "production helper resolves the intended application-owned path");
+    ok &= check(temp.isValid(), "temporary root"); QDir root(temp.path());
+    root.mkdir("first"); root.mkdir("second"); const QString first = root.filePath("first"), second = root.filePath("second");
+    writeFile(QDir(first).filePath("child.mib"), mib("CHILD-MIB", {"ROOT-MIB"}));
+    writeFile(QDir(first).filePath("odd-provider.mib"), mib("ROOT-MIB"));
+    writeFile(QDir(first).filePath("multi.mib"), mib("ONE-MIB") + mib("TWO-MIB", {"ROOT-MIB"}));
+    writeFile(QDir(first).filePath("a.mib"), mib("A-MIB", {"B-MIB"}));
+    writeFile(QDir(first).filePath("b.mib"), mib("B-MIB", {"C-MIB"}));
+    writeFile(QDir(first).filePath("c.mib"), mib("C-MIB"));
+    writeFile(QDir(first).filePath("shared1.mib"), mib("SHARED-ONE", {"ROOT-MIB"}));
+    writeFile(QDir(first).filePath("shared2.mib"), mib("SHARED-TWO", {"ROOT-MIB"}));
+    writeFile(QDir(first).filePath("missing.mib"), mib("MISSING-CONSUMER", {"DOES-NOT-EXIST"}));
+    writeFile(QDir(first).filePath("circle-a.mib"), mib("CIRCLE-A", {"CIRCLE-B"}));
+    writeFile(QDir(first).filePath("circle-b.mib"), mib("CIRCLE-B", {"CIRCLE-A"}));
+    const QString indexPath = root.filePath("dependency-index-v1.json"); MibDependencyIndex index(indexPath);
+    const auto initial = index.update({first, second});
+    ok &= check(initial.scanned == 11 && initial.reused == 0 && initial.changed, "initial scan records every candidate");
+    ok &= check(index.provider("ROOT-MIB").path.endsWith("odd-provider.mib"), "filename differs from identity");
+    ok &= check(index.provider("ONE-MIB").path == index.provider("TWO-MIB").path, "multiple identities per physical file");
+    ok &= check(index.imports("TWO-MIB") == QStringList{"ROOT-MIB"} && index.imports("ONE-MIB").isEmpty(), "direct imports retained per declaration");
+
+    QSet<QString> loaded; int childAttempts = 0;
+    auto simulated = [&](const QString &, const QString &expected) {
+        MibDependencyLoadAttempt attempt; if (expected == "CHILD-MIB") ++childAttempts;
+        if (expected == "CHILD-MIB" && !loaded.contains("ROOT-MIB")) { attempt.diagnostic = "dependency absent"; return attempt; }
+        loaded.insert(expected); attempt.success = true; attempt.loadedModuleNames = {expected}; return attempt;
+    };
+    auto result = MibBoundedDependencyLoader().load({"CHILD-MIB"}, index, simulated);
+    ok &= check(result.failures.isEmpty() && loaded.contains("CHILD-MIB") && childAttempts == 2 && result.passes == 2,
+                "consumer before provider succeeds on bounded retry");
+    ok &= check(result.noProgressStops == 0, "successful retry has no final no-progress error");
+    loaded.clear(); loaded.insert("ROOT-MIB"); childAttempts = 0;
+    result = MibBoundedDependencyLoader().load({"CHILD-MIB"}, index, simulated);
+    ok &= check(result.failures.isEmpty() && childAttempts == 1, "provider before consumer succeeds first pass");
+
+    loaded.clear();
+    auto chain = MibBoundedDependencyLoader().load({"A-MIB"}, index, [&](const QString &, const QString &expected) {
+        MibDependencyLoadAttempt attempt; bool ready = true; for (const auto &dep : index.imports(expected)) ready &= loaded.contains(dep);
+        if (ready) { loaded.insert(expected); attempt.success = true; attempt.loadedModuleNames = {expected}; } return attempt;
+    });
+    ok &= check(chain.failures.isEmpty() && chain.passes == 3 && loaded.size() == 3, "reverse dependency chain reaches fixed point");
+    auto shared = MibBoundedDependencyLoader().load({"SHARED-ONE", "SHARED-TWO"}, index, simulated);
+    ok &= check(shared.dependencies.count("ROOT-MIB") == 1, "shared dependency deduplicated");
+
+    auto missing = MibBoundedDependencyLoader().load({"MISSING-CONSUMER"}, index, simulated);
+    bool missingProvider = false; for (const auto &failure : missing.failures) missingProvider |= failure.moduleName == "DOES-NOT-EXIST" && failure.kind == MibDependencyFailureKind::MissingProvider;
+    ok &= check(missingProvider && missing.noProgressStops == 1, "missing provider stops once at fixed point");
+    auto allFail = MibBoundedDependencyLoader().load({"ROOT-MIB", "CHILD-MIB"}, index,
+        [](const QString &, const QString &) { return MibDependencyLoadAttempt{}; });
+    ok &= check(allFail.passes == 1 && allFail.noProgressStops == 1, "all failures terminate after one no-progress pass");
+    auto circular = MibBoundedDependencyLoader().load({"CIRCLE-A"}, index,
+        [](const QString &, const QString &) { return MibDependencyLoadAttempt{}; });
+    ok &= check(circular.passes == 1 && circular.failures.size() == 2, "circular imports cannot retry forever");
+
+    writeFile(QDir(first).filePath("duplicate.mib"), mib("ROOT-MIB")); index.update({first, second});
+    ok &= check(index.provider("ROOT-MIB").status == MibProviderStatus::Ambiguous, "same-precedence providers are ambiguous");
+    QFile::remove(QDir(first).filePath("duplicate.mib")); writeFile(QDir(second).filePath("preferred-later.mib"), mib("ROOT-MIB")); index.update({first, second});
+    ok &= check(index.provider("ROOT-MIB").status == MibProviderStatus::Found && index.provider("ROOT-MIB").path.endsWith("odd-provider.mib"),
+                "earlier configured search path wins");
+
+    MibDependencyIndex reloaded(indexPath); ok &= check(reloaded.load(), "persistent index loads");
+    ok &= check(reloaded.files().size() == index.files().size() &&
+        reloaded.provider("ROOT-MIB").path.endsWith("odd-provider.mib"),
+        "record count and provider path survive process-style reload");
+    const QDateTime beforeRead = QFileInfo(indexPath).lastModified(); QThread::msleep(20); MibDependencyIndex readOnly(indexPath); readOnly.load();
+    ok &= check(QFileInfo(indexPath).lastModified() == beforeRead, "read does not rewrite index");
+    const auto unchanged = reloaded.update({first, second});
+    ok &= check(unchanged.scanned == 0 && unchanged.reused == 12 && !unchanged.changed, "unchanged files reuse persisted records");
+    const quint64 oldGeneration = reloaded.generation(); QFile::remove(QDir(first).filePath("c.mib"));
+    const auto deleted = reloaded.update({first, second});
+    ok &= check(deleted.deleted == 1 && reloaded.provider("C-MIB").status == MibProviderStatus::Missing && reloaded.generation() > oldGeneration,
+                "deleted file invalidates provider mapping");
+    QThread::msleep(5); writeFile(QDir(first).filePath("b.mib"), mib("B-MIB", {"ROOT-MIB", "NEW-DEP"}));
+    QFile changedFile(QDir(first).filePath("b.mib")); changedFile.setFileTime(QDateTime::currentDateTime().addSecs(2), QFileDevice::FileModificationTime);
+    const auto changed = reloaded.update({first, second});
+    ok &= check(changed.scanned >= 1 && reloaded.imports("B-MIB").contains("NEW-DEP"), "changed file invalidates cached hash/edges");
+
+    const QString signature = MibDependencyIndex::profileSignature({"A-MIB"}, true);
+    MibProfileDependencyCheck profile; profile.profileSignature = signature; profile.indexGeneration = reloaded.generation(); profile.checkedUtc = QDateTime::currentDateTimeUtc();
+    reloaded.setProfileCheck("profile", profile); ok &= check(reloaded.profileCheckCurrent("profile", signature), "checked profile is current");
+    ok &= check(!reloaded.profileCheckCurrent("profile", MibDependencyIndex::profileSignature({"B-MIB"}, true)), "profile edit marks state stale");
+    reloaded.save(); MibDependencyIndex cached(indexPath); cached.load(); const auto cachedCheck = cached.update({first, second});
+    ok &= check(cachedCheck.scanned == 0, "profile switching can reuse cached graph without rescanning");
+    const QString missingIndexPath = root.filePath("missing-index.json");
+    MibDependencyIndex missingIndex(missingIndexPath);
+    ok &= check(missingIndex.load() && missingIndex.loadStatus() == MibDependencyIndexLoadStatus::Missing &&
+        missingIndex.files().isEmpty(), "missing index is explicit and safely empty");
+    const QString corruptPath = root.filePath("corrupt-index.json");
+    writeFile(corruptPath, QByteArrayLiteral("{truncated")); QString loadError;
+    MibDependencyIndex corrupt(corruptPath);
+    ok &= check(!corrupt.load(&loadError) && corrupt.loadStatus() == MibDependencyIndexLoadStatus::MalformedJson &&
+        !loadError.isEmpty(), "corrupt index reports concise diagnostic");
+    const QString unsupportedPath = root.filePath("unsupported-index.json");
+    writeFile(unsupportedPath, QByteArrayLiteral("{\"schemaVersion\":99,\"files\":[]}"));
+    MibDependencyIndex unsupported(unsupportedPath);
+    ok &= check(!unsupported.load(&loadError) && unsupported.loadStatus() == MibDependencyIndexLoadStatus::UnsupportedSchema,
+        "unsupported schema reports explicit status");
+    const QString emptyPath = root.filePath("empty-index.json"); writeFile(emptyPath, {});
+    MibDependencyIndex emptyFile(emptyPath);
+    ok &= check(!emptyFile.load(&loadError) && emptyFile.loadStatus() == MibDependencyIndexLoadStatus::EmptyFile,
+        "zero-byte index reports explicit status");
+    return ok ? 0 : 1;
+}

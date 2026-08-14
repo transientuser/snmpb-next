@@ -5,6 +5,7 @@
 
 #include <QAbstractItemModel>
 #include <QSortFilterProxyModel>
+#include <QSet>
 #include <memory>
 #include <vector>
 
@@ -43,8 +44,15 @@ class MibTreeFilterModel : public QSortFilterProxyModel
     Q_OBJECT
 public:
     explicit MibTreeFilterModel(QObject *parent = nullptr);
+    void setVisibleModules(const QStringList &modules);
+    void showAllModules();
+    QStringList visibleModules() const { return allowedModules.values(); }
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
+private:
+    bool acceptsModuleOrDescendant(const QModelIndex &sourceIndex) const;
+    QSet<QString> allowedModules;
+    bool moduleFilterEnabled = false;
 };
 
 #endif

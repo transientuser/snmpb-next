@@ -37,6 +37,8 @@ set(SNMPB_APP_SOURCES
     mibeditor.cpp
     mibhighlighter.cpp
     miblibrary.cpp
+    mibdependencyindex.cpp
+    mibprofile.cpp
     mibdownloadtransport.cpp
     miblibrarywidget.cpp
     mibmodule.cpp
@@ -120,6 +122,8 @@ set(SNMPB_APP_HEADERS
     mibeditor.h
     mibhighlighter.h
     miblibrary.h
+    mibdependencyindex.h
+    mibprofile.h
     mibdownloadtransport.h
     miblibrarywidget.h
     mibmodule.h
@@ -310,6 +314,38 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_mib_dependency_index_test
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h
+        mibdependencyindex.cpp mibdependencyindex.h mibdependencyindex_test.cpp)
+    target_link_libraries(snmpb_mib_dependency_index_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.mib-dependency-index COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_dependency_index_test>)
+    else()
+        add_test(NAME snmpb.mib-dependency-index COMMAND $<TARGET_FILE:snmpb_mib_dependency_index_test>)
+    endif()
+
+    add_executable(snmpb_mib_dependency_acceptance
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h
+        mibdependencyindex.cpp mibdependencyindex.h mibdependencyacceptance.cpp)
+    target_link_libraries(snmpb_mib_dependency_acceptance PRIVATE Qt6::Core snmpb_libsmi)
+
+    add_executable(snmpb_mib_startup_path_test
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h
+        mibdependencyindex.cpp mibdependencyindex.h mibstartuppath_test.cpp)
+    target_link_libraries(snmpb_mib_startup_path_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.mib-startup-path COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_startup_path_test>)
+    else()
+        add_test(NAME snmpb.mib-startup-path COMMAND $<TARGET_FILE:snmpb_mib_startup_path_test>)
+    endif()
+
     add_executable(snmpb_stability_diagnostics_test
         diagnosticlogger.cpp diagnosticlogger.h
         udpportowner.cpp udpportowner.h
@@ -427,6 +463,42 @@ if(BUILD_TESTING)
             $<TARGET_FILE:snmpb_mib_library_test>)
     else()
         add_test(NAME snmpb.mib-library COMMAND $<TARGET_FILE:snmpb_mib_library_test>)
+    endif()
+
+    add_executable(snmpb_mib_profile_test
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h mibprofile.cpp mibprofile.h
+        mibdependencyindex.cpp mibdependencyindex.h
+        mibrecords.h mibtreemodel.cpp mibtreemodel.h mibprofile_test.cpp)
+    set_target_properties(snmpb_mib_profile_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_mib_profile_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.mib-profile COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_profile_test>)
+    else()
+        add_test(NAME snmpb.mib-profile COMMAND $<TARGET_FILE:snmpb_mib_profile_test>)
+    endif()
+
+    add_executable(snmpb_mib_inventory_widget_test
+        diagnosticlogger.cpp diagnosticlogger.h
+        mibdownloadtransport.cpp mibdownloadtransport.h
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h mibprofile.cpp mibprofile.h
+        mibdependencyindex.cpp mibdependencyindex.h
+        miblibrarywidget.cpp miblibrarywidget.h mibinventorywidget_test.cpp)
+    set_target_properties(snmpb_mib_inventory_widget_test PROPERTIES AUTOMOC ON)
+    target_link_libraries(snmpb_mib_inventory_widget_test PRIVATE
+        Qt6::Core Qt6::Widgets Qt6::Network)
+    if(WIN32)
+        add_test(NAME snmpb.mib-inventory-widget COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen"
+            "QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins"
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_inventory_widget_test>)
+    else()
+        add_test(NAME snmpb.mib-inventory-widget COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" $<TARGET_FILE:snmpb_mib_inventory_widget_test>)
     endif()
 
     add_executable(snmpb_trap_pipeline_test

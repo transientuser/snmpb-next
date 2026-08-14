@@ -695,9 +695,10 @@ void MibViewLoader::EnsureLoaded(const QStringList &modules)
 {
     QStringList combined;
     combined = loadedModuleNames;
+    bool changed = false;
     for (const QString &module : modules)
-        if (!combined.contains(module)) combined.append(module);
-    Load(combined);
+        if (!combined.contains(module)) { combined.append(module); changed = true; }
+    if (changed) Load(combined);
 }
 
 void MibViewLoader::RegisterView(BasicMibView* view)

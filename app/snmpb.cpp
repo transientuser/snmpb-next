@@ -26,8 +26,10 @@
 #include <QFile>
 #include <qdockwidget.h>
 #include <QGridLayout>
+#include <QComboBox>
 #include <QLabel>
 #include <QSplitter>
+#include <QElapsedTimer>
 #include <qmenu.h>
 #include "snmpb.h"
 #include "mibmodule.h"
@@ -44,6 +46,7 @@
 #include "productidentity.h"
 #include "diagnosticlogger.h"
 #include "miblibrarywidget.h"
+#include "mibprofile.h"
 
 #include "agentprofile.h"
 #include "agentprofileservice.h"
@@ -90,12 +93,13 @@
 
 Snmpb::Snmpb(bool offline)
 {
+    QElapsedTimer settingsTimer; settingsTimer.start();
     DiagnosticLogger::log("Startup", "settings initialization begin");
     // First thing to do is to give up root privileges that allow permission to
     // bind on privileged ports (<1024). This is needed to bind on 
     // the RFC-defined trap port number 162 on UNIX machines.
     prefs = new Preferences(this);
-    DiagnosticLogger::log("Startup", "preferences load complete");
+    DiagnosticLogger::log("Startup", QStringLiteral("preferences load complete elapsed_ms=%1").arg(settingsTimer.elapsed()));
 #ifndef WIN32 
     // Allows to bind on privileged ports only if it is the standard trap port...
     if (! (prefs->ShouldListenStdTrapPort4() || prefs->ShouldListenStdTrapPort6()))
@@ -116,7 +120,7 @@ Snmpb::Snmpb(bool offline)
     // Note: beware as anything BEFORE this point is run as root on UNIX ... 
 
     CheckForConfigFiles();
-    DiagnosticLogger::log("Startup", "settings initialization complete");
+    DiagnosticLogger::log("Startup", QStringLiteral("settings initialization complete elapsed_ms=%1").arg(settingsTimer.elapsed()));
 }
 
 Snmpb::~Snmpb()
@@ -161,7 +165,9 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     // Creation order is VERY important here
     logsnmpb = new LogSnmpb(this);
     DiagnosticLogger::attachLogWidget(w.LogOutput);
+    QElapsedTimer mibStartupTimer; mibStartupTimer.start();
     modules = new MibModule(this);
+    DiagnosticLogger::log("Startup", QStringLiteral("MIB initialization complete elapsed_ms=%1").arg(mibStartupTimer.elapsed()));
     profileService = new AgentProfileService(GetAgentsConfigFile(), this);
     DiagnosticLogger::log("Connections", QStringLiteral("profiles loaded count=%1")
                           .arg(profileService->profiles().size()));
@@ -174,7 +180,8 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     devicePlacementService = new DeviceTreePlacementService(
         GetDeviceTreeConfigFile(), this);
     apm = new AgentProfileManager(this, profileService, profileMetadataService);
-    prefs->Init();
+    QElapsedTimer phaseTimer; phaseTimer.start(); prefs->Init();
+    DiagnosticLogger::log("Startup", QStringLiteral("settings UI load complete elapsed_ms=%1").arg(phaseTimer.elapsed()));
     trap = new Trap(this);
     agent->Init();
     upm = new USMProfileManager(this);
@@ -186,8 +193,76 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     w.TabW->setTabVisible(w.TabW->indexOf(w.GraphsTab), false);
 #endif
     editor = new MibEditor(this);
-    mibLibrary = new MibLibraryWidget(modules, prefs->DefaultMibPaths(), w.TabW);
+    MibLibraryWidget::Callbacks mibLibraryCallbacks;
+    mibLibraryCallbacks.validate = [this](const QString &path, QString *error) {
+        return modules->ValidateModuleFile(path, error);
+    };
+    mibLibraryCallbacks.downloadsCompleted = [this](const QStringList &requested, bool load) {
+        modules->RescanPath(); QString indexError; modules->RefreshDependencyIndex(&indexError);
+        if (!indexError.isEmpty()) DiagnosticLogger::log("MIB", indexError);
+        if (load) modules->LoadPreferredModules(requested);
+    };
+    mibLibraryCallbacks.metadata = [this](const QString &module, const QString &path) {
+        return modules->ModuleMetadata(module, path);
+    };
+    mibLibraryCallbacks.localInventory = [this]() {
+        return modules->AvailableModuleRecords();
+    };
+    mibLibraryCallbacks.checkDependencies = [this](const QString &id, const QStringList &members,
+                                                    bool includeBase, QString *error) {
+        return modules->CheckProfileDependencies(id, members, includeBase, error);
+    };
+    mibLibraryCallbacks.cachedDependencies = [this](const QString &id, const QString &signature) {
+        return modules->CachedProfileDependencies(id, signature);
+    };
+    phaseTimer.restart();
+    mibLibrary = new MibLibraryWidget(prefs->DefaultMibPaths(), w.TabW, nullptr,
+                                      mibLibraryCallbacks);
+    DiagnosticLogger::log("Startup", QStringLiteral("Inventory construction complete elapsed_ms=%1").arg(phaseTimer.elapsed()));
     w.TabW->insertTab(3, mibLibrary, tr("MIB Library"));
+    connect(modules, &MibModule::inventoryChanged, mibLibrary, &MibLibraryWidget::refresh);
+    connect(mibLibrary, &MibLibraryWidget::openModuleRequested, mw,
+            [this](const QString &path, bool readOnly) {
+        if (readOnly) editor->MibFileOpenReadOnly(path); else editor->MibFileOpen(path);
+        w.TabW->setCurrentIndex(2);
+    });
+    auto *browserProfile = new QComboBox(w.MIBTreeLayout);
+    browserProfile->setObjectName(QStringLiteral("MibBrowserProfileSelector"));
+    auto *browserProfileRow = new QWidget(w.MIBTreeLayout);
+    auto *browserProfileLayout = new QHBoxLayout(browserProfileRow);
+    browserProfileLayout->setContentsMargins(0, 0, 0, 4);
+    browserProfileLayout->addWidget(new QLabel(tr("MIB Profile:"), browserProfileRow));
+    browserProfileLayout->addWidget(browserProfile, 1);
+    qobject_cast<QVBoxLayout *>(w.MIBTreeLayout->layout())->insertWidget(1, browserProfileRow);
+    const auto refreshMibProfiles = [this, browserProfile]() {
+        const QString selected = QSettings().value("mib-library/current-profile",
+            MibProfileDefinitions::allId()).toString();
+        const QSignalBlocker blocker(browserProfile);
+        browserProfile->clear();
+        for (const MibProfileRecord &profile : mibLibrary->profileService()->profiles())
+            browserProfile->addItem(profile.name, profile.id);
+        int index = browserProfile->findData(selected);
+        if (index < 0) index = browserProfile->findData(MibProfileDefinitions::allId());
+        browserProfile->setCurrentIndex(index);
+    };
+    refreshMibProfiles();
+    connect(mibLibrary, &MibLibraryWidget::profilesChanged, mw, refreshMibProfiles);
+    connect(browserProfile, &QComboBox::currentIndexChanged, mw, [this, browserProfile]() {
+        mibLibrary->selectProfile(browserProfile->currentData().toString());
+    });
+    connect(mibLibrary, &MibLibraryWidget::profileSelectionChanged, mw,
+            [this, browserProfile](const QString &id, const QStringList &effective) {
+        { const QSignalBlocker blocker(browserProfile);
+          const int index = browserProfile->findData(id); if (index >= 0) browserProfile->setCurrentIndex(index); }
+        if (!(initializingMibProfile && id == MibProfileDefinitions::allId()))
+            modules->LoadPreferredModules(effective);
+        if (id == MibProfileDefinitions::allId()) w.MIBTree->showAllModules();
+        else w.MIBTree->setVisibleModules(effective);
+        w.MIBTree->Populate();
+    });
+    phaseTimer.restart(); mibLibrary->selectProfile(browserProfile->currentData().toString());
+    initializingMibProfile = false;
+    DiagnosticLogger::log("Startup", QStringLiteral("MIB profile initialization complete elapsed_ms=%1").arg(phaseTimer.elapsed()));
     discovery = new Discovery(this);
 
     auto *contextWidget = new QWidget(w.widget);

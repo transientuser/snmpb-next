@@ -129,8 +129,33 @@ MibTreeFilterModel::MibTreeFilterModel(QObject *parent) : QSortFilterProxyModel(
     setFilterCaseSensitivity(Qt::CaseInsensitive);
 }
 
+void MibTreeFilterModel::setVisibleModules(const QStringList &modules)
+{
+    moduleFilterEnabled = true;
+    allowedModules = QSet<QString>(modules.cbegin(), modules.cend());
+    invalidateFilter();
+}
+
+void MibTreeFilterModel::showAllModules()
+{
+    moduleFilterEnabled = false;
+    allowedModules.clear();
+    invalidateFilter();
+}
+
+bool MibTreeFilterModel::acceptsModuleOrDescendant(const QModelIndex &sourceIndex) const
+{
+    if (!moduleFilterEnabled ||
+        allowedModules.contains(sourceIndex.data(MibTreeModel::ModuleRole).toString())) return true;
+    for (int row = 0; row < sourceModel()->rowCount(sourceIndex); ++row)
+        if (acceptsModuleOrDescendant(sourceModel()->index(row, 0, sourceIndex))) return true;
+    return false;
+}
+
 bool MibTreeFilterModel::filterAcceptsRow(int sourceRow,
                                          const QModelIndex &sourceParent) const
 {
-    return QSortFilterProxyModel::filterAcceptsRow(sourceRow, sourceParent);
+    const QModelIndex index = sourceModel()->index(sourceRow, 0, sourceParent);
+    return acceptsModuleOrDescendant(index) &&
+           QSortFilterProxyModel::filterAcceptsRow(sourceRow, sourceParent);
 }

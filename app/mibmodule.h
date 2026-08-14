@@ -25,6 +25,7 @@
 #include "smi.h"
 #include "mibrecords.h"
 #include "miblibrary.h"
+#include "mibdependencyindex.h"
 
 #define SMI_PATH_SEPARATOR ';'
 
@@ -59,10 +60,18 @@ public:
     void ReadMibPreloads();
     QStringList GetWantedModules() { return Wanted; }
     QStringList AvailableModuleNames() const;
+    QList<MibModuleRecord> AvailableModuleRecords() const { return AvailableRecords; }
     QStringList LoadedModuleNames() const;
     QStringList LoadPreferredModules(const QStringList &modules);
     bool ValidateModuleFile(const QString &path, QString *error = nullptr,
                             MibValidationLevel level = MibValidationLevel::ErrorsAndWarnings);
+    MibModuleRecord ModuleMetadata(const QString &moduleName, const QString &localPath = {});
+    MibProfileDependencyCheck CheckProfileDependencies(const QString &profileId,
+        const QStringList &explicitModules, bool includeStandardBase, QString *error = nullptr);
+    MibProfileDependencyCheck CachedProfileDependencies(const QString &profileId,
+        const QString &signature) const;
+    MibDependencyIndex *DependencyIndex() { return &dependencyIndex; }
+    MibDependencyScanResult RefreshDependencyIndex(QString *error = nullptr);
 
 public slots:
     void Refresh();
@@ -76,10 +85,12 @@ signals:
     void ModuleProperties(const QString& text);
     void LogError(const QString& text);
     void StopAgentTimer();
+    void inventoryChanged();
 
 private:
     void InitLib(int restart);
     void RebuildTotalList();
+    void RebuildCandidateList();
     void RebuildLoadedList();
     void RebuildUnloadedList();
 
@@ -91,8 +102,11 @@ private:
     QList<QStringList> Total;
     QStringList Wanted;
     QStringList KnownModuleNames;
+    QList<MibModuleRecord> AvailableRecords;
     enum AutomaticLoadingPolicy Policy;
     bool ErrorWhileLoading;
+    MibDependencyIndex dependencyIndex;
+    bool dependencyIndexStale = false;
 };
 
 #endif /* MIBMODULE_H */

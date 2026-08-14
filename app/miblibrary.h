@@ -1,6 +1,8 @@
 #ifndef MIBLIBRARY_H
 #define MIBLIBRARY_H
 
+#include "mibrecords.h"
+
 #include <QByteArray>
 #include <QDateTime>
 #include <QList>
@@ -78,6 +80,7 @@ public:
     struct Result {
         QStringList moduleNames;
         QStringList imports;
+        QMap<QString, QStringList> importsByModule;
         QString revision;
         bool malformedImports = false;
     };
@@ -166,7 +169,8 @@ public:
     QString downloadedPath() const;
     QString metadataPath() const;
     QList<MibLibraryRecord> inventory(const QStringList &bundledPaths,
-                                      const MibCatalog &catalog = {}) const;
+                                      const MibCatalog &catalog = {},
+                                      const QList<MibModuleRecord> &localModules = {}) const;
     bool install(const MibCatalogEntry &entry, const QByteArray &content,
                  const QStringList &bundledPaths, MibLibraryRecord *record,
                  QString *error = nullptr,
@@ -184,5 +188,25 @@ public:
 };
 
 QString MibLibraryStatusText(MibLibraryStatus status);
+QString MibLibraryOriginText(const MibLibraryRecord &record);
+
+struct MibLibraryFileInfo {
+    QString origin;
+    QString revision;
+    QString filename;
+    QString localPath;
+    QString provider;
+    QString sourceUrl;
+    QString timestamp;
+    QString sha256;
+    QString state;
+    bool showProvider = false;
+    bool showSourceUrl = false;
+    bool showTimestamp = false;
+    bool showSha256 = false;
+    bool showState = false;
+};
+MibLibraryFileInfo MibLibraryFileInformation(const MibLibraryRecord &record,
+                                             const QString &failureReason = {});
 
 #endif

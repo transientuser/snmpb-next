@@ -151,6 +151,8 @@ void MibEditor::MibFileModified(bool modified)
 
 void MibEditor::MibFileNew(void)
 {
+    pristineReadOnly = false;
+    s->MainUI()->MIBFile->setReadOnly(false);
     s->MainUI()->MIBFile->clear();
     SetCurrentFileName("");
 }
@@ -354,6 +356,8 @@ void MibEditor::MibFileOpen(QString fileName)
         QFile file(fileName);
         if (file.open(QIODevice::ReadOnly | QFile::Text))
         {
+            pristineReadOnly = false;
+            s->MainUI()->MIBFile->setReadOnly(false);
             s->MainUI()->MIBFile->setPlainText(file.readAll());
             SetCurrentFileName(fileName);
         }
@@ -381,7 +385,7 @@ void MibEditor::MibFileOpen(void)
 
 void MibEditor::MibFileSave(void)
 {
-    if (LoadedFile.isEmpty())
+    if (LoadedFile.isEmpty() || pristineReadOnly)
         return MibFileSaveAs();
 
     QFile file(LoadedFile);
@@ -410,6 +414,8 @@ void MibEditor::MibFileSaveAs(void)
                                              tr("MIB Files (*-MIB *-PIB *-SMI *-TC *-TYPES *.mib *.pib *.smi *.MIB *.PIB *.SMI);;All Files (*)"));
     if (fileName.isEmpty())
         return;
+    pristineReadOnly = false;
+    s->MainUI()->MIBFile->setReadOnly(false);
     SetCurrentFileName(fileName);
     return MibFileSave();
 }
@@ -786,6 +792,15 @@ void MibEditor::SelectedLogEntry(const QModelIndex &index)
         QTextCursor cursor(s->MainUI()->MIBFile->document()->findBlockByLineNumber(line - 1));
         s->MainUI()->MIBFile->setTextCursor(cursor);
         s->MainUI()->MIBFile->setFocus();
+    }
+}
+
+void MibEditor::MibFileOpenReadOnly(QString fileName)
+{
+    MibFileOpen(fileName);
+    if (!fileName.isEmpty()) {
+        pristineReadOnly = true;
+        s->MainUI()->MIBFile->setReadOnly(true);
     }
 }
 

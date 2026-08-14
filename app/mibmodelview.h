@@ -18,6 +18,9 @@ public:
     void SelectFromOid(const QString &oid);
     void SetCurrentAgentIsV1(bool value) { agentIsV1 = value; }
     QString selectedOid() const { return currentOid(); }
+    void setVisibleModules(const QStringList &modules);
+    void showAllModules();
+    QStringList visibleModules() const;
 
 signals:
     void NodeProperties(const QString &text);

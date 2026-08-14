@@ -25,6 +25,7 @@
 #include <qmessagebox.h> 
 #include <qtextstream.h>
 #include <QStringBuilder>
+#include <QElapsedTimer>
 #include <algorithm>
 
 #include "mibmodule.h"
@@ -34,6 +35,7 @@
 #include "preferences.h"
 #include "preferredmibresolver.h"
 #include "mibservice.h"
+#include "mibprofile.h"
 #include "mibcandidatefilter.h"
 
 LoadedMibModule::LoadedMibModule(SmiModule* mod)
@@ -96,13 +98,34 @@ MibModule::MibModule(Snmpb *snmpb)
     : s(snmpb)
     , Policy(MIBLOAD_DEFAULT)
 {
+    QElapsedTimer phase; phase.start();
+    DiagnosticLogger::log("MIB", tr("dependency index path=\"%1\"").arg(
+        QDir::toNativeSeparators(dependencyIndex.path())));
+    QString dependencyIndexError;
+    const bool dependencyIndexLoaded = dependencyIndex.load(&dependencyIndexError);
+    DiagnosticLogger::log("MIB", tr("dependency index load status=%1 records=%2 generation=%3%4")
+        .arg(MibDependencyIndexLoadStatusText(dependencyIndex.loadStatus()))
+        .arg(dependencyIndex.files().size()).arg(dependencyIndex.generation())
+        .arg(dependencyIndex.loadDiagnostic().isEmpty() ? QString()
+            : tr(" reason=\"%1\"").arg(dependencyIndex.loadDiagnostic())));
+    DiagnosticLogger::log("Startup", tr("dependency index load complete elapsed_ms=%1 records=%2")
+        .arg(phase.elapsed()).arg(dependencyIndex.files().size()));
+    Q_UNUSED(dependencyIndexLoaded);
     // Must be connected before call to InitLib ...
     connect(this, SIGNAL ( LogError(QString) ),
             s->MainUI()->LogOutput, SLOT ( append (QString) ));
 
     CurrentModuleObject = this;
+    phase.restart();
     InitLib(0);
-    RescanPath();
+    DiagnosticLogger::log("Startup", tr("libsmi initialization complete elapsed_ms=%1").arg(phase.elapsed()));
+    phase.restart(); ReadMibPaths(); RebuildCandidateList();
+    DiagnosticLogger::log("Startup", tr("MIB candidate enumeration complete elapsed_ms=%1 candidates=%2 stale=%3")
+        .arg(phase.elapsed()).arg(Total.size()).arg(dependencyIndexStale ? QStringLiteral("yes") : QStringLiteral("no")));
+    phase.restart(); ReadMibPreloads(); RegenerateSmiConf(); LoadPreferredModules(Wanted);
+    RebuildLoadedList(); RebuildUnloadedList();
+    DiagnosticLogger::log("Startup", tr("requested MIB load complete elapsed_ms=%1 requested=%2 loaded=%3")
+        .arg(phase.elapsed()).arg(Wanted.size()).arg(Loaded.size()));
 
     // Connect some signals
     connect( s->MainUI()->UnloadedModules, 
@@ -165,7 +188,6 @@ static void NormalErrorHdlr(char *path, int line, int severity,
 
 static bool MibFilenameFilter(const QString& filename)
 {
-    DiagnosticLogger::log("MIB", "MIB search-path resolution and MIB/PIB loading begin");
     // This is all futile. FIXME
     // To machine code, file extension says literally nothing about its content.
     // To a human, it *might* vaguely identify the content-type, possibly fooling the human.
@@ -177,8 +199,17 @@ static bool MibFilenameFilter(const QString& filename)
 
 void MibModule::RebuildTotalList()
 {
+    RebuildCandidateList();
+}
+
+#if 0 // Historical compile-all implementation retained only as migration reference.
+void MibModule::RebuildTotalListLegacyCompileAll()
+{
+    DiagnosticLogger::log("MIB", "MIB search-path resolution and MIB/PIB loading begin");
     /* Enable error reporting */
-    smiSetFlags(smiGetFlags() | SMI_FLAG_ERRORS | SMI_FLAG_NODESCR);
+    // Inventory metadata is user-visible; retain DESCRIPTION, ORGANIZATION,
+    // CONTACT-INFO, and REFERENCE text while scanning configured modules.
+    smiSetFlags((smiGetFlags() | SMI_FLAG_ERRORS) & ~SMI_FLAG_NODESCR);
     smiSetErrorHandler(NormalErrorHdlr);
     smiSetErrorLevel(3);
 
@@ -189,6 +220,7 @@ void MibModule::RebuildTotalList()
    
     Total.clear();
     KnownModuleNames.clear();
+    AvailableRecords.clear();
     QStringList errored_files;
     for (int i = 0; i < smipaths.size(); ++i)
     {
@@ -217,9 +249,17 @@ void MibModule::RebuildTotalList()
 
                 if (smiModule)
                 {
-                    const QString canonicalName = QString::fromLatin1(smiModule->name);
-                    if (!KnownModuleNames.contains(canonicalName))
-                        KnownModuleNames.append(canonicalName);
+                    const MibService service(NormalErrorHdlr, 3);
+                    for (const MibModuleRecord &record :
+                         service.modulesFromFile(d.absoluteFilePath(fn))) {
+                        if (!KnownModuleNames.contains(record.name))
+                            KnownModuleNames.append(record.name);
+                        const auto duplicate = std::find_if(AvailableRecords.cbegin(),
+                            AvailableRecords.cend(), [&record](const MibModuleRecord &item) {
+                                return item.name == record.name && item.path == record.path;
+                            });
+                        if (duplicate == AvailableRecords.cend()) AvailableRecords.append(record);
+                    }
                     SmiNode *node = smiGetModuleIdentityNode(smiModule);
                     if (node)
                         module += smiRenderOID(node->oidlen, 
@@ -244,14 +284,124 @@ void MibModule::RebuildTotalList()
         std::sort(errored_files.begin(), errored_files.end());
 
         QMessageBox::warning (s->MainUI()->MIBTree, tr("MIB loading errors"),
-                              tr("<p>The following files from configured MIB search paths were considered MIB candidates but failed to load. Check the Log tab for parser diagnostics.</p>")
-                                  % "<code>\n"
-                                  % errored_files.join('\n')
-                                  % "\n</code>",
+                              tr("%n MIB files failed to load. See Log for details.",
+                                 nullptr, errored_files.size()),
                               QMessageBox::Ok, Qt::NoButton);
     }
 
     std::sort(Total.begin(), Total.end(), compareModule);
+}
+#endif
+
+void MibModule::RebuildCandidateList()
+{
+    std::unique_ptr<char, decltype(&std::free)> rawPath{smiGetPath(), std::free};
+    const QStringList paths = rawPath ? QString::fromLocal8Bit(rawPath.get()).split(
+        SMI_PATH_SEPARATOR, Qt::SkipEmptyParts) : QStringList{};
+    const MibDependencyInspection inspection = dependencyIndex.inspect(paths);
+    dependencyIndexStale = inspection.stale(); Total.clear(); KnownModuleNames.clear(); AvailableRecords.clear();
+    QSet<QString> candidatePaths;
+    for (const MibPhysicalCandidate &candidate : inspection.candidates) {
+        Total.append(QStringList{candidate.filename});
+        candidatePaths.insert(QFileInfo(candidate.canonicalPath).canonicalFilePath().toLower());
+    }
+    for (const MibDependencyFileRecord &file : dependencyIndex.files()) {
+        const QString canonicalPath = QFileInfo(file.canonicalPath).canonicalFilePath().toLower();
+        if (!candidatePaths.contains(canonicalPath) || file.checkState != QStringLiteral("verified")) continue;
+        for (auto it = file.importsByModule.begin(); it != file.importsByModule.end(); ++it) {
+            MibModuleRecord record; record.name = it.key(); record.path = file.canonicalPath;
+            record.imports = it.value(); AvailableRecords.append(record);
+            if (!KnownModuleNames.contains(record.name)) KnownModuleNames.append(record.name);
+        }
+    }
+    std::sort(Total.begin(), Total.end(), compareModule);
+}
+
+MibProfileDependencyCheck MibModule::CheckProfileDependencies(
+    const QString &profileId, const QStringList &explicitModules,
+    bool includeStandardBase, QString *error)
+{
+    const MibDependencyScanResult scan = RefreshDependencyIndex(error);
+    QStringList roots = explicitModules;
+    if (includeStandardBase) roots.append(MibProfileDefinitions::standardsModules());
+    roots.removeDuplicates(); roots.sort(Qt::CaseInsensitive);
+
+    QSet<QString> loading;
+    std::function<MibDependencyLoadAttempt(const QString &, const QString &)> loadIndexed;
+    loadIndexed = [this, &loading, &loadIndexed](const QString &path, const QString &expected) {
+        MibDependencyLoadAttempt attempt;
+        if (smiIsLoaded(expected.toLocal8Bit().constData())) {
+            attempt.success = true; attempt.loadedModuleNames = {expected}; return attempt;
+        }
+        if (loading.contains(expected)) { attempt.diagnostic = tr("Circular provider load"); return attempt; }
+        loading.insert(expected);
+        for (const QString &dependency : dependencyIndex.imports(expected)) {
+            if (smiIsLoaded(dependency.toLocal8Bit().constData())) continue;
+            const auto provider = dependencyIndex.provider(dependency);
+            if (provider.status == MibProviderStatus::Found) loadIndexed(provider.path, dependency);
+        }
+        ErrorWhileLoading = false;
+        char *canonicalName = smiLoadModule(QDir::toNativeSeparators(path).toLocal8Bit().constData());
+        const QList<MibModuleRecord> fromFile = MibService(NormalErrorHdlr, 3).modulesFromFile(path);
+        for (const MibModuleRecord &record : fromFile) attempt.loadedModuleNames.append(record.name);
+        attempt.success = canonicalName && attempt.loadedModuleNames.contains(expected) && !ErrorWhileLoading;
+        if (!attempt.success) attempt.diagnostic = ErrorWhileLoading
+            ? tr("libsmi reported a parser/semantic error")
+            : tr("Provider did not produce the requested module identity");
+        loading.remove(expected); return attempt;
+    };
+    const MibDependencyCheckResult result = MibBoundedDependencyLoader().load(roots, dependencyIndex, loadIndexed);
+    MibProfileDependencyCheck check;
+    check.profileSignature = MibDependencyIndex::profileSignature(explicitModules, includeStandardBase);
+    check.indexGeneration = dependencyIndex.generation(); check.effectiveModules = result.loaded;
+    check.dependencies = result.dependencies; check.checkedUtc = QDateTime::currentDateTimeUtc();
+    check.elapsedMsecs = scan.elapsedMsecs + result.elapsedMsecs;
+    for (const MibDependencyFailure &failure : result.failures) {
+        check.unresolved.append(failure.moduleName);
+        check.failureSummaries.append(tr("%1: %2%3").arg(failure.moduleName,
+            MibDependencyFailureText(failure.kind), failure.detail.isEmpty() ? QString() : tr(" — %1").arg(failure.detail)));
+    }
+    for (const QString &module : result.loaded) dependencyIndex.recordVerification(module, true);
+    for (const MibDependencyFailure &failure : result.failures)
+        dependencyIndex.recordVerification(failure.moduleName, false, failure.detail);
+    dependencyIndex.setProfileCheck(profileId, check);
+    if (!dependencyIndex.save(error)) {
+        DiagnosticLogger::log("MIB", tr("dependency index save failed path=\"%1\" reason=\"%2\"")
+            .arg(QDir::toNativeSeparators(dependencyIndex.path()), error ? *error : QString()));
+        return check;
+    }
+    DiagnosticLogger::log("MIB", tr("dependency index save records=%1 generation=%2 path=\"%3\"")
+        .arg(dependencyIndex.files().size()).arg(dependencyIndex.generation())
+        .arg(QDir::toNativeSeparators(dependencyIndex.path())));
+    // Verification changes which indexed identities are projected into the
+    // current-session Inventory/Profile models. Rebuild that projection now;
+    // otherwise newly learned aliases only appear after process restart.
+    RebuildCandidateList();
+    DiagnosticLogger::log("MIB", tr("Dependency check profile=%1 files-scanned=%2 reused=%3 deleted=%4 modules=%5 unresolved=%6 elapsed-ms=%7")
+        .arg(profileId).arg(scan.scanned).arg(scan.reused).arg(scan.deleted)
+        .arg(check.effectiveModules.size()).arg(check.unresolved.size()).arg(check.elapsedMsecs));
+    if (!result.loaded.isEmpty()) {
+        s->MibLoaderObj()->EnsureLoaded(result.loaded); RebuildLoadedList(); RebuildUnloadedList();
+    }
+    emit inventoryChanged();
+    return check;
+}
+
+MibDependencyScanResult MibModule::RefreshDependencyIndex(QString *error)
+{
+    ReadMibPaths(); std::unique_ptr<char, decltype(&std::free)> rawPath{smiGetPath(), std::free};
+    const QStringList paths = rawPath ? QString::fromLocal8Bit(rawPath.get()).split(
+        SMI_PATH_SEPARATOR, Qt::SkipEmptyParts) : QStringList{};
+    const MibDependencyScanResult result = dependencyIndex.update(paths, error);
+    RebuildCandidateList();
+    return result;
+}
+
+MibProfileDependencyCheck MibModule::CachedProfileDependencies(
+    const QString &profileId, const QString &signature) const
+{
+    return !dependencyIndexStale && dependencyIndex.profileCheckCurrent(profileId, signature)
+        ? dependencyIndex.profileCheck(profileId) : MibProfileDependencyCheck{};
 }
 
 QStringList MibModule::AvailableModuleNames() const
@@ -270,14 +420,44 @@ QStringList MibModule::LoadedModuleNames() const
     return result;
 }
 
+MibModuleRecord MibModule::ModuleMetadata(const QString &moduleName, const QString &localPath)
+{
+    SmiModule *module = smiGetModule(moduleName.toLocal8Bit().constData());
+    if (!module && !localPath.isEmpty()) {
+        char *loaded = smiLoadModule(QFileInfo(localPath).fileName().toLocal8Bit().constData());
+        module = loaded ? smiGetModule(loaded) : nullptr;
+    }
+    return MibService::snapshotModule(module);
+}
+
 QStringList MibModule::LoadPreferredModules(const QStringList &modules)
 {
-    PreferredMibResolution resolution = PreferredMibResolver::resolve(
-        modules, AvailableModuleNames(), LoadedModuleNames());
-    MibService mibService(NormalErrorHdlr, 3);
-    const MibLoadResult loadResult = mibService.loadModules(resolution.toLoad, 3);
-    const QStringList loadedNow = loadResult.loadedModules;
-    resolution.unavailable.append(loadResult.unavailableModules);
+    PreferredMibResolution resolution;
+    QStringList loadedNow; QSet<QString> loading;
+    std::function<bool(const QString &)> loadIdentity;
+    loadIdentity = [this, &loading, &loadIdentity, &loadedNow](const QString &identity) {
+        if (smiIsLoaded(identity.toLocal8Bit().constData())) { if (!loadedNow.contains(identity)) loadedNow.append(identity); return true; }
+        if (loading.contains(identity)) return false; loading.insert(identity);
+        const auto provider = dependencyIndex.provider(identity);
+        QString actualIdentity;
+        if (provider.status == MibProviderStatus::Found) {
+            for (const QString &dependency : dependencyIndex.imports(identity)) loadIdentity(dependency);
+            ErrorWhileLoading = false;
+            char *actual = smiLoadModule(QDir::toNativeSeparators(provider.path).toLocal8Bit().constData());
+            if (actual) actualIdentity = QString::fromLocal8Bit(actual);
+        } else {
+            ErrorWhileLoading = false; char *actual = smiLoadModule(identity.toLocal8Bit().constData());
+            if (actual) actualIdentity = QString::fromLocal8Bit(actual);
+        }
+        const bool success = !ErrorWhileLoading && !actualIdentity.isEmpty() &&
+            (provider.status != MibProviderStatus::Found || smiIsLoaded(identity.toLocal8Bit().constData()));
+        loading.remove(identity); if (success && !loadedNow.contains(actualIdentity)) loadedNow.append(actualIdentity); return success;
+    };
+    for (const QString &module : modules) {
+        if (LoadedModuleNames().contains(module)) resolution.alreadyLoaded.append(module);
+        else if (!loadIdentity(module)) resolution.unavailable.append(module);
+        else resolution.toLoad.append(module);
+    }
     if (!loadedNow.isEmpty())
     {
         s->MibLoaderObj()->EnsureLoaded(loadedNow);
@@ -519,11 +699,7 @@ void MibModule::Refresh()
     std::unique_ptr<char, decltype(&std::free)> new_smipath{ smiGetPath(), std::free };
 
     if (QString(old_smipath.get()) != QString(new_smipath.get())) {
-        // trigger MIB rescan
-    RescanPath();
-    DiagnosticLogger::log("MIB", QStringLiteral(
-        "MIB search-path resolution and MIB/PIB loading end loaded=%1 unloaded=%2")
-        .arg(Loaded.size()).arg(Unloaded.size()));
+        RebuildCandidateList();
     }
 
     ReadMibPreloads();
@@ -532,7 +708,7 @@ void MibModule::Refresh()
 
     InitLib(1);
 
-    s->MibLoaderObj()->Load(Wanted);
+    LoadPreferredModules(Wanted);
     RebuildLoadedList();
     RebuildUnloadedList();
     s->MainUI()->LoadedModules->resizeColumnToContents(0);
@@ -544,8 +720,10 @@ void MibModule::Refresh()
 void MibModule::RescanPath()
 {
     ReadMibPaths();
-    RebuildTotalList(); // this guy is slow...
-    Refresh();
+    RebuildCandidateList();
+    RebuildLoadedList();
+    RebuildUnloadedList();
+    emit inventoryChanged();
 }
 
 void MibModule::InitLib(int restart)

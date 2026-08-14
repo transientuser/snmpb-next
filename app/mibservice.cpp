@@ -98,6 +98,20 @@ MibLoadResult MibService::loadPreloads(const QStringList &preloads, int errorLev
     return loadModules(preloads, errorLevel);
 }
 
+QList<MibModuleRecord> MibService::modulesFromFile(const QString &path) const
+{
+    QList<MibModuleRecord> result;
+    const QString canonicalPath = QFileInfo(path).canonicalFilePath();
+    if (canonicalPath.isEmpty()) return result;
+    for (SmiModule *module = smiGetFirstModule(); module; module = smiGetNextModule(module)) {
+        const MibModuleRecord record = snapshotModule(module);
+        if (QFileInfo(record.path).canonicalFilePath().compare(
+                canonicalPath, Qt::CaseInsensitive) == 0)
+            result.append(record);
+    }
+    return result;
+}
+
 QString MibService::languageName(SmiLanguage language)
 {
     switch (language) {
@@ -126,9 +140,17 @@ MibModuleRecord MibService::snapshotModule(SmiModule *module)
     record.organization = safe(module->organization);
     record.contactInfo = safe(module->contactinfo);
     record.description = safe(module->description);
+    record.reference = safe(module->reference);
     record.loaded = true;
-    if (SmiRevision *revision = smiGetFirstRevision(module))
-        record.lastRevision = QDateTime::fromSecsSinceEpoch(revision->date, Qt::UTC);
+    for (SmiRevision *revision = smiGetFirstRevision(module); revision;
+         revision = smiGetNextRevision(revision)) {
+        MibRevisionRecord item;
+        item.date = QDateTime::fromSecsSinceEpoch(revision->date, Qt::UTC);
+        item.description = safe(revision->description);
+        record.revisions.append(item);
+        if (!record.lastRevision.isValid() || item.date > record.lastRevision)
+            record.lastRevision = item.date;
+    }
     if (SmiNode *root = smiGetModuleIdentityNode(module)) {
         record.rootName = safe(root->name);
         record.rootOid = oidText(root);

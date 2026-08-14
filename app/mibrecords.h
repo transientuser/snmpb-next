@@ -6,6 +6,12 @@
 #include <QString>
 #include <QStringList>
 
+struct MibRevisionRecord
+{
+    QDateTime date;
+    QString description;
+};
+
 struct MibModuleRecord
 {
     QString name;
@@ -14,9 +20,11 @@ struct MibModuleRecord
     QString organization;
     QString contactInfo;
     QString description;
+    QString reference;
     QString rootOid;
     QString rootName;
     QDateTime lastRevision;
+    QList<MibRevisionRecord> revisions;
     QStringList imports;
     bool loaded = false;
 };

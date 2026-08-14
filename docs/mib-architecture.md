@@ -76,3 +76,16 @@ Query, table, Discovery, TrapPresenter, and the editor may continue transient
 OID-based libsmi lookup. The disabled Qwt graph path remains untouched. The
 main-window MIB tree has not yet been visually redesigned, and editor navigation
 from a diagnostic remains future work.
+
+Normal startup must not semantically compile every configured MIB/PIB file.
+It reads the persistent dependency index, performs size/mtime candidate
+inspection, and loads only requested runtime modules through the indexed
+identity-to-provider resolver. Full hashing, declaration refresh, dependency
+closure verification, and bounded retry remain explicit **Check Dependencies**
+work. A missing index produces a stale/needs-checking state, never a legacy
+compile-all fallback.
+
+Structured application diagnostics use local ISO-8601 timestamps with
+milliseconds and an explicit numeric UTC offset. Backlog: normalize or wrap
+raw libsmi callbacks and SNMP++ messages so every displayed entry ultimately
+uses that same timestamp form. This remains a dedicated future logging task.

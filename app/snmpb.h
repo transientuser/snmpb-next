@@ -118,6 +118,7 @@ private:
 
     QString start_msg;
     bool start_issuccess;
+    bool initializingMibProfile = true;
 };
 
 #endif /* SNMPB_H */

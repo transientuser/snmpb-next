@@ -1794,6 +1794,23 @@
             </layout>
            </widget>
           </item>
+          <item>
+           <spacer name="LogToolbarSpacer">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size><width>20</width><height>20</height></size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="LogClear">
+            <property name="text">
+             <string>Clear Log</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </item>
         <item>

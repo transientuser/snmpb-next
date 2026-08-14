@@ -15,6 +15,7 @@ public:
     MibLoadResult loadModules(const QStringList &modules, int errorLevel = 9);
     MibLoadResult loadPreloads(const QStringList &preloads, int errorLevel = 9);
     QList<MibModuleRecord> moduleInventory() const;
+    QList<MibModuleRecord> modulesFromFile(const QString &path) const;
     MibTreeNodeRecord treeSnapshot(const QStringList &includedModules) const;
     static MibModuleRecord snapshotModule(SmiModule *module);
     static MibTreeNodeRecord snapshotNode(SmiNode *node);
