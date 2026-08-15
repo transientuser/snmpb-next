@@ -1,6 +1,7 @@
 #include "mibmodelview.h"
 
 #include "mibtreemodel.h"
+#include "tablenodevalidation.h"
 #include "smi.h"
 
 #include <QContextMenuEvent>
@@ -20,9 +21,36 @@ MibModelView::MibModelView(QWidget *parent)
 void MibModelView::currentChanged(const QModelIndex &current, const QModelIndex &previous)
 {
     QTreeView::currentChanged(current, previous);
+    updateQueryTableAvailability();
     if (!current.isValid()) return;
     retainedOid = current.data(MibTreeModel::OidRole).toString();
     emit NodeProperties(detailsFor(current));
+}
+
+bool MibModelView::queryTableAvailable() const
+{
+    return queryPrerequisitesAvailable && currentIndex().isValid() &&
+           IsTableQueryCapableNodeKind(
+               static_cast<SmiNodekind>(currentKind()));
+}
+
+void MibModelView::updateQueryTableAvailability()
+{
+    emit QueryTableAvailabilityChanged(queryTableAvailable());
+}
+
+void MibModelView::SetQueryPrerequisitesAvailable(bool available)
+{
+    if (queryPrerequisitesAvailable == available)
+        return;
+    queryPrerequisitesAvailable = available;
+    updateQueryTableAvailability();
+}
+
+void MibModelView::QueryTableFromCurrent()
+{
+    if (queryTableAvailable())
+        emit TableViewFromOid(currentOid());
 }
 
 void MibModelView::setTreeModel(MibTreeModel *source)
@@ -157,7 +185,13 @@ QString MibModelView::detailsFor(const QModelIndex &index) const
     row(tr("Name"), index.data(Qt::DisplayRole).toString().toHtmlEscaped());
     row(tr("OID"), value(MibTreeModel::OidRole));
     row(tr("Module"), value(MibTreeModel::ModuleRole));
-    row(tr("Type"), value(MibTreeModel::TypeRole));
+    const int kind = index.data(MibTreeModel::NodeKindRole).toInt();
+    QString structure;
+    if (kind == SMI_NODEKIND_TABLE) structure = tr("Table");
+    else if (kind == SMI_NODEKIND_ROW) structure = tr("Table Entry");
+    else if (kind == SMI_NODEKIND_COLUMN) structure = tr("Column");
+    row(tr("Type"), structure);
+    row(tr("Syntax"), value(MibTreeModel::TypeRole));
     row(tr("Base type"), value(MibTreeModel::BaseTypeRole));
     row(tr("Display hint"), value(MibTreeModel::DisplayHintRole));
     row(tr("Range / size"), listValue(MibTreeModel::RangesRole));
@@ -205,7 +239,7 @@ void MibModelView::contextMenuEvent(QContextMenuEvent *event)
     }
     QAction *setAction = menu.addAction(tr("Set..."));
     menu.addSeparator();
-    QAction *tableAction = menu.addAction(tr("Table View"));
+    QAction *tableAction = menu.addAction(tr("Query Table"));
     QAction *varbindAction = menu.addAction(tr("Multiple Varbinds..."));
     menu.addSeparator();
     QAction *findAction = menu.addAction(tr("Find..."));
@@ -214,7 +248,7 @@ void MibModelView::contextMenuEvent(QContextMenuEvent *event)
     if (getAction) getAction->setEnabled(kind == SMI_NODEKIND_SCALAR);
     if (getBulkAction) getBulkAction->setEnabled(!agentIsV1);
     setAction->setEnabled(leaf);
-    tableAction->setEnabled(kind == SMI_NODEKIND_TABLE || kind == SMI_NODEKIND_ROW);
+    tableAction->setEnabled(queryTableAvailable());
     varbindAction->setEnabled(leaf);
 
     QAction *chosen = menu.exec(event->globalPos());

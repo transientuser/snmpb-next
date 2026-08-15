@@ -231,8 +231,52 @@ int main(int argc, char **argv)
           visibleTree.selectedOid() == "1.3.6.1.2.1.1.1" &&
           details.contains("sysDescr") && details.contains("SNMPv2-MIB"),
           "visible QTreeView uses filtered value model and value-based details");
-
     const QString retainedOid = model.oidForIndex(sysDescr);
+
+    MibTreeNodeRecord tableFixture;
+    tableFixture.oid = "1.3.6.1.4.1.999.1";
+    tableFixture.name = "exampleTable";
+    tableFixture.nodeKind = SMI_NODEKIND_TABLE;
+    MibTreeNodeRecord entryFixture;
+    entryFixture.oid = "1.3.6.1.4.1.999.1.1";
+    entryFixture.name = "exampleEntry";
+    entryFixture.nodeKind = SMI_NODEKIND_ROW;
+    MibTreeNodeRecord columnFixture;
+    columnFixture.oid = "1.3.6.1.4.1.999.1.1.1";
+    columnFixture.name = "exampleName";
+    columnFixture.nodeKind = SMI_NODEKIND_COLUMN;
+    entryFixture.children.append(columnFixture);
+    tableFixture.children.append(entryFixture);
+    MibTreeNodeRecord tableRoot;
+    tableRoot.oid = "1";
+    tableRoot.name = "MIB Tree";
+    tableRoot.children.append(tableFixture);
+    model.setSnapshot(tableRoot);
+
+    QStringList tableRequests;
+    QObject::connect(&visibleTree, &MibModelView::TableViewFromOid,
+                     [&tableRequests](const QString &oid) { tableRequests.append(oid); });
+    visibleTree.SelectFromOid(tableFixture.oid);
+    check(!visibleTree.queryTableAvailable(),
+          "table query remains unavailable without connection prerequisites");
+    visibleTree.SetQueryPrerequisitesAvailable(true);
+    check(visibleTree.queryTableAvailable() && details.contains("Type") &&
+              details.contains("Table"),
+          "table selection enables visible action and identifies its structure");
+    visibleTree.QueryTableFromCurrent();
+    visibleTree.SelectFromOid(entryFixture.oid);
+    check(visibleTree.queryTableAvailable() && details.contains("Table Entry"),
+          "entry selection enables the same action and identifies its structure");
+    visibleTree.QueryTableFromCurrent();
+    visibleTree.SelectFromOid(columnFixture.oid);
+    check(!visibleTree.queryTableAvailable() && details.contains("Column"),
+          "column retains object behavior rather than becoming a default table target");
+    visibleTree.QueryTableFromCurrent();
+    check(tableRequests == QStringList({tableFixture.oid, entryFixture.oid}),
+          "only table and entry selections emit table-query requests");
+
+    visibleTree.setCurrentIndex({});
+    visibleTree.SelectFromOid(retainedOid);
     model.setSnapshot(service.treeSnapshot({"SNMPv2-MIB"}));
     check(model.indexForOid(retainedOid).isValid() && visibleTree.selectedOid() == retainedOid,
           "visible selection OID survives compatible rebuild");

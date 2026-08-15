@@ -80,6 +80,7 @@ protected:
                       SnmpRequestOperation operation);
 
 private:
+    void UpdateTableQueryAvailability();
     QString GetValueString(MibSelection &ms, Vb* vb);
     void VarbindsBuildList(void);
     void PresentTableResult(const SnmpTableResult &result);

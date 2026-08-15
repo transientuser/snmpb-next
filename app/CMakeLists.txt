@@ -430,6 +430,7 @@ if(BUILD_TESTING)
         mibcandidatefilter.cpp mibcandidatefilter.h
         mibrecords.h mibservice.cpp mibservice.h
         mibtreemodel.cpp mibtreemodel.h
+        tablenodevalidation.cpp tablenodevalidation.h
         mibmodelview.cpp mibmodelview.h mibservice_test.cpp)
     set_target_properties(snmpb_mib_service_test PROPERTIES AUTOMOC ON)
     target_compile_definitions(snmpb_mib_service_test PRIVATE

@@ -28,3 +28,8 @@ bool IsValidTableColumnNode(const SmiNode *node)
 {
     return node && node->nodekind == SMI_NODEKIND_COLUMN;
 }
+
+bool IsTableQueryCapableNodeKind(SmiNodekind kind)
+{
+    return kind == SMI_NODEKIND_TABLE || kind == SMI_NODEKIND_ROW;
+}

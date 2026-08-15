@@ -263,6 +263,10 @@ void Agent::Init(void)
              this, SLOT( Stop() ));
     connect( s->MainUI()->MIBTree, SIGNAL( TableViewFromOid(const QString&) ),
              this, SLOT( TableViewFrom(const QString&) ) );
+    connect(s->MainUI()->QueryTable, &QPushButton::clicked,
+            s->MainUI()->MIBTree, &MibModelView::QueryTableFromCurrent);
+    connect(s->MainUI()->MIBTree, &MibModelView::QueryTableAvailabilityChanged,
+            s->MainUI()->QueryTable, &QPushButton::setEnabled);
     connect( s->MainUI()->MIBTree, SIGNAL( VarbindsFromOid(const QString&) ),
              this, SLOT( VarbindsFrom(const QString&) ) );
     connect( s->MainUI()->AgentSettings, 
@@ -285,6 +289,7 @@ void Agent::Init(void)
     SelectAgentProfile(&cp, prefproto, &cpid);
     s->MainUI()->MIBTree->SetCurrentAgentIsV1(
         s->MainUI()->AgentProtoV1->isChecked()?true:false);
+    UpdateTableQueryAvailability();
 
     // then connect the signals (order is important)
     connect( s->MainUI()->AgentProfile, SIGNAL( currentIndexChanged( int ) ), 
@@ -490,6 +495,14 @@ void Agent::SelectAgentProfile(QString *prefprofile, int prefproto,
         s->MainUI()->AgentProtoV2->setEnabled(false);
         s->MainUI()->AgentProtoV3->setEnabled(false);
     }
+    UpdateTableQueryAvailability();
+}
+
+void Agent::UpdateTableQueryAvailability()
+{
+    AgentRequestSelection selection;
+    s->MainUI()->MIBTree->SetQueryPrerequisitesAvailable(
+        ResolveCurrentSelection(&selection) == AgentSelectionError::None);
 }
 
 AgentSelectionError Agent::ResolveCurrentSelection(
@@ -1658,7 +1671,7 @@ void Agent::TableViewFrom(const QString& oid)
     }
     SnmpTablePlan plan;
     plan.rowOid = poid;
-    for (SmiNode *node = smiGetFirstChildNode(pnode); node != NULL;
+    for (SmiNode *node = smiGetFirstChildNode(rowNode); node != NULL;
          node = smiGetNextChildNode(node))
     {
         if (!HasValidColumnInfo(node))

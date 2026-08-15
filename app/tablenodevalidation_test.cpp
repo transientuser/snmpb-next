@@ -59,6 +59,13 @@ int main()
     check(!IsValidTableColumnNode(nullptr) &&
           !IsValidTableColumnNode(&row),
           "null and non-column instance selections are rejected");
+    check(IsTableQueryCapableNodeKind(SMI_NODEKIND_TABLE),
+          "table kind is table-query capable");
+    check(IsTableQueryCapableNodeKind(SMI_NODEKIND_ROW),
+          "row kind is table-query capable");
+    check(!IsTableQueryCapableNodeKind(SMI_NODEKIND_COLUMN) &&
+          !IsTableQueryCapableNodeKind(SMI_NODEKIND_SCALAR),
+          "columns and scalars are not default table-query targets");
 
     if (failures == 0)
         std::puts("All table node validation tests passed.");

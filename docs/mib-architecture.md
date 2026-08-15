@@ -66,6 +66,12 @@ They are rebuilt only after load/reload, not during filtering or selection.
 This avoids repeated libsmi traversal at interaction time, at the cost of one
 description copy per visible node.
 
+Table queries use libsmi node kinds rather than object names. Selecting either
+a TABLE container or its ROW/entry enables **Query Table**; a TABLE selection
+is resolved to its ROW definition before the existing asynchronous table runner
+derives and queries the columns. COLUMN selections keep their normal object and
+instance operations and are not treated as full-table queries by default.
+
 ## Compatibility gates and limitations
 
 The unchanged smilint golden regressions for SNMPv2-MIB, IF-MIB, MAU-MIB,

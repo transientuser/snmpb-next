@@ -15,5 +15,6 @@ TableNodeValidation ResolveTableRowNode(SmiNode *node,
                                         SmiNode *firstChild,
                                         SmiNode **rowNode);
 bool IsValidTableColumnNode(const SmiNode *node);
+bool IsTableQueryCapableNodeKind(SmiNodekind kind);
 
 #endif

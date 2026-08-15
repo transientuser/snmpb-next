@@ -21,6 +21,7 @@ public:
     void setVisibleModules(const QStringList &modules);
     void showAllModules();
     QStringList visibleModules() const;
+    bool queryTableAvailable() const;
 
 signals:
     void NodeProperties(const QString &text);
@@ -33,11 +34,14 @@ signals:
     void TableViewFromOid(const QString &oid);
     void GetTableInstancesFromOid(const QString &oid);
     void VarbindsFromOid(const QString &oid);
+    void QueryTableAvailabilityChanged(bool available);
 
 public slots:
     void SetWalkInProgress(bool value) { walkInProgress = value; }
     void FindFromNode();
     void ExecuteFindNext();
+    void QueryTableFromCurrent();
+    void SetQueryPrerequisitesAvailable(bool available);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -47,6 +51,7 @@ private:
     QString currentOid() const;
     int currentKind() const;
     QString detailsFor(const QModelIndex &proxyIndex) const;
+    void updateQueryTableAvailability();
     QModelIndex proxyIndexForOid(const QString &oid) const;
     void restoreSelection();
     MibTreeFilterModel *filterModel;
@@ -54,6 +59,7 @@ private:
     bool walkInProgress = false;
     bool agentIsV1 = true;
     QString searchText;
+    bool queryPrerequisitesAvailable = false;
 };
 
 #endif
