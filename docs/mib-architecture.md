@@ -85,6 +85,46 @@ closure verification, and bounded retry remain explicit **Check Dependencies**
 work. A missing index produces a stale/needs-checking state, never a legacy
 compile-all fallback.
 
+## User-facing responsibilities
+
+The legacy Modules screen is now the top-level **MIB Library**. It preserves its
+Available MIB modules, Loaded MIB modules, and runtime module-information views
+while owning collection-wide dependency validation. Its explicit **Check
+Dependencies** action updates the shared persisted graph and refreshes the
+Inventory and Profile projections; merely opening the Library never starts
+that work.
+
+**MIB Profiles** are inexpensive selections over identities already known to
+the Library. Their effective membership combines explicit selections, the
+optional Standards/MIB-II base, and dependency closure from the shared graph.
+Editing or switching a Profile does not rescan or revalidate the collection.
+
+**Loaded MIB modules**, within MIB Library, reports actual process-local libsmi
+runtime state. It is distinct from the identity-centric Inventory and is not
+reduced when a Profile hides modules from the browser.
+
+Runtime preload requests are stored internally as declared module identities.
+Legacy filename-based `mibpreloads` remain readable: each candidate filename is
+projected through the dependency index to every declaration provided by that
+physical file, then deduplicated with identity-based entries. Selecting one
+Available file explicitly requests all its declarations. Removing a Loaded row
+removes that explicit identity and reconstructs libsmi from the remaining
+explicit requests, so shared dependencies remain when still required.
+
+The explicit request set is intent, while the Loaded table is always rebuilt
+from actual libsmi module enumeration. Available physical candidates are hidden
+only when at least one declaration from their provider file is actually loaded.
+Arrow operations reconstruct and verify the requested runtime transactionally;
+failed attempts reconstruct the prior known-good loaded identity set and do not
+persist the attempted request change.
+
+Library dependency checks reuse the persisted profile signature and per-provider
+`verified` state when candidate hashes and index generation are unchanged. A
+no-change check performs metadata inspection and projection refresh only. New or
+changed provider records lose their verification state, while unchanged records
+remain reusable; runtime reconstruction occurs only after semantic work actually
+loaded temporary providers.
+
 Structured application diagnostics use local ISO-8601 timestamps with
 milliseconds and an explicit numeric UTC offset. Backlog: normalize or wrap
 raw libsmi callbacks and SNMP++ messages so every displayed entry ultimately

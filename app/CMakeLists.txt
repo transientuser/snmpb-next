@@ -488,6 +488,8 @@ if(BUILD_TESTING)
         mibdependencyindex.cpp mibdependencyindex.h
         miblibrarywidget.cpp miblibrarywidget.h mibinventorywidget_test.cpp)
     set_target_properties(snmpb_mib_inventory_widget_test PROPERTIES AUTOMOC ON)
+    target_compile_definitions(snmpb_mib_inventory_widget_test PRIVATE
+        SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_link_libraries(snmpb_mib_inventory_widget_test PRIVATE
         Qt6::Core Qt6::Widgets Qt6::Network)
     if(WIN32)

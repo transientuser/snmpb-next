@@ -246,6 +246,16 @@ QStringList MibDependencyIndex::imports(const QString &moduleName) const
     return {};
 }
 
+bool MibDependencyIndex::semanticallyVerified(const QString &moduleName) const
+{
+    const auto resolved = provider(moduleName);
+    if (resolved.status != MibProviderStatus::Found) return false;
+    for (const auto &record : records)
+        if (keyPath(record.canonicalPath) == keyPath(resolved.path))
+            return record.checkState == QStringLiteral("verified");
+    return false;
+}
+
 QStringList MibDependencyIndex::moduleNames() const { QStringList r = providers.keys(); r.sort(Qt::CaseInsensitive); return r; }
 void MibDependencyIndex::setProfileCheck(const QString &id, const MibProfileDependencyCheck &check) { profileChecks[id] = check; }
 MibProfileDependencyCheck MibDependencyIndex::profileCheck(const QString &id) const { return profileChecks.value(id); }
@@ -309,4 +319,48 @@ QString MibDependencyFailureText(MibDependencyFailureKind kind)
     case MibDependencyFailureKind::DependencyUnresolved: return QObject::tr("Dependency unresolved");
     }
     return {};
+}
+
+QStringList MibDeclaredIdentitiesForCandidate(const QString &candidate,
+                                              const MibDependencyIndex &index)
+{
+    QStringList identities;
+    const QFileInfo requested(candidate);
+    for (const MibDependencyFileRecord &file : index.files()) {
+        const QFileInfo provider(file.canonicalPath);
+        const bool samePath = requested.isAbsolute() &&
+            provider.canonicalFilePath().compare(requested.canonicalFilePath(), Qt::CaseInsensitive) == 0;
+        const bool sameFilename = provider.fileName().compare(requested.fileName(), Qt::CaseInsensitive) == 0;
+        if (!samePath && !sameFilename) continue;
+        for (auto declaration = file.importsByModule.cbegin();
+             declaration != file.importsByModule.cend(); ++declaration)
+            if (!identities.contains(declaration.key())) identities.append(declaration.key());
+    }
+    identities.sort(Qt::CaseInsensitive);
+    return identities;
+}
+
+MibRuntimeRequestNormalization MibNormalizeRuntimeRequests(
+    const QStringList &requests, const MibDependencyIndex &index)
+{
+    MibRuntimeRequestNormalization result;
+    result.inputCount = requests.size();
+    for (const QString &raw : requests) {
+        const QString request = raw.trimmed();
+        if (request.isEmpty()) continue;
+        QStringList normalized;
+        if (index.provider(request).status == MibProviderStatus::Found) {
+            normalized.append(request);
+            ++result.identityCount;
+        } else {
+            normalized = MibDeclaredIdentitiesForCandidate(request, index);
+            if (!normalized.isEmpty()) ++result.legacyFilenameCount;
+            else { normalized.append(request); ++result.unresolvedCount; }
+        }
+        for (const QString &identity : normalized) {
+            if (result.identities.contains(identity)) ++result.duplicateCount;
+            else result.identities.append(identity);
+        }
+    }
+    return result;
 }

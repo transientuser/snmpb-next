@@ -71,6 +71,7 @@ public:
     MibProfileDependencyCheck CachedProfileDependencies(const QString &profileId,
         const QString &signature) const;
     MibDependencyIndex *DependencyIndex() { return &dependencyIndex; }
+    bool DependencyIndexStale() const { return dependencyIndexStale; }
     MibDependencyScanResult RefreshDependencyIndex(QString *error = nullptr);
 
 public slots:
@@ -88,6 +89,8 @@ signals:
     void inventoryChanged();
 
 private:
+    bool ReconstructRuntime(const QStringList &requests, QString *error = nullptr);
+    void PersistWanted() const;
     void InitLib(int restart);
     void RebuildTotalList();
     void RebuildCandidateList();

@@ -355,12 +355,9 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     requiredList = new QListWidget(memberPane); requiredList->setObjectName("MibProfileRequiredDependencies");
     requiredList->setSelectionMode(QAbstractItemView::NoSelection);
     memberLayout->addWidget(requiredList);
-    dependencyCheckSummary = new QLabel(tr("Dependencies need checking"), memberPane);
-    dependencyCheckSummary->setObjectName("MibProfileDependencyCheckSummary");
+    dependencyCheckSummary = new QLabel(memberPane);
+    dependencyCheckSummary->setObjectName("MibProfileDependencySummary");
     dependencyCheckSummary->setWordWrap(true); memberLayout->addWidget(dependencyCheckSummary);
-    checkDependenciesButton = new QPushButton(tr("Check Dependencies"), memberPane);
-    checkDependenciesButton->setObjectName("MibProfileCheckDependencies");
-    memberLayout->addWidget(checkDependenciesButton, 0, Qt::AlignLeft);
     downloadMissingButton = new QPushButton(tr("Download Missing"), memberPane);
     downloadMissingButton->setObjectName("MibProfileDownloadMissing");
     downloadMissingButton->setEnabled(false); memberLayout->addWidget(downloadMissingButton, 0, Qt::AlignLeft);
@@ -394,7 +391,6 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     connect(addMemberButton, &QPushButton::clicked, this, &MibLibraryWidget::addProfileMembers);
     connect(removeMemberButton, &QPushButton::clicked, this, &MibLibraryWidget::removeProfileMembers);
     connect(downloadMissingButton, &QPushButton::clicked, this, &MibLibraryWidget::downloadProfileMissing);
-    connect(checkDependenciesButton, &QPushButton::clicked, this, &MibLibraryWidget::checkProfileDependencies);
     connect(includeStandards, &QCheckBox::toggled, this, [this]() { saveCurrentProfile(); });
     connect(availableSearch, &QLineEdit::textChanged, this, [this](const QString &text) {
         for (int i=0;i<availableList->count();++i) availableList->item(i)->setHidden(!availableList->item(i)->text().contains(text, Qt::CaseInsensitive));
@@ -839,33 +835,13 @@ void MibLibraryWidget::refreshProfileLists()
         }
     }
     downloadMissingButton->setEnabled(downloadableMissing && downloadQueue.isEmpty());
-    const QStringList signatureModules = profile->type == MibProfileType::All
-        ? availableModuleNames() : profile->explicitModules;
-    const QString signature = MibDependencyIndex::profileSignature(signatureModules,
-                                                                    profile->includeStandardBase);
-    const MibProfileDependencyCheck cached = callbacks.cachedDependencies
-        ? callbacks.cachedDependencies(profile->id, signature) : MibProfileDependencyCheck{};
-    if (cached.checkedUtc.isNull()) dependencyCheckSummary->setText(tr("Dependencies need checking"));
-    else dependencyCheckSummary->setText(tr("%1 profile MIBs\n%2 dependencies\n%3 unresolved\nLast checked: %4")
-        .arg(signatureModules.size()).arg(cached.dependencies.size()).arg(cached.unresolved.size())
-        .arg(cached.checkedUtc.toLocalTime().toString(Qt::ISODate)));
-}
-
-void MibLibraryWidget::checkProfileDependencies()
-{
-    const MibProfileRecord *profile = profiles.find(profileCombo->currentData().toString());
-    if (!profile || !callbacks.checkDependencies) return;
-    checkDependenciesButton->setEnabled(false); dependencyCheckSummary->setText(tr("Checking dependencies…"));
-    const QStringList seeds = profile->type == MibProfileType::All
-        ? availableModuleNames() : profile->explicitModules;
-    QString error; const MibProfileDependencyCheck check = callbacks.checkDependencies(
-        profile->id, seeds, profile->includeStandardBase, &error);
-    checkDependenciesButton->setEnabled(true);
-    if (!error.isEmpty()) { dependencyCheckSummary->setText(error); return; }
-    refresh(); refreshProfileLists();
-    status->setText(check.unresolved.isEmpty() ? tr("Dependencies checked")
-        : tr("%n unresolved dependencies", nullptr, check.unresolved.size()));
-    profileChanged();
+    const DependencySummary librarySummary = callbacks.libraryDependencySummary
+        ? callbacks.libraryDependencySummary() : DependencySummary{};
+    QString profileSummary = tr("%1 selected · %2 dependencies · %3 effective modules · %4 unresolved")
+        .arg(effective.explicitModules.size()).arg(effective.automaticDependencies.size())
+        .arg(effective.effectiveModules.size()).arg(effective.missingModules.size());
+    if (librarySummary.stale) profileSummary += tr("\nMIB Library needs checking");
+    dependencyCheckSummary->setText(profileSummary);
 }
 
 void MibLibraryWidget::createProfile()

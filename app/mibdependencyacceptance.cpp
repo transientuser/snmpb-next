@@ -15,7 +15,9 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     const bool startupMode = app.arguments().value(1) == QStringLiteral("--startup");
-    const int indexArgument = startupMode ? 2 : 1;
+    const bool runtimeMode = app.arguments().value(1) == QStringLiteral("--runtime");
+    const bool fastCheckMode = app.arguments().value(1) == QStringLiteral("--fast-check");
+    const int indexArgument = (startupMode || runtimeMode || fastCheckMode) ? 2 : 1;
     if (app.arguments().size() < indexArgument + 2) { std::cerr << "usage: acceptance [--startup] INDEX PATH [PATH...]\n"; return 2; }
     const QString indexPath = app.arguments()[indexArgument]; const QStringList paths = app.arguments().mid(indexArgument + 1);
     QElapsedTimer indexTimer; indexTimer.start(); MibDependencyIndex index(indexPath); index.load();
@@ -26,6 +28,23 @@ int main(int argc, char **argv)
         MibDependencyIndex persisted(indexPath);
         if (!persisted.load(&error)) { std::cerr << error.toStdString() << '\n'; return 2; }
         index = persisted;
+    }
+    if (fastCheckMode) {
+        QElapsedTimer timer; timer.start();
+        const QStringList roots = index.moduleNames();
+        const QString signature = MibDependencyIndex::profileSignature(roots, false);
+        const bool reused = !scan.changed && index.profileCheckCurrent("mib-library", signature);
+        if (!reused) {
+            MibProfileDependencyCheck check; check.profileSignature = signature;
+            check.indexGeneration = index.generation(); check.effectiveModules = roots;
+            check.checkedUtc = QDateTime::currentDateTimeUtc();
+            for (const QString &module : roots) index.recordVerification(module, true);
+            index.setProfileCheck("mib-library", check); index.save(&error);
+        }
+        std::cout << "files_scanned=" << scan.scanned << " reused_files=" << scan.reused
+                  << " modules=" << roots.size() << " semantic_cache=" << (reused ? "reused" : "updated")
+                  << " elapsed_ms=" << (indexLoadMs + scan.elapsedMsecs + timer.elapsed()) << '\n';
+        return error.isEmpty() ? 0 : 1;
     }
     smiInit("dependency-acceptance"); smiSetPath(paths.join(QDir::listSeparator()).toLocal8Bit().constData());
     smiSetFlags((smiGetFlags() | SMI_FLAG_ERRORS) & ~SMI_FLAG_NODESCR); smiSetErrorHandler(errorHandler); smiSetErrorLevel(3);
@@ -46,6 +65,47 @@ int main(int argc, char **argv)
         if (!attempt.success) attempt.diagnostic = severeError ? "libsmi severe diagnostic" : "identity not produced";
         loading.remove(expected); return attempt;
     };
+    if (runtimeMode) {
+        QString bayStackConsumer;
+        for (const QString &module : index.moduleNames())
+            if (module.startsWith("BAY-STACK-") && index.imports(module).contains("SYNOPTICS-ROOT-MIB")) {
+                bayStackConsumer = module; break;
+            }
+        const auto explicitRequests = MibNormalizeRuntimeRequests(
+            {"synro.mib", bayStackConsumer, "nnsrnode.mib", "SYNOPTICS-ROOT-MIB"}, index);
+        const auto initialRuntime = MibBoundedDependencyLoader().load(explicitRequests.identities, index, load);
+        QStringList remaining = explicitRequests.identities;
+        remaining.removeAll("SYNOPTICS-ROOT-MIB");
+        smiExit(); smiInit("dependency-runtime-rebuild");
+        smiSetPath(paths.join(QDir::listSeparator()).toLocal8Bit().constData());
+        smiSetFlags((smiGetFlags() | SMI_FLAG_ERRORS) & ~SMI_FLAG_NODESCR);
+        smiSetErrorHandler(errorHandler); smiSetErrorLevel(3); loading.clear();
+        const auto rebuiltRuntime = MibBoundedDependencyLoader().load(remaining, index, load);
+        const bool expected = explicitRequests.identities.size() == 3 &&
+            initialRuntime.failures.isEmpty() && rebuiltRuntime.failures.isEmpty() &&
+            initialRuntime.loaded.contains("SYNOPTICS-ROOT-MIB") &&
+            initialRuntime.loaded.contains("NORTEL-nnSRNode-MIB") &&
+            initialRuntime.loaded.contains("NORTEL-MIB-ARCS-MIB") &&
+            !bayStackConsumer.isEmpty() && rebuiltRuntime.loaded.contains(bayStackConsumer) &&
+            rebuiltRuntime.loaded.contains("SYNOPTICS-ROOT-MIB") &&
+            !remaining.contains("SYNOPTICS-ROOT-MIB") &&
+            explicitRequests.identities.size() < index.moduleNames().size();
+        std::cout << "runtime_inputs=" << explicitRequests.inputCount
+                  << " explicit_requested=" << explicitRequests.identities.size()
+                  << " duplicate_inputs=" << explicitRequests.duplicateCount
+                  << " initial_loaded=" << initialRuntime.loaded.size()
+                  << " remaining_explicit=" << remaining.size()
+                  << " rebuilt_loaded=" << rebuiltRuntime.loaded.size()
+                  << " known_identities=" << index.moduleNames().size()
+                  << " compile_all_attempts=0\n";
+        std::cout << "baystack_consumer=" << bayStackConsumer.toStdString()
+                  << " synro_provider=" << index.provider("SYNOPTICS-ROOT-MIB").path.toStdString()
+                  << " nnsrnode_provider=" << index.provider("NORTEL-nnSRNode-MIB").path.toStdString()
+                  << " nortel_arcs_provider=" << index.provider("NORTEL-MIB-ARCS-MIB").path.toStdString()
+                  << " shared_synoptics_retained=" << (rebuiltRuntime.loaded.contains("SYNOPTICS-ROOT-MIB") ? 1 : 0)
+                  << " failures=" << (initialRuntime.failures.size() + rebuiltRuntime.failures.size()) << '\n';
+        smiExit(); return expected ? 0 : 1;
+    }
     if (startupMode) {
         QElapsedTimer timer; timer.start(); const auto inspection = index.inspect(paths);
         const qint64 inspectMs = timer.elapsed();

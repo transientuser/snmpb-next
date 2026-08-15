@@ -43,12 +43,69 @@ int main(int argc, char **argv)
     writeFile(QDir(first).filePath("missing.mib"), mib("MISSING-CONSUMER", {"DOES-NOT-EXIST"}));
     writeFile(QDir(first).filePath("circle-a.mib"), mib("CIRCLE-A", {"CIRCLE-B"}));
     writeFile(QDir(first).filePath("circle-b.mib"), mib("CIRCLE-B", {"CIRCLE-A"}));
+    writeFile(QDir(first).filePath("synro.mib"), mib("SYNOPTICS-ROOT-MIB"));
+    writeFile(QDir(first).filePath("nnsrnode.mib"), mib("NORTEL-nnSRNode-MIB", {"NORTEL-MIB-ARCS-MIB"}));
+    writeFile(QDir(first).filePath("nortel.mib"), mib("NORTEL-MIB-ARCS-MIB"));
     const QString indexPath = root.filePath("dependency-index-v1.json"); MibDependencyIndex index(indexPath);
     const auto initial = index.update({first, second});
-    ok &= check(initial.scanned == 11 && initial.reused == 0 && initial.changed, "initial scan records every candidate");
+    ok &= check(initial.scanned == 14 && initial.reused == 0 && initial.changed, "initial scan records every candidate");
     ok &= check(index.provider("ROOT-MIB").path.endsWith("odd-provider.mib"), "filename differs from identity");
     ok &= check(index.provider("ONE-MIB").path == index.provider("TWO-MIB").path, "multiple identities per physical file");
     ok &= check(index.imports("TWO-MIB") == QStringList{"ROOT-MIB"} && index.imports("ONE-MIB").isEmpty(), "direct imports retained per declaration");
+    index.recordVerification("ROOT-MIB", true);
+    ok &= check(index.semanticallyVerified("ROOT-MIB"),
+                "successful semantic verification is cached on its provider record");
+    const auto verificationReuse = index.update({first, second});
+    ok &= check(verificationReuse.scanned == 0 && index.semanticallyVerified("ROOT-MIB"),
+                "unchanged provider content reuses semantic verification");
+    index.recordVerification("CHILD-MIB", true);
+    writeFile(QDir(first).filePath("child.mib"), mib("CHILD-MIB", {"ROOT-MIB"}) + "\n");
+    QFile childFile(QDir(first).filePath("child.mib"));
+    childFile.setFileTime(QDateTime::currentDateTime().addSecs(2), QFileDevice::FileModificationTime);
+    const auto oneChanged = index.update({first, second});
+    ok &= check(oneChanged.scanned == 1 && !index.semanticallyVerified("CHILD-MIB") &&
+                index.semanticallyVerified("ROOT-MIB"),
+                "one changed provider invalidates only its semantic verification state");
+    ok &= check(MibDeclaredIdentitiesForCandidate("synro.mib", index) == QStringList{"SYNOPTICS-ROOT-MIB"} &&
+                MibDeclaredIdentitiesForCandidate("nnsrnode.mib", index) == QStringList{"NORTEL-nnSRNode-MIB"},
+                "filename-not-identity candidates project to declared identities");
+    ok &= check(MibDeclaredIdentitiesForCandidate("multi.mib", index) ==
+                (QStringList{"ONE-MIB", "TWO-MIB"}),
+                "one physical candidate projects every declared identity");
+    const auto legacyRequests = MibNormalizeRuntimeRequests(
+        {"synro.mib", "SYNOPTICS-ROOT-MIB", "multi.mib", "ONE-MIB", "nnsrnode.mib"}, index);
+    ok &= check(legacyRequests.identities ==
+                (QStringList{"SYNOPTICS-ROOT-MIB", "ONE-MIB", "TWO-MIB", "NORTEL-nnSRNode-MIB"}) &&
+                legacyRequests.legacyFilenameCount == 3 && legacyRequests.duplicateCount == 2,
+                "legacy filenames and identities normalize to one stable explicit request set");
+    QStringList afterRemove = legacyRequests.identities;
+    afterRemove.removeAll("ONE-MIB");
+    ok &= check(afterRemove.contains("TWO-MIB") && !afterRemove.contains("ONE-MIB"),
+                "removing one identity from a multi-declaration provider remains coherent");
+    QStringList hundredExisting;
+    for (int i = 0; i < 100; ++i) hundredExisting.append(QStringLiteral("EXISTING-%1").arg(i));
+    hundredExisting.append("ATM-TC");
+    const QStringList beforeRetry = hundredExisting;
+    if (!hundredExisting.contains("ATM-TC")) hundredExisting.append("ATM-TC");
+    ok &= check(hundredExisting == beforeRetry && hundredExisting.size() == 101,
+                "retrying an already-explicit unloaded identity does not duplicate a 100+ request set");
+    QSet<QString> simulatedRuntime;
+    for (const QString &identity : beforeRetry)
+        if (identity != "ATM-TC") simulatedRuntime.insert(identity);
+    for (int i = 0; i < 13; ++i) simulatedRuntime.insert(QStringLiteral("DEPENDENCY-%1").arg(i));
+    const QSet<QString> priorRuntime = simulatedRuntime;
+    simulatedRuntime.insert("ATM-TC");
+    ok &= check(beforeRetry.size() == 101 && priorRuntime.size() == 113 &&
+                !priorRuntime.contains("ATM-TC") && simulatedRuntime.size() == 114 &&
+                std::all_of(priorRuntime.cbegin(), priorRuntime.cend(),
+                    [&simulatedRuntime](const QString &name) { return simulatedRuntime.contains(name); }),
+                "headless ATM-TC retry preserves all 113 prior loaded identities without duplicating 101 explicit requests");
+    const QSet<QString> knownGoodRuntime = simulatedRuntime;
+    QSet<QString> failedAttempt;
+    failedAttempt.clear();
+    failedAttempt = knownGoodRuntime;
+    ok &= check(failedAttempt == knownGoodRuntime,
+                "failed reconstruction rollback restores the complete known-good runtime specification");
 
     QSet<QString> loaded; int childAttempts = 0;
     auto simulated = [&](const QString &, const QString &expected) {
@@ -96,7 +153,7 @@ int main(int argc, char **argv)
     const QDateTime beforeRead = QFileInfo(indexPath).lastModified(); QThread::msleep(20); MibDependencyIndex readOnly(indexPath); readOnly.load();
     ok &= check(QFileInfo(indexPath).lastModified() == beforeRead, "read does not rewrite index");
     const auto unchanged = reloaded.update({first, second});
-    ok &= check(unchanged.scanned == 0 && unchanged.reused == 12 && !unchanged.changed, "unchanged files reuse persisted records");
+    ok &= check(unchanged.scanned == 0 && unchanged.reused == 15 && !unchanged.changed, "unchanged files reuse persisted records");
     const quint64 oldGeneration = reloaded.generation(); QFile::remove(QDir(first).filePath("c.mib"));
     const auto deleted = reloaded.update({first, second});
     ok &= check(deleted.deleted == 1 && reloaded.provider("C-MIB").status == MibProviderStatus::Missing && reloaded.generation() > oldGeneration,

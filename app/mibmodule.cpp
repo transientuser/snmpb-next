@@ -321,15 +321,31 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
     const QString &profileId, const QStringList &explicitModules,
     bool includeStandardBase, QString *error)
 {
+    QElapsedTimer totalTimer;
+    totalTimer.start();
     const MibDependencyScanResult scan = RefreshDependencyIndex(error);
     QStringList roots = explicitModules;
     if (includeStandardBase) roots.append(MibProfileDefinitions::standardsModules());
     roots.removeDuplicates(); roots.sort(Qt::CaseInsensitive);
+    const QString signature = MibDependencyIndex::profileSignature(explicitModules, includeStandardBase);
+    if (!scan.changed && dependencyIndex.profileCheckCurrent(profileId, signature)) {
+        const MibProfileDependencyCheck cached = dependencyIndex.profileCheck(profileId);
+        DiagnosticLogger::log("MIB", tr("Dependency check profile=%1 files-scanned=0 reused=%2 cache=reused inspection-ms=%3 graph-ms=0 semantic-ms=0 total-ms=%4")
+            .arg(profileId).arg(scan.reused).arg(scan.elapsedMsecs).arg(totalTimer.elapsed()));
+        emit inventoryChanged();
+        return cached;
+    }
+    QElapsedTimer semanticTimer;
+    semanticTimer.start();
 
     QSet<QString> loading;
+    const bool libraryWide = profileId == QStringLiteral("mib-library");
     std::function<MibDependencyLoadAttempt(const QString &, const QString &)> loadIndexed;
-    loadIndexed = [this, &loading, &loadIndexed](const QString &path, const QString &expected) {
+    loadIndexed = [this, libraryWide, &loading, &loadIndexed](const QString &path, const QString &expected) {
         MibDependencyLoadAttempt attempt;
+        if (libraryWide && dependencyIndex.semanticallyVerified(expected)) {
+            attempt.success = true; attempt.loadedModuleNames = {expected}; return attempt;
+        }
         if (smiIsLoaded(expected.toLocal8Bit().constData())) {
             attempt.success = true; attempt.loadedModuleNames = {expected}; return attempt;
         }
@@ -352,7 +368,7 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
     };
     const MibDependencyCheckResult result = MibBoundedDependencyLoader().load(roots, dependencyIndex, loadIndexed);
     MibProfileDependencyCheck check;
-    check.profileSignature = MibDependencyIndex::profileSignature(explicitModules, includeStandardBase);
+    check.profileSignature = signature;
     check.indexGeneration = dependencyIndex.generation(); check.effectiveModules = result.loaded;
     check.dependencies = result.dependencies; check.checkedUtc = QDateTime::currentDateTimeUtc();
     check.elapsedMsecs = scan.elapsedMsecs + result.elapsedMsecs;
@@ -380,7 +396,9 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
     DiagnosticLogger::log("MIB", tr("Dependency check profile=%1 files-scanned=%2 reused=%3 deleted=%4 modules=%5 unresolved=%6 elapsed-ms=%7")
         .arg(profileId).arg(scan.scanned).arg(scan.reused).arg(scan.deleted)
         .arg(check.effectiveModules.size()).arg(check.unresolved.size()).arg(check.elapsedMsecs));
-    if (!result.loaded.isEmpty()) {
+    DiagnosticLogger::log("MIB", tr("Dependency check phases profile=%1 inspection-ms=%2 semantic-ms=%3 total-ms=%4 cache=updated")
+        .arg(profileId).arg(scan.elapsedMsecs).arg(semanticTimer.elapsed()).arg(totalTimer.elapsed()));
+    if (!libraryWide && !result.loaded.isEmpty()) {
         s->MibLoaderObj()->EnsureLoaded(result.loaded); RebuildLoadedList(); RebuildUnloadedList();
     }
     emit inventoryChanged();
@@ -454,7 +472,7 @@ QStringList MibModule::LoadPreferredModules(const QStringList &modules)
         loading.remove(identity); if (success && !loadedNow.contains(actualIdentity)) loadedNow.append(actualIdentity); return success;
     };
     for (const QString &module : modules) {
-        if (LoadedModuleNames().contains(module)) resolution.alreadyLoaded.append(module);
+        if (smiIsLoaded(module.toLocal8Bit().constData())) resolution.alreadyLoaded.append(module);
         else if (!loadIdentity(module)) resolution.unavailable.append(module);
         else resolution.toLoad.append(module);
     }
@@ -540,7 +558,9 @@ QString MibModule::LoadBestModule(QString oid)
         }
 
         // Load the module
-        Wanted.append(best_file.toLatin1().data());
+        const QStringList identities = MibDeclaredIdentitiesForCandidate(best_file, dependencyIndex);
+        for (const QString &identity : identities.isEmpty() ? QStringList{best_file} : identities)
+            if (!Wanted.contains(identity)) Wanted.append(identity);
         s->PreferencesObj()->Save();
         Refresh();
 
@@ -591,9 +611,11 @@ void MibModule::RebuildUnloadedList()
         QString current = Total[i][0];
 
         bool found = false;
+        const QStringList declarations = MibDeclaredIdentitiesForCandidate(current, dependencyIndex);
         for(int j = 0; j < Loaded.count(); j++)
         { 
-            if (QFileInfo(Loaded[j].path).fileName() == current)
+            if (QFileInfo(Loaded[j].path).fileName().compare(current, Qt::CaseInsensitive) == 0 ||
+                declarations.contains(Loaded[j].name))
             {
                 found = true;
                 break;
@@ -612,12 +634,32 @@ void MibModule::AddModule()
     QList<QTreeWidgetItem *> item_list = 
                              s->MainUI()->UnloadedModules->selectedItems();
 
-    for (int i = 0; i < item_list.size(); i++)
-        Wanted.append(item_list[i]->text(0).toLatin1().data());
+    QStringList candidates;
+    for (QTreeWidgetItem *item : item_list) candidates.append(item->text(0));
+    const MibRuntimeRequestNormalization additions =
+        MibNormalizeRuntimeRequests(candidates, dependencyIndex);
+    const QStringList previousWanted = Wanted;
+    const QStringList previousLoaded = LoadedModuleNames();
+    for (const QString &identity : additions.identities)
+        if (!Wanted.contains(identity)) Wanted.append(identity);
 
     if (!item_list.empty())
     {
-        s->PreferencesObj()->Save();
+        DiagnosticLogger::log("MIB", tr("runtime request add candidates=%1 identities=%2 explicit-total=%3")
+            .arg(candidates.size()).arg(additions.identities.size()).arg(Wanted.size()));
+        QString error;
+        if (ReconstructRuntime(Wanted, &error)) {
+            PersistWanted();
+            s->TabSelected();
+        } else {
+            Wanted = previousWanted;
+            QString rollbackError;
+            ReconstructRuntime(previousLoaded, &rollbackError);
+            RebuildLoadedList(); RebuildUnloadedList();
+            const QString message = tr("Unable to load the selected MIB module(s): %1").arg(error);
+            emit LogError(message);
+            QMessageBox::warning(s->MainUI()->ModulesTab, tr("MIB loading failed"), message);
+        }
     }
 }
 
@@ -626,12 +668,28 @@ void MibModule::RemoveModule()
     QList<QTreeWidgetItem *> item_list = 
                              s->MainUI()->LoadedModules->selectedItems();
 
-    for (int i = 0; i < item_list.size(); i++)
-        Wanted.removeAll(QFileInfo(item_list[i]->text(3)).fileName());
+    const QStringList previousWanted = Wanted;
+    const QStringList previousLoaded = LoadedModuleNames();
+    for (QTreeWidgetItem *item : item_list)
+        Wanted.removeAll(item->text(0));
 
     if (!item_list.empty())
     {
-        s->PreferencesObj()->Save();
+        DiagnosticLogger::log("MIB", tr("runtime request remove identities=%1 explicit-total=%2")
+            .arg(item_list.size()).arg(Wanted.size()));
+        QString error;
+        if (ReconstructRuntime(Wanted, &error)) {
+            PersistWanted();
+            s->TabSelected();
+        } else {
+            Wanted = previousWanted;
+            QString rollbackError;
+            ReconstructRuntime(previousLoaded, &rollbackError);
+            RebuildLoadedList(); RebuildUnloadedList();
+            const QString message = tr("Unable to remove the selected MIB module(s): %1").arg(error);
+            emit LogError(message);
+            QMessageBox::warning(s->MainUI()->ModulesTab, tr("MIB loading failed"), message);
+        }
     }
 }
 
@@ -659,10 +717,48 @@ void MibModule::ReadMibPreloads()
     Wanted.clear();
     QSettings settings;
     int size = settings.beginReadArray("mibpreloads");
+    QStringList persisted;
     for (int i = 0; i < size; ++i) {
         settings.setArrayIndex(i);
-        Wanted << settings.value("mib").toString();
+        persisted << settings.value("mib").toString();
     }
+    settings.endArray();
+    const MibRuntimeRequestNormalization normalized =
+        MibNormalizeRuntimeRequests(persisted, dependencyIndex);
+    Wanted = normalized.identities;
+    DiagnosticLogger::log("MIB", tr("runtime requests persisted=%1 identities=%2 legacy-filenames=%3 identity-inputs=%4 unresolved=%5 duplicates=%6")
+        .arg(normalized.inputCount).arg(Wanted.size()).arg(normalized.legacyFilenameCount)
+        .arg(normalized.identityCount).arg(normalized.unresolvedCount).arg(normalized.duplicateCount));
+}
+
+void MibModule::PersistWanted() const
+{
+    QSettings settings;
+    settings.beginWriteArray("mibpreloads");
+    for (int i = 0; i < Wanted.size(); ++i) {
+        settings.setArrayIndex(i);
+        settings.setValue("mib", Wanted[i]);
+    }
+    settings.endArray();
+}
+
+bool MibModule::ReconstructRuntime(const QStringList &requests, QString *error)
+{
+    RegenerateSmiConf();
+    InitLib(1);
+    Loaded.clear();
+    const QStringList unavailable = LoadPreferredModules(requests);
+    RebuildLoadedList();
+    RebuildUnloadedList();
+    QStringList missing;
+    for (const QString &identity : requests)
+        if (!smiIsLoaded(identity.toLocal8Bit().constData())) missing.append(identity);
+    missing.removeDuplicates();
+    if (!unavailable.isEmpty() || !missing.isEmpty()) {
+        if (error) *error = tr("%n requested module(s) did not load", nullptr, missing.size());
+        return false;
+    }
+    return true;
 }
 
 bool MibModule::ValidateModuleFile(const QString &path, QString *error,
@@ -704,13 +800,10 @@ void MibModule::Refresh()
 
     ReadMibPreloads();
 
-    RegenerateSmiConf();
-
-    InitLib(1);
-
-    LoadPreferredModules(Wanted);
-    RebuildLoadedList();
-    RebuildUnloadedList();
+    QString reconstructionError;
+    ReconstructRuntime(Wanted, &reconstructionError);
+    if (!reconstructionError.isEmpty())
+        emit LogError(tr("Runtime MIB reconstruction incomplete: %1").arg(reconstructionError));
     s->MainUI()->LoadedModules->resizeColumnToContents(0);
     s->MainUI()->UnloadedModules->resizeColumnToContents(0);
     s->MainUI()->LoadedModules->sortByColumn(0, Qt::AscendingOrder);

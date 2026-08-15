@@ -349,7 +349,7 @@
       </widget>
       <widget class="QWidget" name="ModulesTab">
        <attribute name="title">
-        <string>Modules</string>
+        <string>MIB Library</string>
        </attribute>
        <layout class="QGridLayout">
         <property name="leftMargin">
@@ -368,6 +368,44 @@
          <number>6</number>
         </property>
         <item row="0" column="0">
+         <layout class="QHBoxLayout" name="MibLibraryDependencyLayout">
+          <item>
+           <widget class="QLabel" name="MibLibraryDependencyState">
+            <property name="text">
+             <string>Dependencies need checking</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="MibLibraryDependencySummary">
+            <property name="text">
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="MibLibraryDependencySpacer">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="MibLibraryCheckDependencies">
+            <property name="text">
+             <string>Check Dependencies</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item row="1" column="0">
          <widget class="QSplitter" name="ModuleInfoSplitter">
           <property name="orientation">
            <enum>Qt::Vertical</enum>

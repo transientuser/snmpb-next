@@ -46,6 +46,15 @@ struct MibDependencyInspection {
     bool stale() const { return newOrChanged > 0 || deleted > 0; }
 };
 
+struct MibRuntimeRequestNormalization {
+    QStringList identities;
+    int inputCount = 0;
+    int legacyFilenameCount = 0;
+    int identityCount = 0;
+    int unresolvedCount = 0;
+    int duplicateCount = 0;
+};
+
 enum class MibDependencyIndexLoadStatus {
     NotLoaded, Loaded, Missing, EmptyFile, MalformedJson, UnsupportedSchema, ReadError
 };
@@ -79,6 +88,7 @@ public:
     MibDependencyInspection inspect(const QStringList &searchPaths) const;
     MibProviderResolution provider(const QString &moduleName) const;
     QStringList imports(const QString &moduleName) const;
+    bool semanticallyVerified(const QString &moduleName) const;
     QStringList moduleNames() const;
     QList<MibDependencyFileRecord> files() const { return records; }
     quint64 generation() const { return currentGeneration; }
@@ -137,5 +147,9 @@ public:
 };
 
 QString MibDependencyFailureText(MibDependencyFailureKind kind);
+QStringList MibDeclaredIdentitiesForCandidate(const QString &candidate,
+                                              const MibDependencyIndex &index);
+MibRuntimeRequestNormalization MibNormalizeRuntimeRequests(
+    const QStringList &requests, const MibDependencyIndex &index);
 
 #endif

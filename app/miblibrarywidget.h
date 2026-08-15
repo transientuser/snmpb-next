@@ -24,12 +24,20 @@ class MibLibraryWidget : public QWidget
 {
     Q_OBJECT
 public:
+    struct DependencySummary {
+        bool stale = true;
+        int knownModules = 0;
+        int relationships = 0;
+        int unresolved = 0;
+        int ambiguous = 0;
+        QDateTime lastCheckedUtc;
+    };
     struct Callbacks {
         std::function<bool(const QString &, QString *)> validate;
         std::function<void(const QStringList &, bool)> downloadsCompleted;
         std::function<MibModuleRecord(const QString &, const QString &)> metadata;
         std::function<QList<MibModuleRecord>()> localInventory;
-        std::function<MibProfileDependencyCheck(const QString &, const QStringList &, bool, QString *)> checkDependencies;
+        std::function<DependencySummary()> libraryDependencySummary;
         std::function<MibProfileDependencyCheck(const QString &, const QString &)> cachedDependencies;
     };
     explicit MibLibraryWidget(const QStringList &bundledPaths,
@@ -61,7 +69,6 @@ private slots:
     void addProfileMembers();
     void removeProfileMembers();
     void downloadProfileMissing();
-    void checkProfileDependencies();
 private:
     void loadCachedCatalog();
     QString catalogCachePath() const;
@@ -110,7 +117,6 @@ private:
     QPushButton *addMemberButton;
     QPushButton *removeMemberButton;
     QPushButton *downloadMissingButton;
-    QPushButton *checkDependenciesButton;
     QLabel *dependencyCheckSummary;
     QPushButton *downloadButton;
     QPushButton *installDependenciesButton;

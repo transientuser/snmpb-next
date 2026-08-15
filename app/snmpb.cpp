@@ -208,10 +208,31 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     mibLibraryCallbacks.localInventory = [this]() {
         return modules->AvailableModuleRecords();
     };
-    mibLibraryCallbacks.checkDependencies = [this](const QString &id, const QStringList &members,
-                                                    bool includeBase, QString *error) {
-        return modules->CheckProfileDependencies(id, members, includeBase, error);
+    const auto libraryDependencySummary = [this]() {
+        MibLibraryWidget::DependencySummary summary;
+        MibDependencyIndex *index = modules->DependencyIndex();
+        const QStringList moduleNames = index->moduleNames();
+        summary.stale = modules->DependencyIndexStale();
+        summary.knownModules = moduleNames.size();
+        QSet<QString> unresolved;
+        QSet<QString> ambiguous;
+        for (const QString &module : moduleNames) {
+            const QStringList imports = index->imports(module);
+            summary.relationships += imports.size();
+            for (const QString &dependency : imports) {
+                const MibProviderStatus providerStatus = index->provider(dependency).status;
+                if (providerStatus == MibProviderStatus::Missing) unresolved.insert(dependency);
+                else if (providerStatus == MibProviderStatus::Ambiguous) ambiguous.insert(dependency);
+            }
+        }
+        summary.unresolved = unresolved.size();
+        summary.ambiguous = ambiguous.size();
+        for (const MibDependencyFileRecord &record : index->files())
+            if (record.lastCheckedUtc > summary.lastCheckedUtc)
+                summary.lastCheckedUtc = record.lastCheckedUtc;
+        return summary;
     };
+    mibLibraryCallbacks.libraryDependencySummary = libraryDependencySummary;
     mibLibraryCallbacks.cachedDependencies = [this](const QString &id, const QString &signature) {
         return modules->CachedProfileDependencies(id, signature);
     };
@@ -219,8 +240,56 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     mibLibrary = new MibLibraryWidget(prefs->DefaultMibPaths(), w.TabW, nullptr,
                                       mibLibraryCallbacks);
     DiagnosticLogger::log("Startup", QStringLiteral("Inventory construction complete elapsed_ms=%1").arg(phaseTimer.elapsed()));
-    w.TabW->insertTab(3, mibLibrary, tr("MIB Library"));
+    const int mibProfilesTab = w.TabW->insertTab(3, mibLibrary, tr("MIB Profiles"));
+    w.TabW->setTabToolTip(mibProfilesTab,
+        tr("Choose which MIB modules are visible for a device family or task."));
+    w.TabW->setTabToolTip(w.TabW->indexOf(w.ModulesTab),
+        tr("Manage available and loaded MIB modules and validate library dependencies."));
+    const auto refreshLibraryDependencyStatus = [this, libraryDependencySummary]() {
+        const MibLibraryWidget::DependencySummary summary = libraryDependencySummary();
+        if (summary.stale) w.MibLibraryDependencyState->setText(tr("Dependencies need checking"));
+        else if (summary.unresolved > 0 || summary.ambiguous > 0)
+            w.MibLibraryDependencyState->setText(tr("Dependencies: Has unresolved dependencies"));
+        else w.MibLibraryDependencyState->setText(tr("Dependencies: Up to date"));
+        QString text = tr("%1 modules · %2 relationships · %3 unresolved · %4 ambiguous")
+            .arg(summary.knownModules).arg(summary.relationships)
+            .arg(summary.unresolved).arg(summary.ambiguous);
+        if (summary.lastCheckedUtc.isValid()) text += tr(" · Last checked: %1")
+            .arg(summary.lastCheckedUtc.toLocalTime().toString(Qt::ISODate));
+        w.MibLibraryDependencySummary->setText(text);
+    };
+    refreshLibraryDependencyStatus();
+    connect(w.MibLibraryCheckDependencies, &QPushButton::clicked, this,
+            [this, refreshLibraryDependencyStatus]() {
+        QElapsedTimer dependencyTimer;
+        dependencyTimer.start();
+        w.MibLibraryCheckDependencies->setEnabled(false);
+        w.MibLibraryDependencyState->setText(tr("Dependencies: Checking…"));
+        QString error;
+        const MibProfileDependencyCheck before = modules->CachedProfileDependencies(
+            QStringLiteral("mib-library"), MibDependencyIndex::profileSignature(
+                modules->DependencyIndex()->moduleNames(), false));
+        MibProfileDependencyCheck after;
+        if (error.isEmpty()) after = modules->CheckProfileDependencies(QStringLiteral("mib-library"),
+            modules->DependencyIndex()->moduleNames(), false, &error);
+        const bool semanticVerificationRan = before.checkedUtc != after.checkedUtc;
+        QElapsedTimer restoreTimer;
+        restoreTimer.start();
+        if (semanticVerificationRan) modules->Refresh();
+        const qint64 restoreMs = semanticVerificationRan ? restoreTimer.elapsed() : 0;
+        w.MibLibraryCheckDependencies->setEnabled(true);
+        if (!error.isEmpty()) {
+            w.MibLibraryDependencyState->setText(error);
+            return;
+        }
+        mibLibrary->refresh();
+        refreshLibraryDependencyStatus();
+        DiagnosticLogger::log("MIB", tr("Check Dependencies UI total-ms=%1 runtime-restore-ms=%2 semantic-ran=%3")
+            .arg(dependencyTimer.elapsed()).arg(restoreMs)
+            .arg(semanticVerificationRan ? QStringLiteral("yes") : QStringLiteral("no")));
+    });
     connect(modules, &MibModule::inventoryChanged, mibLibrary, &MibLibraryWidget::refresh);
+    connect(modules, &MibModule::inventoryChanged, this, refreshLibraryDependencyStatus);
     connect(mibLibrary, &MibLibraryWidget::openModuleRequested, mw,
             [this](const QString &path, bool readOnly) {
         if (readOnly) editor->MibFileOpenReadOnly(path); else editor->MibFileOpen(path);
