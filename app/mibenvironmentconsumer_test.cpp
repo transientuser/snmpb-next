@@ -1,0 +1,41 @@
+#include "graphlabelresolver.h"
+#include "mibenvironmentextractor.h"
+#include "mibenvironmentregistry.h"
+#include "mibnode.h"
+#include "mibmodelview.h"
+#include "mibtreemodel.h"
+#include "mibview.h"
+#include "tablenodevalidation.h"
+#include "tabletraversal.h"
+#include "trappresenter.h"
+#include "smi.h"
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
+
+namespace {int failures=0;void check(bool c,const char*m){if(!c){QTextStream(stderr)<<"FAIL: "<<m<<Qt::endl;++failures;}}
+MibEffectivePlan plan(){MibEffectivePlan p;p.sha256="phase3-consumer-test";for(SmiModule*m=smiGetFirstModule();m;m=smiGetNextModule(m)){MibEffectivePlanMember x;x.identity=QString::fromLatin1(m->name);x.provider.canonicalPath=QString::fromLocal8Bit(m->path);for(SmiImport*i=smiGetFirstImport(m);i;i=smiGetNextImport(i)){const QString n=QString::fromLatin1(i->module);if(!x.imports.contains(n))x.imports<<n;}p.members<<x;p.effectiveModules<<x.identity;}return p;}}
+int liveCount(SmiNode*n){if(!n)return 0;int total=1;for(SmiNode*c=smiGetFirstChildNode(n);c;c=smiGetNextChildNode(c))total+=liveCount(c);return total;}int snapshotCount(const MibTreeNodeRecord&n){int total=1;for(const auto&c:n.children)total+=snapshotCount(c);return total;}
+QModelIndex findOid(QAbstractItemModel*m,const QString&oid,const QModelIndex&p={}){for(int r=0;r<m->rowCount(p);++r){const QModelIndex i=m->index(r,0,p);if(i.data(MibTreeModel::OidRole).toString()==oid)return i;const QModelIndex n=findOid(m,oid,i);if(n.isValid())return n;}return {};}
+
+int main(int argc,char**argv){QApplication app(argc,argv);const bool large=app.arguments().contains("--large");const QString root=SNMPB_SOURCE_DIR;const QStringList paths={root+"/libsmi/mibs/ietf",root+"/libsmi/mibs/iana",root+"/libsmi/mibs/irtf",root+"/libsmi/mibs/site",root+"/libsmi/mibs/tubs"};const QByteArray path=paths.join(QDir::listSeparator()).toLocal8Bit();smiInit("phase3-consumers");smiSetFlags((smiGetFlags()|SMI_FLAG_ERRORS)&~SMI_FLAG_NODESCR);smiSetPath(path.constData());for(const char*m:{"SNMPv2-MIB","IF-MIB","ACCOUNTING-CONTROL-MIB"})check(smiLoadModule(m)!=nullptr,m);if(large)for(const QString&directory:paths)for(const QString&file:QDir(directory).entryList(QDir::Files,QDir::Name))smiLoadModule(QDir::toNativeSeparators(QDir(directory).filePath(file)).toLocal8Bit().constData());const int parserTreeCount=liveCount(smiGetNode(nullptr,"iso"));const MibEffectivePlan allPlan=plan();auto environment=MibEnvironmentExtractor().extract(allPlan);MibEffectivePlan partialPlan=allPlan;partialPlan.effectiveModules<<"NO-SUCH-MIB";auto partialEnvironment=MibEnvironmentExtractor().extract(partialPlan,{"NO-SUCH-MIB"});auto extremeEnvironment=std::make_shared<MibEnvironment>(*environment);auto extremeBEnvironment=std::make_shared<MibEnvironment>(*environment);MibEnvironmentRegistry::publish(environment);smiExit();
+QElapsedTimer timer;timer.start();QStringList modules;for(const auto&m:environment->modules())modules<<m.identity;MibViewLoader loader;loader.SetEnvironment(environment,modules);check(!loader.TreeSnapshot().children.isEmpty(),"Tree projects after smiExit");check(snapshotCount(loader.TreeSnapshot())==parserTreeCount+1,"Tree structure parity");const qint64 treeMs=timer.elapsed();
+MibModelView modelView;modelView.RegisterToLoader(&loader);QString details;QObject::connect(&modelView,&MibModelView::NodeProperties,[&details](const QString&value){details=value;});modelView.Populate();const QModelIndex selected=findOid(modelView.model(),"1.3.6.1.2.1.2.2.1.2");check(selected.isValid(),"transition fixture selection exists");modelView.setCurrentIndex(selected);modelView.expand(selected.parent());QPersistentModelIndex staleSelection(selected);const QString selectedOid=modelView.selectedOid();
+const QStringList extremeModules={"SNMPv2-MIB","IF-MIB"};const QStringList extremeBModules={"SNMPv2-MIB","ACCOUNTING-CONTROL-MIB"};
+loader.SetEnvironment(extremeEnvironment,extremeModules);modelView.setVisibleModules(extremeModules);modelView.Populate();check(!staleSelection.isValid()&&modelView.selectedOid()==selectedOid,"All MIBs to Extreme invalidates QModelIndex and restores numeric OID");
+QPersistentModelIndex extremeSelection(modelView.currentIndex());loader.SetEnvironment(environment,modules);modelView.showAllModules();modelView.Populate();check(!extremeSelection.isValid()&&modelView.selectedOid()==selectedOid,"Extreme to All MIBs resets safely by OID");
+for(int cycle=0;cycle<20;++cycle){QPersistentModelIndex before(modelView.currentIndex());loader.SetEnvironment(extremeEnvironment,extremeModules);modelView.setVisibleModules(extremeModules);modelView.Populate();check(!before.isValid(),"stress switch invalidates old index");before=modelView.currentIndex();loader.SetEnvironment(environment,modules);modelView.showAllModules();modelView.Populate();check(!before.isValid(),"stress return invalidates old index");}
+loader.SetEnvironment(extremeEnvironment,extremeModules);modelView.setVisibleModules(extremeModules);loader.SetEnvironment(extremeBEnvironment,extremeBModules);modelView.setVisibleModules(extremeBModules);loader.SetEnvironment(environment,modules);modelView.showAllModules();modelView.Populate();check(modelView.model()->rowCount()>0,"Extreme A to Extreme B to All MIBs");
+loader.SetEnvironment(partialEnvironment,modules);check(MibEnvironmentRegistry::publishMaterialization(partialEnvironment),"partial Environment publishes before All MIBs");loader.SetEnvironment(environment,modules);MibEnvironmentRegistry::publishMaterialization(environment);check(MibEnvironmentRegistry::active()==environment,"partial Environment to All MIBs");
+loader.SetEnvironment({},{});MibEnvironmentRegistry::publish({});modelView.Populate();check(!modelView.currentIndex().isValid()&&modelView.selectedOid().isEmpty()&&details.isEmpty()&&modelView.model()->rowCount()==0,"no Environment clears Tree selection and OID Info");loader.SetEnvironment(environment,modules);MibEnvironmentRegistry::publishMaterialization(environment);modelView.showAllModules();modelView.Populate();
+const auto*ifEntry=environment->nodeByQualifiedName("IF-MIB::ifEntry");const auto*ifTable=environment->nodeByQualifiedName("IF-MIB::ifTable");const MibEnvironmentNodeRecord*row=nullptr;check(ResolveTableRowNode(ifTable,ifEntry,&row)==TableNodeValidation::Valid&&row==ifEntry,"table planning after smiExit");Oid oid;check(RenderEnvironmentNodeOid(environment->nodeByQualifiedName("IF-MIB::ifDescr"),&oid),"column OID after smiExit");
+QTreeWidget widget;MibNode rootNode("MIB Tree",&widget);MibNode info(MibNode::MIBNODE_ROW,*ifEntry,environment,&rootNode);QString html;info.PrintProperties(html);check(html.contains("ifEntry")&&html.contains("ifIndex")&&html.contains("IF-MIB"),"OID Info after smiExit");
+const QString graphLabel=GraphLabelResolver::displayLabel("1.3.6.1.2.1.1.3.0");
+const auto *graphNode=environment->nodeByOid("1.3.6.1.2.1.1.3.0");
+check(large?(graphNode&&!graphNode->qualifiedName.isEmpty()&&graphLabel==graphNode->qualifiedName):graphLabel=="SNMPv2-MIB::sysUpTime",qPrintable(QStringLiteral("graph label after smiExit: %1").arg(graphLabel)));check(GraphLabelResolver::displayLabel("9.9.9")=="9.9.9","graph unknown fallback");
+TrapVarbind vb{"1.3.6.1.2.1.2.2.1.8.7",sNMP_SYNTAX_INT32,"1",true};check(TrapPresenter::symbolicOid(vb.oid)=="ifOperStatus.7"&&TrapPresenter::formattedValue(vb)=="up(1)","trap semantics after smiExit");
+MibEnvironmentRegistry::publish({});check(GraphLabelResolver::displayLabel("1.3.6.1")=="1.3.6.1"&&TrapPresenter::symbolicOid("1.3.6.1")=="1.3.6.1","null Environment numeric fallback");
+const QStringList guarded={"mibview.cpp","mibview.h","mibnode.cpp","mibnode.h","mibmodelview.cpp","graphlabelresolver.cpp","trappresenter.cpp","tablenodevalidation.cpp","tabletraversal.cpp"};for(const QString&name:guarded){QFile f(root+"/app/"+name);check(f.open(QIODevice::ReadOnly),"guard source readable");const QByteArray s=f.readAll();check(!s.contains("#include \"smi.h\"")&&!s.contains("smiGet")&&!s.contains("smiRender")&&!s.contains("SmiNode *")&&!s.contains("SmiType *")&&!s.contains("SmiModule *"),"migrated source has no direct libsmi");}
+if(!failures)QTextStream(stdout)<<"Phase3 "<<(large?"large ":"")<<"tree-projection-ms="<<treeMs<<" nodes="<<environment->nodes().size()<<Qt::endl;return failures?1:0;}

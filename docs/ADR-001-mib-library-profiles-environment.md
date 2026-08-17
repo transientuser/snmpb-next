@@ -1,0 +1,122 @@
+# ADR-001: MIB Library, Profiles, Effective Plans, and Environments
+
+Status: **Accepted with amendments (revision 3)**
+
+The governing data flow is:
+
+```text
+Library -> Profile -> MibEffectivePlan -> MibEnvironment -> consumers
+```
+
+The Library owns discovered providers and dependency facts. A Profile owns
+explicit applicability. `MibEffectivePlan` is the sole authority for intended
+effective identities, provider choices, provider-specific imports, and load
+order. `MibEnvironment` is the immutable, value-owned semantic result of
+materializing that exact Plan with patched libsmi. Consumers are projections of
+the Environment; libsmi is a serialized construction engine, not application
+state.
+
+## Implemented state
+
+Phase 1 is complete: Profile presentation and synchronous runtime construction
+consume the same `MibEffectivePlan`; legacy `Wanted`/`mibpreloads` do not
+participate in Plan resolution.
+
+Phase 2 is complete subject to its deterministic validation gates: the
+schema-versioned `MibEnvironment` owns module, type, node, hierarchy, table,
+notification, materialization-finding, index, and telemetry values. The
+synchronous extractor runs after Plan materialization and before publication as
+`shared_ptr<const MibEnvironment>`. Public Environment headers contain no
+libsmi or UI types, and lifetime tests query the Environment after `smiExit()`.
+
+Phase 3 is complete: Tree and OID Info projections, graph label resolution,
+trap presentation, and read-only table classification/planning consume the
+published immutable Environment. These paths have targeted source guards and
+post-`smiExit()` consumer tests. `MibTreeNodeRecord` remains only as a temporary
+Qt model projection built from Environment values; it is no longer independently
+extracted from libsmi. Numeric OID is the stable Tree selection identity.
+Before a Profile-backed Plan has materialized, legacy `Wanted`/`mibpreloads`
+startup publishes no Environment; migrated consumers remain empty or numeric
+and never fall back to live libsmi. A materialization with at least one
+successful planned module publishes an Environment with `Partial` status and
+failed-identity findings. A materialization with no successful planned module
+is fatal and cannot replace the previous published Environment.
+
+`All MIBs` is the built-in `builtin.all` Profile, not legacy preload state or
+a visibility-only mode. Its Plan deterministically contains every resolvable
+Library identity and follows the same materialization/publication path as
+Automatic and Custom Profiles. Extractor input from tolerant patched libsmi is
+validated at the ownership boundary: a malformed parser node whose declared
+OID length has no backing OID storage is recorded and omitted rather than
+dereferenced.
+
+`MibSelection` and Agent response/value rendering remain direct Phase-4 libsmi
+consumers. MibModule/MibService loading, diagnostics, and editor validation
+remain Phase-5 parser operations. The dedicated engine thread, asynchronous
+construction, memory LRU, persisted cache, provider-pin UI, and legacy preload
+migration are not implemented.
+
+## Environment schema overview
+
+- Identity: Plan SHA-256, schema/builder versions (currently schema 2 / builder
+  2), patched-libsmi identity,
+  status, planned/materialized/failed counts, and structured findings.
+- Modules: ASN.1 identity (never filename), language, planned and actual path,
+  provider hash, symbol-level imports, revisions/LAST-UPDATED, descriptive
+  clauses, root name/OID, and module findings. Multiple identities sharing a
+  path remain separate records.
+- Types: stable qualified IDs, exact base type, declaration, TC parent/ancestry,
+  display hint, units, descriptions, typed defaults, typed ranges/sizes, enums,
+  and BITS. Signed and unsigned 64-bit values remain distinct.
+- Nodes: numeric OID components/text, qualified and unqualified identity,
+  kind, parent/ordered children, access/status, syntax/type/TC facts,
+  constraints, named values, defaults, row-create semantics, parser-global
+  structural ancestors, and descriptive clauses.
+- Tables: table/row/column links, ordered columns and index objects, index type,
+  `IMPLIED`, `AUGMENTS`, and each index object's type/base type.
+- Notifications: ordered OBJECTS OIDs plus SMIv1 enterprise/generic/specific
+  facts when represented by a TRAP-TYPE.
+- Indexes: deterministic module, qualified-name, unqualified-name candidate,
+  numeric-OID alias, type, parent/child, and root lookup. Ambiguous aliases are
+  retained rather than silently discarded.
+
+The Environment does not rerun dependency closure, provider precedence, or
+profile membership. Provider hashes are retained in module records even though
+the Plan hash already covers them; this is intentional defense-in-depth for a
+future cache-key validator.
+
+## Current consumer inventory and migration sequence
+
+| Area | Live metadata read today | Environment representation | Future phase |
+|---|---|---|---|
+| MibViewLoader / BasicMibView / MibNode / MibTreeModel | module filter, OID hierarchy, kind, access/status, syntax, TC, range, enum, descriptions | nodes, types, parent/children, module index | 3 |
+| OID Info | qualified identity, OID, module, type/TC, constraints, named values, descriptions | node/type lookup | 3 |
+| GraphLabelResolver | longest live OID match, module/name label | numeric OID aliases and qualified names | 3 |
+| TrapPresenter/history | notification label/module, varbind object type/TC, enums/BITS/display hints, unknown numeric fallback | notification objects and node/type indexes; absent lookup preserves numeric fallback | 3 |
+| Table validation/traversal | TABLE/ROW/COLUMN kind, table-to-row, ordered columns | table/row/column links and ordered column OIDs | 3 |
+| MibSelection | retained node/type, writable access, exact SNMP base type, TC ancestry, display hint, ranges/sizes, enums/BITS | access plus complete node/type values | 4 |
+| Agent Get/GetNext/GetBulk/walk | numeric-to-symbolic lookup, suffix rendering, effective TC/base type, enum/BITS/value rendering | OID/name indexes and node/type values | 4 |
+| Agent Set/table query | writable syntax, signed/unsigned bounds, index order/types, IMPLIED/AUGMENTS, columns | typed constraints and complete table metadata | 4 |
+| MibModule / MibService loader | parser init/reset/path/load/enumeration | remains serialized construction operation | 5 |
+| MibDiagnosticCollector / MibEditor validation | parser callbacks, flags, validation load | remains engine operation | 5 |
+
+`MibSelection` currently retains `SmiNode*` and `SmiType*` for dialog lifetime;
+that is the highest-risk Phase 4 migration. No semantic gap was found in the
+Phase-2 schema: all base types handled by Agent/MibSelection, TC ancestry,
+display hints, access, typed 64-bit bounds, ranges/sizes, enum/BITS mappings,
+defaults, and object identity are retained. Actual formatting policy remains a
+Phase-4 consumer concern.
+
+Agent re-resolves nodes for Get, GetNext, GetBulk, walk, Set, table results,
+symbolic OIDs, and rendered values. The schema contains each semantic input,
+but byte-for-byte replacement of `smiRenderValue()` belongs to Phase 4 and will
+require parity tests for its formatting policy.
+
+Table selection remains unchanged in Phase 2. The Environment can reproduce
+TABLE and ROW query eligibility, row discovery, ordered columns, declared
+indexes, IMPLIED, AUGMENTS, and index type decoding. Column selections remain
+ordinary object operations.
+
+Trap presentation remains unchanged. Known notification/object metadata and
+ordered varbind definitions are retained; an unknown Environment OID naturally
+has no lookup result and can continue to render numerically.

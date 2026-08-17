@@ -38,11 +38,16 @@ set(SNMPB_APP_SOURCES
     mibhighlighter.cpp
     miblibrary.cpp
     mibdependencyindex.cpp
+    mibeffectiveplan.cpp
+    mibenvironment.cpp
+    mibenvironmentextractor.cpp
+    mibenvironmentregistry.cpp
     mibprofile.cpp
     mibdownloadtransport.cpp
     miblibrarywidget.cpp
     mibmodule.cpp
     mibcandidatefilter.cpp
+    mibcollection.cpp
     mibdiagnosticcollector.cpp
     mibdiagnosticmodel.cpp
     mibservice.cpp
@@ -123,11 +128,16 @@ set(SNMPB_APP_HEADERS
     mibhighlighter.h
     miblibrary.h
     mibdependencyindex.h
+    mibeffectiveplan.h
+    mibenvironment.h
+    mibenvironmentextractor.h
+    mibenvironmentregistry.h
     mibprofile.h
     mibdownloadtransport.h
     miblibrarywidget.h
     mibmodule.h
     mibcandidatefilter.h
+    mibcollection.h
     mibdiagnosticcollector.h
     mibdiagnosticmodel.h
     mibrecords.h
@@ -316,7 +326,7 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 if(BUILD_TESTING)
     add_executable(snmpb_mib_dependency_index_test
         mibcandidatefilter.cpp mibcandidatefilter.h
-        miblibrary.cpp miblibrary.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
         mibdependencyindex.cpp mibdependencyindex.h mibdependencyindex_test.cpp)
     target_link_libraries(snmpb_mib_dependency_index_test PRIVATE Qt6::Core)
     if(WIN32)
@@ -327,15 +337,30 @@ if(BUILD_TESTING)
         add_test(NAME snmpb.mib-dependency-index COMMAND $<TARGET_FILE:snmpb_mib_dependency_index_test>)
     endif()
 
+    add_executable(snmpb_mib_effective_plan_test
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
+        mibprofile.cpp mibprofile.h
+        mibdependencyindex.cpp mibdependencyindex.h
+        mibeffectiveplan.cpp mibeffectiveplan.h mibeffectiveplan_test.cpp)
+    target_link_libraries(snmpb_mib_effective_plan_test PRIVATE Qt6::Core)
+    if(WIN32)
+        add_test(NAME snmpb.mib-effective-plan COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_effective_plan_test>)
+    else()
+        add_test(NAME snmpb.mib-effective-plan COMMAND $<TARGET_FILE:snmpb_mib_effective_plan_test>)
+    endif()
+
     add_executable(snmpb_mib_dependency_acceptance
         mibcandidatefilter.cpp mibcandidatefilter.h
-        miblibrary.cpp miblibrary.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
         mibdependencyindex.cpp mibdependencyindex.h mibdependencyacceptance.cpp)
     target_link_libraries(snmpb_mib_dependency_acceptance PRIVATE Qt6::Core snmpb_libsmi)
 
     add_executable(snmpb_mib_startup_path_test
         mibcandidatefilter.cpp mibcandidatefilter.h
-        miblibrary.cpp miblibrary.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
         mibdependencyindex.cpp mibdependencyindex.h mibstartuppath_test.cpp)
     target_link_libraries(snmpb_mib_startup_path_test PRIVATE Qt6::Core)
     if(WIN32)
@@ -399,6 +424,8 @@ if(BUILD_TESTING)
         graphplotpresenter.cpp graphplotpresenter.h
         graphpollingstate.cpp graphpollingstate.h
         graphlabelresolver.cpp graphlabelresolver.h
+        mibenvironment.cpp mibenvironment.h mibenvironmentextractor.cpp mibenvironmentextractor.h
+        mibenvironmentregistry.cpp mibenvironmentregistry.h
         graphservice.cpp graphservice.h
         snmprequestconfig.cpp snmprequestconfig.h
         snmprequestconfigadapter.cpp snmprequestconfigadapter.h
@@ -449,10 +476,53 @@ if(BUILD_TESTING)
             $<TARGET_FILE:snmpb_mib_service_test>)
     endif()
 
+    add_executable(snmpb_mib_environment_test
+        mibenvironment.cpp mibenvironment.h
+        mibenvironmentextractor.cpp mibenvironmentextractor.h
+        mibenvironmentregistry.cpp mibenvironmentregistry.h
+        mibeffectiveplan.h mibdependencyindex.h mibprofile.h
+        mibenvironment_test.cpp)
+    target_compile_definitions(snmpb_mib_environment_test PRIVATE
+        SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(snmpb_mib_environment_test PRIVATE Qt6::Core snmpb_libsmi)
+    add_test(NAME snmpb.mib-environment COMMAND $<TARGET_FILE:snmpb_mib_environment_test>)
+    add_test(NAME snmpb.mib-environment-large
+        COMMAND $<TARGET_FILE:snmpb_mib_environment_test> --large)
+
+    add_executable(snmpb_mib_environment_consumer_test
+        mibenvironment.cpp mibenvironment.h mibenvironmentextractor.cpp mibenvironmentextractor.h
+        mibenvironmentregistry.cpp mibenvironmentregistry.h mibeffectiveplan.h
+        graphlabelresolver.cpp graphlabelresolver.h trappresenter.cpp trappresenter.h traprecord.h
+        mibnode.cpp mibnode.h mibview.cpp mibview.h mibtreemodel.cpp mibtreemodel.h
+        mibmodelview.cpp mibmodelview.h mibrecords.h tablenodevalidation.cpp tablenodevalidation.h
+        tabletraversal.cpp tabletraversal.h find.ui mibenvironmentconsumer_test.cpp)
+    set_target_properties(snmpb_mib_environment_consumer_test PROPERTIES AUTOMOC ON AUTOUIC ON)
+    target_compile_definitions(snmpb_mib_environment_consumer_test PRIVATE SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(snmpb_mib_environment_consumer_test PRIVATE Qt6::Core Qt6::Widgets snmpb_libsmi snmpb_snmp_pp snmpb_libtomcrypt)
+    if(WIN32)
+        add_test(NAME snmpb.mib-environment-consumers COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_environment_consumer_test>)
+        add_test(NAME snmpb.mib-environment-transitions COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_environment_consumer_test>)
+        add_test(NAME snmpb.mib-environment-consumers-large COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:snmpb_mib_environment_consumer_test> --large)
+    else()
+        add_test(NAME snmpb.mib-environment-consumers COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" $<TARGET_FILE:snmpb_mib_environment_consumer_test>)
+        add_test(NAME snmpb.mib-environment-transitions COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" $<TARGET_FILE:snmpb_mib_environment_consumer_test>)
+        add_test(NAME snmpb.mib-environment-consumers-large COMMAND ${CMAKE_COMMAND} -E env
+            "QT_QPA_PLATFORM=offscreen" $<TARGET_FILE:snmpb_mib_environment_consumer_test> --large)
+    endif()
+
     add_executable(snmpb_mib_library_test
         mibdownloadtransport.cpp mibdownloadtransport.h
         mibdiagnosticcollector.cpp mibdiagnosticcollector.h mibrecords.h
-        miblibrary.cpp miblibrary.h miblibrary_test.cpp)
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h miblibrary_test.cpp)
     set_target_properties(snmpb_mib_library_test PROPERTIES AUTOMOC ON)
     target_compile_definitions(snmpb_mib_library_test PRIVATE
         SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -468,8 +538,8 @@ if(BUILD_TESTING)
 
     add_executable(snmpb_mib_profile_test
         mibcandidatefilter.cpp mibcandidatefilter.h
-        miblibrary.cpp miblibrary.h mibprofile.cpp mibprofile.h
-        mibdependencyindex.cpp mibdependencyindex.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h mibprofile.cpp mibprofile.h
+        mibdependencyindex.cpp mibdependencyindex.h mibeffectiveplan.cpp mibeffectiveplan.h
         mibrecords.h mibtreemodel.cpp mibtreemodel.h mibprofile_test.cpp)
     set_target_properties(snmpb_mib_profile_test PROPERTIES AUTOMOC ON)
     target_link_libraries(snmpb_mib_profile_test PRIVATE Qt6::Core)
@@ -485,8 +555,8 @@ if(BUILD_TESTING)
         diagnosticlogger.cpp diagnosticlogger.h
         mibdownloadtransport.cpp mibdownloadtransport.h
         mibcandidatefilter.cpp mibcandidatefilter.h
-        miblibrary.cpp miblibrary.h mibprofile.cpp mibprofile.h
-        mibdependencyindex.cpp mibdependencyindex.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h mibprofile.cpp mibprofile.h
+        mibdependencyindex.cpp mibdependencyindex.h mibeffectiveplan.cpp mibeffectiveplan.h
         miblibrarywidget.cpp miblibrarywidget.h mibinventorywidget_test.cpp)
     set_target_properties(snmpb_mib_inventory_widget_test PROPERTIES AUTOMOC ON)
     target_compile_definitions(snmpb_mib_inventory_widget_test PRIVATE
@@ -508,6 +578,8 @@ if(BUILD_TESTING)
         trapdecoder.cpp trapdecoder.h
         traphistorystore.cpp traphistorystore.h traprecord.h
         trappresenter.cpp trappresenter.h
+        mibenvironment.cpp mibenvironment.h mibenvironmentextractor.cpp mibenvironmentextractor.h
+        mibenvironmentregistry.cpp mibenvironmentregistry.h
         trapservice.cpp trapservice.h
         trap_pipeline_test.cpp)
     set_target_properties(snmpb_trap_pipeline_test PROPERTIES AUTOMOC ON)
@@ -813,7 +885,7 @@ if(BUILD_TESTING)
         tablenodevalidation.h
         tablenodevalidation_test.cpp
     )
-    target_link_libraries(snmpb_table_node_validation_test PRIVATE snmpb_libsmi)
+    target_link_libraries(snmpb_table_node_validation_test PRIVATE Qt6::Core)
     add_test(NAME snmpb.table-node-validation
         COMMAND $<TARGET_FILE:snmpb_table_node_validation_test>)
 

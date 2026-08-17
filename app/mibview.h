@@ -30,8 +30,8 @@
 #include <qheaderview.h>
 #include "ui_find.h"
 #include "mibnode.h"
-#include "smi.h"
 #include "mibrecords.h"
+#include "mibenvironment.h"
 
 class MibTreeModel;
 
@@ -152,19 +152,21 @@ class MibViewLoader: public QObject
 public:
     MibViewLoader();
     void Load (QStringList &);
+    void SetEnvironment(MibEnvironmentPtr environment, const QStringList &modules);
     void EnsureLoaded(const QStringList &modules);
     const MibTreeNodeRecord &TreeSnapshot() const { return treeSnapshot; }
     MibTreeModel *TreeModel() const { return treeModel; }
-    MibNode *PopulateSubTree (SmiNode *smiNode, MibNode *parent, MibNode *sibling);    
+    void Populate(MibNode *root);
+    MibNode *PopulateSubTree(const MibEnvironmentNodeRecord &node, MibNode *parent, MibNode *sibling);
     void RegisterView(BasicMibView* view);
 
 signals:
     void LogError(const QString& text);
     
 private:
-    enum MibNode::MibType SmiKindToMibNodeType(int smikind);
-    int PruneSubTree(SmiNode *smiNode);
-    int IsPartOfLoadedModules(SmiNode *smiNode);
+    enum MibNode::MibType EnvironmentKindToMibNodeType(MibEnvironmentNodeKind kind);
+    int PruneSubTree(const MibEnvironmentNodeRecord &node);
+    int IsPartOfLoadedModules(const MibEnvironmentNodeRecord &node);
     
     QStringList loadedModuleNames;
     int ignoreconformance;
@@ -173,6 +175,7 @@ private:
     QList<BasicMibView*> views;
     MibTreeNodeRecord treeSnapshot;
     MibTreeModel *treeModel;
+    MibEnvironmentPtr environment;
 };
 
 #endif /* MIBVIEW_H */

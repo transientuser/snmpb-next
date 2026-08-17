@@ -1,7 +1,9 @@
 #include "miblibrary.h"
+#include "mibcollection.h"
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -9,6 +11,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSettings>
 #include <QSet>
 #include <QStandardPaths>
 #include <QTemporaryFile>
@@ -318,16 +321,22 @@ MibDependencyPlan MibDependencyResolver::resolve(const QStringList &roots,
     return plan;
 }
 
-MibLibraryService::MibLibraryService(QString value)
-    : root(value.isEmpty() ? defaultRoot() : QDir::cleanPath(value)) {}
+MibLibraryService::MibLibraryService(QString value, QString state)
+    : root(value.isEmpty() ? defaultRoot() : QDir::cleanPath(value)),
+      stateRoot(state.isEmpty() ? MibCollection::legacyManagedRoot() : QDir::cleanPath(state)) {}
 
 QString MibLibraryService::defaultRoot()
 {
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
-        .filePath(QStringLiteral("mibs"));
+    QSettings settings;
+    return MibCollection::configuredRoot(settings);
 }
-QString MibLibraryService::downloadedPath() const { return QDir(root).filePath("downloaded"); }
-QString MibLibraryService::metadataPath() const { return QDir(root).filePath("metadata"); }
+QString MibLibraryService::downloadedPath() const { return MibCollection(root).importedPath(); }
+QString MibLibraryService::standardsPath() const { return MibCollection(root).standardsPath(); }
+QString MibLibraryService::profilesPath() const { return root; }
+QString MibLibraryService::metadataPath() const
+{
+    return QDir(stateRoot).filePath("metadata");
+}
 
 bool MibLibraryService::safeFilename(const QString &name)
 {
@@ -342,8 +351,9 @@ QList<MibLibraryRecord> MibLibraryService::inventory(const QStringList &bundledP
     QMap<QString, MibLibraryRecord> records;
     auto scan = [&](const QStringList &paths, MibLibraryStatus status, const QString &source) {
         for (const QString &path : paths) {
-            QDir dir(path);
-            for (const QFileInfo &file : dir.entryInfoList(QDir::Files | QDir::Readable)) {
+            QDirIterator files(path, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
+            while (files.hasNext()) {
+                const QFileInfo file(files.next());
                 QFile input(file.absoluteFilePath()); if (!input.open(QIODevice::ReadOnly)) continue;
                 const auto parsed = MibImportScanner::scan(input.readAll());
                 for (const QString &name : parsed.moduleNames) {
@@ -356,8 +366,16 @@ QList<MibLibraryRecord> MibLibraryService::inventory(const QStringList &bundledP
             }
         }
     };
-    scan(bundledPaths, MibLibraryStatus::Bundled, QStringLiteral("Bundled"));
-    scan({downloadedPath()}, MibLibraryStatus::Installed, QStringLiteral("Downloaded"));
+    Q_UNUSED(bundledPaths)
+    scan({standardsPath()}, MibLibraryStatus::Bundled, QStringLiteral("Bundled"));
+    QStringList localPaths = MibCollection(root).runtimeSearchPaths();
+    const QString standardsPrefix = QDir::cleanPath(standardsPath()) + QDir::separator();
+    localPaths.erase(std::remove_if(localPaths.begin(), localPaths.end(),
+        [&standardsPrefix, this](const QString &path) {
+            const QString clean = QDir::cleanPath(path);
+            return clean == standardsPath() || clean.startsWith(standardsPrefix, Qt::CaseInsensitive);
+        }), localPaths.end());
+    scan(localPaths, MibLibraryStatus::Installed, QStringLiteral("Local library"));
     for (const MibModuleRecord &module : localModules) {
         if (module.name.isEmpty() || module.path.isEmpty() || records.contains(module.name)) continue;
         MibLibraryRecord record;

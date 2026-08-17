@@ -3,6 +3,8 @@
 #include "graphplotpresenter.h"
 #include "graphpollingstate.h"
 #include "graphlabelresolver.h"
+#include "mibenvironmentextractor.h"
+#include "mibenvironmentregistry.h"
 #include "graphdefinitioneditor.h"
 
 #include <QApplication>
@@ -199,6 +201,9 @@ static bool mibLabels()
     smiInit("snmpb-graph-test");
     const QByteArray path=QStringLiteral(SNMPB_SOURCE_DIR "/libsmi/mibs/ietf").toLocal8Bit();
     smiSetPath(path.constData()); smiLoadModule("SNMPv2-MIB");
+    MibEffectivePlan environmentPlan; environmentPlan.sha256="graph-test";
+    for(SmiModule*m=smiGetFirstModule();m;m=smiGetNextModule(m)){MibEffectivePlanMember x;x.identity=QString::fromLatin1(m->name);x.provider.canonicalPath=QString::fromLocal8Bit(m->path);environmentPlan.members<<x;environmentPlan.effectiveModules<<x.identity;}
+    MibEnvironmentRegistry::publish(MibEnvironmentExtractor().extract(environmentPlan));
     const QString symbolic=GraphLabelResolver::displayLabel("1.3.6.1.2.1.1.3");
     const QString fallback=GraphLabelResolver::displayLabel("1.3.6.1.4.1.999999.1");
     const bool ok=check(symbolic.contains("sysUpTime"),"symbolic MIB label")

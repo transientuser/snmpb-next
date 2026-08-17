@@ -26,6 +26,8 @@
 #include "mibrecords.h"
 #include "miblibrary.h"
 #include "mibdependencyindex.h"
+#include "mibeffectiveplan.h"
+#include "mibenvironment.h"
 
 #define SMI_PATH_SEPARATOR ';'
 
@@ -63,6 +65,9 @@ public:
     QList<MibModuleRecord> AvailableModuleRecords() const { return AvailableRecords; }
     QStringList LoadedModuleNames() const;
     QStringList LoadPreferredModules(const QStringList &modules);
+    bool ApplyProfileRuntime(const MibEffectivePlan &plan, QString *error = nullptr);
+    MibEffectivePlan BuildEffectivePlan(const MibProfileRecord &profile) const;
+    MibEnvironmentPtr CurrentEnvironment() const { return currentEnvironment; }
     bool ValidateModuleFile(const QString &path, QString *error = nullptr,
                             MibValidationLevel level = MibValidationLevel::ErrorsAndWarnings);
     MibModuleRecord ModuleMetadata(const QString &moduleName, const QString &localPath = {});
@@ -90,6 +95,8 @@ signals:
 
 private:
     bool ReconstructRuntime(const QStringList &requests, QString *error = nullptr);
+    bool ReconstructRuntime(const MibEffectivePlan &plan, QString *error = nullptr);
+    QStringList LoadEffectivePlan(const MibEffectivePlan &plan);
     void PersistWanted() const;
     void InitLib(int restart);
     void RebuildTotalList();
@@ -110,6 +117,9 @@ private:
     bool ErrorWhileLoading;
     MibDependencyIndex dependencyIndex;
     bool dependencyIndexStale = false;
+    MibEffectivePlan activeProfilePlan;
+    bool hasActiveProfilePlan = false;
+    MibEnvironmentPtr currentEnvironment;
 };
 
 #endif /* MIBMODULE_H */

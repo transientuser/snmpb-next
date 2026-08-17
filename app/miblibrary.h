@@ -163,11 +163,13 @@ public:
 class MibLibraryService
 {
 public:
-    explicit MibLibraryService(QString root = {});
+    explicit MibLibraryService(QString root = {}, QString stateRoot = {});
     static QString defaultRoot();
     QString rootPath() const { return root; }
     QString downloadedPath() const;
     QString metadataPath() const;
+    QString standardsPath() const;
+    QString profilesPath() const;
     QList<MibLibraryRecord> inventory(const QStringList &bundledPaths,
                                       const MibCatalog &catalog = {},
                                       const QList<MibModuleRecord> &localModules = {}) const;
@@ -178,6 +180,7 @@ public:
 private:
     static bool safeFilename(const QString &name);
     QString root;
+    QString stateRoot;
 };
 
 class MibValidationStaging

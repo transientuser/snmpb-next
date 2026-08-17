@@ -1,7 +1,7 @@
 #ifndef TABLENODEVALIDATION_H
 #define TABLENODEVALIDATION_H
 
-#include "smi.h"
+#include "mibenvironment.h"
 
 enum class TableNodeValidation
 {
@@ -11,10 +11,9 @@ enum class TableNodeValidation
     MissingRowNode
 };
 
-TableNodeValidation ResolveTableRowNode(SmiNode *node,
-                                        SmiNode *firstChild,
-                                        SmiNode **rowNode);
-bool IsValidTableColumnNode(const SmiNode *node);
-bool IsTableQueryCapableNodeKind(SmiNodekind kind);
+TableNodeValidation ResolveTableRowNode(const MibEnvironmentNodeRecord *node,
+    const MibEnvironmentNodeRecord *tableRow,const MibEnvironmentNodeRecord **rowNode);
+bool IsValidTableColumnNode(const MibEnvironmentNodeRecord *node);
+bool IsTableQueryCapableNodeKind(MibEnvironmentNodeKind kind);
 
 #endif

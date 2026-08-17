@@ -1,83 +1,376 @@
-# SnmpB Next Development Instructions
+# MIB Navigator Development Instructions
 
 ## Project Goal
 
-Modernize the existing open-source SnmpB application into a modern, free,
-cross-platform graphical SNMP/MIB browser while preserving the features that
-make SnmpB particularly useful for network engineers.
+Modernize the existing open-source SnmpB application into MIB Navigator:
 
-Primary goals include:
+- A modern, free, cross-platform graphical SNMP/MIB engineering tool.
+- Preserve SnmpB's unusually tolerant handling of real-world and imperfect
+  vendor MIBs.
+- Preserve SNMPv1, SNMPv2c, and SNMPv3 functionality.
+- Modernize the application using Qt 6 Widgets and CMake.
+- Maintain Windows, Linux, and macOS portability.
+- Provide strong MIB browsing, dependency handling, device management,
+  table operations, graphing, traps, and related SNMP engineering tools.
 
-- Preserve SnmpB's tolerant and useful MIB parsing/compiler behavior.
-- Modernize the application to Qt 6.
-- Replace the old build system with CMake.
-- Keep Windows, Linux, and macOS portability as an architectural goal.
-- Improve the user interface substantially.
-- Evolve the existing Agent Profile system into a much better device/address
-  management experience similar to mRemoteNG or MobaXterm.
-- Maintain SNMPv1, SNMPv2c, and SNMPv3 functionality.
+Do not trade away proven SnmpB compatibility merely for cleaner or newer code.
 
-## Current Development Environment
+---
 
-Primary current development platform:
+# PRIMARY ENGINEERING MODE
+
+You are not merely a code generator.
+
+Act as:
+
+1. Primary developer
+2. Code reviewer
+3. Automated QA engineer
+4. Architecture reviewer
+
+Your goal is to minimize the amount of manual debugging and validation required
+from the user.
+
+Do not stop merely because:
+
+- the code compiles
+- one focused test passes
+- the complete test suite passes
+
+A green test suite is necessary but not sufficient.
+
+Before handing work to the user, perform every reasonable deterministic,
+headless, programmatic, architectural, and consistency check available.
+
+---
+
+# Development Environment
+
+Primary development platform:
 
 - Windows x64
-- Qt 6.11.1
-- MSVC v143 / compiler 19.44
+- Qt 6 Widgets
+- MSVC v143
 - CMake
 - VS Code
-- GitHub repository
-- Working branch: `modernize/qt6-cmake`
+- GitHub
+- Branch: `modernize/qt6-cmake`
 
-Do not unnecessarily require newer compiler-specific behavior that harms
+Use the actual configured toolchain from the current CMake/build environment
+rather than relying on stale hard-coded compiler minor versions.
+
+Do not unnecessarily introduce compiler-specific behavior that harms
 cross-platform portability.
 
-## Build Architecture
+---
 
-The desired long-term dependency structure is approximately:
+# Git / Working Tree Rules
 
-```text
-SnmpB application
-    |
-    +-- Qt 6 UI
-    |
-    +-- SnmpB application/core layer
-    |
-    +-- patched libsmi
-    |
-    +-- SNMP++
-    |
-    +-- required crypto/platform dependencies
-```
+Do NOT automatically:
 
-Third-party libraries should become independent CMake targets rather than
-having all source files compiled directly into the application target.
+- commit
+- push
+- merge
+- tag
+- publish
+- reset
+- revert
+- stash
+- discard user changes
 
-## libsmi Rules
+unless explicitly instructed.
+
+Before substantial work:
+
+1. Inspect `git status`.
+2. Understand the current worktree.
+3. Determine whether uncommitted work belongs to the approved current
+   workstream.
+
+Approved uncommitted work MAY be continued.
+
+Do NOT require a clean worktree if the user has intentionally been validating
+an uncommitted milestone.
+
+Never silently remove or undo work merely to obtain a clean state.
+
+Keep commits focused around tested milestones, but the user performs commits
+unless explicitly instructed otherwise.
+
+---
+
+# Autonomous Development Loop
+
+For every feature, bug, or architectural change:
+
+1. Inspect the existing implementation first.
+2. Trace the real source call paths.
+3. Define expected user-visible behavior.
+4. Identify relevant persistence/state ownership.
+5. Implement the smallest coherent change.
+6. Build.
+7. Run focused tests.
+8. Investigate failures.
+9. Fix genuine defects.
+10. Rebuild.
+11. Rerun focused tests.
+12. Run related regressions.
+13. Review the complete diff.
+14. Look for architectural contradictions.
+15. Add regression tests for weaknesses discovered during review.
+16. Run the complete permitted deterministic suite.
+17. Perform release/install validation.
+18. Only then request manual UX validation.
+
+Repeat this loop until the implementation is internally consistent.
+
+Do not hand obvious debugging work back to the user.
+
+---
+
+# Validate USER WORKFLOWS, Not Just Helper Functions
+
+Every feature must have one or more explicit end-to-end workflows.
+
+Example:
+
+    User places product MIBs in the configured MIB collection
+        ↓
+    Application discovers them
+        ↓
+    Appropriate Automatic profile appears
+        ↓
+    User selects the profile
+        ↓
+    Appropriate MIB environment/tree is available
+        ↓
+    User browses or queries MIB objects
+
+Tests should exercise as much of the complete workflow as practical.
+
+Do not rely only on isolated unit tests for functionality spanning multiple
+components.
+
+---
+
+# Realistic Test Data
+
+Do not test only tiny ideal fixtures.
+
+MIB-related tests should include representative difficult cases where relevant:
+
+- hundreds of MIBs
+- filename != declared module identity
+- multiple identities in one physical file
+- recursive imports
+- circular imports
+- shared dependencies
+- missing dependencies
+- identical duplicate providers
+- different-content duplicate providers
+- malformed vendor MIBs
+- loaded and unloaded modules
+- stale persisted settings
+- repeated refresh
+- restart/persistence
+- migration from older layouts
+- empty profiles/folders
+- large Automatic profiles
+- profile switching
+
+Prefer deterministic synthetic fixtures unless explicitly authorized to use
+real external data.
+
+---
+
+# Architectural Consistency Review
+
+After every meaningful feature, explicitly ask:
+
+    Are two different subsystems maintaining conflicting truths?
+
+For MIB functionality, compare at minimum:
+
+- physical MIB collection
+- provider/dependency index
+- MIB Library
+- Automatic Profiles
+- Custom Profiles
+- active Tree profile
+- libsmi state
+- persisted settings
+- legacy Module Preferences / Wanted state if still involved
+
+Do not accept a design where the UI shows a modern abstraction while old SnmpB
+state silently remains authoritative underneath it.
+
+If legacy architecture conflicts with the new architecture:
+
+1. trace it
+2. explain why it remains involved
+3. determine whether it is still necessary
+4. consolidate or retire it where appropriate
+
+Do not create another workaround layer without identifying the ownership issue.
+
+---
+
+# Current MIB Architecture Direction
+
+The intended conceptual responsibilities are:
+
+## MIB Library
+
+The MIB Library owns global MIB knowledge:
+
+- discovered modules/files
+- providers
+- filenames and paths
+- module identity
+- provenance/origin
+- validation state
+- dependency relationships
+- unresolved dependencies
+- duplicate/conflicting providers
+- module/file metadata
+- dependency checking
+- library refresh
+
+Dependencies are a LIBRARY concern.
+
+Do not make dependency management primarily a Profile concern.
+
+## MIB Profiles
+
+Profiles define MIB applicability/selection.
+
+Two user-facing profile types are intended:
+
+### Automatic Profiles
+
+Generated from product-line MIB folders.
+
+They answer:
+
+    Which MIBs apply to this product line?
+
+Their explicit membership is derived from physical folder contents and declared
+MIB identities.
+
+They are not manually editable member-by-member.
+
+### Custom Profiles
+
+Created and edited by the user.
+
+They answer:
+
+    Which MIBs do I want for this particular purpose?
+
+Examples:
+
+- lab
+- customer
+- troubleshooting subset
+- migration combination
+
+Custom profile membership is manually editable.
+
+## Tree
+
+The Tree presents the currently selected MIB environment.
+
+Do not assume that merely filtering a pre-existing unrelated libsmi loaded set
+is sufficient.
+
+When modifying profile/tree interaction, explicitly determine which subsystem
+is authoritative for the actual MIB environment.
+
+---
+
+# User-Visible MIB Collection Direction
+
+Actual MIB source files should live in a user-visible configurable location,
+not only in the application install directory or hidden AppData storage.
+
+Default concept:
+
+    Documents/MIB Navigator/MIBs/
+
+Expected organization:
+
+    MIBs/
+        Standards/
+        Unassigned/
+        <Vendor>/
+            <Product>/
+
+Examples:
+
+    MIBs/
+        Standards/
+            IETF/
+            IANA/
+            IEEE/
+
+        Extreme Networks/
+            Fabric Engine/
+            Switch Engine/
+            ERS/
+
+        Aruba/
+            AOS-CX/
+
+Reserved first-level trees:
+
+    Standards
+    Unassigned
+
+These participate in the global MIB Library but do not automatically create
+product profiles.
+
+Vendor/Product directories may create Automatic Profiles.
+
+Do not hard-code vendor names.
+
+Internal generated data such as indexes, hashes, caches, settings, and other
+bookkeeping belongs in ApplicationLocalData/AppData.
+
+---
+
+# libsmi Rules
 
 The repository contains a patched version of libsmi.
 
-This code is especially important because SnmpB handles real-world and
-occasionally imperfect vendor MIBs better than many competing MIB browsers.
+This is critical because MIB Navigator must continue handling real-world and
+occasionally imperfect vendor MIBs.
 
-Do NOT:
+Do NOT casually:
 
-- Replace libsmi casually.
-- Upgrade libsmi casually.
-- Regenerate parser/scanner sources without a specific reason.
-- "Clean up" parser behavior merely because something looks old.
-- Change MIB diagnostics without regression testing.
+- replace libsmi
+- upgrade libsmi
+- regenerate parser/scanner sources
+- rewrite parser behavior
+- tighten parsing simply for standards purity
+- change diagnostics behavior without regression testing
 
-Preserving existing MIB behavior is more important than stylistic
-modernization.
+Preserving useful compatibility is more important than stylistic cleanup.
 
-The current CMake build successfully builds:
+Long-lived raw libsmi pointers are dangerous across parser resets.
 
-```text
-snmpb_libsmi
-```
+Prefer stable value objects such as:
 
-The current regression suite validates:
+- module identity
+- OID
+- copied metadata
+
+over storing parser-owned pointers across resets/reconstruction.
+
+---
+
+# libsmi Golden Tests
+
+The historical golden diagnostics currently cover:
 
 - SNMPv2-MIB
 - IF-MIB
@@ -85,163 +378,330 @@ The current regression suite validates:
 - RMON2-MIB
 - BRIDGE-MIB
 
-Current expected result:
+Run all five after changes affecting MIB parsing, loading, indexing, profiles,
+tree construction, or related MIB behavior.
 
-```text
-100% tests passed, 0 tests failed out of 5
-```
+Expected:
 
-Run the complete regression suite after changes that could affect libsmi or
-MIB handling.
+    5/5 passed
 
-If `ctest` is not on `PATH`, locate the CTest executable from the CMake
-installation recorded by the current build configuration rather than treating
-that as a project failure.
+Do not regenerate expected results merely because implementation output changed.
 
-## MIB Compiler / Browser Direction
+Investigate why it changed first.
 
-MIB handling is a core differentiating feature of SnmpB Next.
+---
 
-Future UI improvements should eventually make MIB problems easier to
-understand, including:
+# Qt Model / Lifetime Safety
 
-- Dependency visualization
-- Missing dependency identification
-- Useful error/warning severity presentation
-- Source line navigation
-- Search
-- Module load status
-- Easy access to compiler diagnostics
+This application has previously encountered stale model/index problems.
 
-Do not sacrifice parser tolerance simply to use a newer parser library.
+When modifying Qt models, views, profile switching, tree rebuilds, or refreshes,
+explicitly inspect for:
 
-## Agent / Device Management
+- stale `QModelIndex`
+- stored indexes surviving model reset
+- stale pointers to model-owned nodes
+- invalid selection restoration
+- dangling QObject ownership
+- callbacks arriving after model destruction
+- asynchronous completion targeting stale UI state
 
-SnmpB ALREADY contains an Agent Profile system:
+Do not preserve a `QModelIndex` across a model reset unless its lifetime is
+provably safe.
 
-- `AgentProfile`
-- `AgentProfileManager`
-- `agents.conf`
+Prefer stable identifiers and reacquire indexes after rebuilding models.
 
-Do not create a second competing "address book" subsystem.
+---
 
-The goal is to evolve the existing Agent Profile functionality.
+# Persistence / Migration Safety
 
-Desired future capabilities include:
+For persisted settings or user files:
 
-- Hierarchical folders/groups
-- Persistent device tree
-- Reusable credential profiles
-- Inherited SNMP settings where appropriate
-- Tags
-- Notes
-- Optional MIB profiles
-- Search/filter
-- Import/export
-- Easier device selection
+Never silently:
+
+- delete user data
+- overwrite different-content user files
+- discard old settings
+- rewrite user files unnecessarily
+- migrate destructively
+
+Migration should be:
+
+- explicit in behavior
+- safe
+- idempotent
+- testable
+- rollback/failure aware
+
+A partially failed migration must not leave the application pointing at an
+invalid state.
+
+Historical settings may still use older SnmpB organization/application names.
+Do not casually rename persistence roots as part of unrelated work.
+
+---
+
+# SNMP / Network Safety
+
+Do not perform SNMP operations against real devices unless explicitly
+authorized for that specific acceptance test.
+
+Use:
+
+- scripted transport
+- deterministic transport
+- synthetic responses
+
+for automated tests.
+
+Do not scan networks or probe real devices merely to validate a build.
+
+---
+
+# GUI Launch Rule
+
+Do NOT launch the GUI unless explicitly instructed.
+
+The user performs normal manual GUI validation.
+
+Headless/unit/integration testing is preferred.
+
+If a GUI smoke test is excluded because launching the GUI is prohibited,
+report that clearly.
+
+---
+
+# UI / UX Review
+
+A technically correct implementation can still be incomplete if the UI is
+confusing.
+
+Before manual validation, review:
+
+- terminology
+- disabled controls
+- duplicated screens
+- hidden functionality
+- unclear state
+- stale legacy concepts
+- whether the workflow matches the user model
+
+Ask:
+
+- Would a network engineer understand what to do without reading source code?
+- Is a read-only view being represented as a disabled editor?
+- Are two screens exposing the same information?
+- Are internal implementation concepts leaking into normal UI?
+- Does the UI clearly show what changed after an import/refresh/profile action?
+
+Do not preserve obsolete UI simply because it existed in SnmpB.
+
+---
+
+# Legacy SnmpB Preservation Rule
+
+Preserve legacy BEHAVIOR where it contributes compatibility or useful SNMP/MIB
+functionality.
+
+Do not automatically preserve legacy UI architecture.
+
+Examples requiring explicit review when touched:
+
+- Module Preferences
+- Available/Loaded MIB arrows
+- old preload settings
+- long-lived parser state assumptions
+- widget-owned application data
+
+If a legacy mechanism conflicts with MIB Navigator's newer architecture, trace
+and resolve the conflict rather than silently layering another system on top.
+
+---
+
+# Agent / Device Management
+
+SnmpB already contained Agent Profile functionality.
+
+MIB Navigator has evolved this toward a Connections/device-management model.
+
+Do not create competing parallel address-book/device subsystems.
+
+Continue evolving the existing Connections architecture.
 
 Preserve compatibility with existing Agent Profile data where practical.
 
-Before major UI redesign, decouple Agent Profile data from direct Qt widget
-ownership so the underlying data model can evolve independently.
+---
 
-## UI Modernization Strategy
+# UI Technology
 
-Do NOT rewrite the application directly into QML at this stage.
+Do not rewrite the application into QML at this stage.
 
-The existing application is heavily coupled to Qt Widgets.
+Qt Widgets remains the preferred UI architecture.
 
-Preferred sequence:
+Separate application/core logic from widget ownership where practical.
 
-1. Build existing components cleanly with CMake.
-2. Port existing application behavior to Qt 6 Widgets.
-3. Separate application/core logic from UI ownership.
-4. Modernize the interface.
-5. Reevaluate whether QML provides enough benefit to justify further
-   migration.
+Use QML only after a deliberate future architectural decision.
 
-Qt Widgets is acceptable for the modernized application.
+---
 
-## Modernization Philosophy
+# Third-Party Dependency Architecture
 
-Modernize incrementally.
+Third-party components should remain independent CMake targets where practical.
 
-Prefer:
+Conceptually:
 
-- Small changes
-- Independently buildable components
-- Regression tests
-- Behavior-preserving refactors
-- Clear CMake targets
-- Frequent working checkpoints
+    MIB Navigator
+        |
+        +-- Qt 6
+        +-- application/core
+        +-- patched libsmi
+        +-- SNMP++
+        +-- crypto/platform dependencies
+        +-- optional visualization dependencies
 
-Avoid simultaneously changing:
+Do not casually fold third-party implementation source directly back into the
+application target.
 
-- Compiler
-- Parser behavior
-- SNMP library behavior
-- UI architecture
-- Persistence format
+---
 
-when those changes can be separated.
+# Build / Test Rules
 
-## Testing Rules
+After meaningful backend work:
 
-After meaningful backend changes:
+1. Build affected targets.
+2. Run focused tests.
+3. Run related regressions.
+4. Run complete permitted deterministic suite.
+5. Run five libsmi goldens when MIB-related.
+6. Run `git diff --check`.
+7. Perform Release build.
+8. Verify install tree.
+9. Run `windeployqt` for the final Windows manual-validation install tree when
+   required.
 
-1. Build the affected target.
-2. Run relevant tests.
-3. Run the complete existing CTest suite when practical.
-4. Report warnings separately from failures.
+Do not silently suppress compiler warnings.
 
-Do not silently suppress compiler warnings merely to make builds look clean.
+Record warnings separately from failures.
 
-Warnings involving 32-bit/64-bit assumptions should be recorded for later
-review even when they do not currently break the build.
+Warnings involving pointer size, ownership, DLL linkage, or 32/64-bit
+assumptions should remain visible for future review.
 
-## Git Rules
+---
 
-Current working branch:
+# Test Failure Policy
 
-```text
-modernize/qt6-cmake
-```
+When a test fails:
 
-Do not commit automatically unless explicitly instructed.
+1. Investigate it.
+2. Classify it:
+   - genuine product defect
+   - test defect
+   - timing flake
+   - environment/tool limitation
+3. Fix genuine defects.
+4. Rerun focused test.
+5. Rerun related regressions.
+6. Rerun complete permitted deterministic suite.
 
-Do not push automatically unless explicitly instructed.
+Do not report a failure to the user when you can reasonably diagnose and fix it
+yourself.
 
-Do not merge into `main` automatically.
+A timing failure should not be labeled a flake without repeated evidence.
 
-Keep commits focused around tested milestones.
+---
 
-Before beginning a substantial change, verify the working tree is clean.
+# Adversarial Self-Review
 
-## Source Preservation
+Before requesting manual validation, review the implementation as if trying to
+break it.
 
-Do not delete old qmake/project files merely because CMake replacements exist.
+Inspect:
 
-They remain useful references while the migration is underway.
+- complete git diff
+- error paths
+- rollback paths
+- null/empty states
+- stale settings
+- restart behavior
+- refresh behavior
+- migration behavior
+- model resets
+- async lifetime
+- parser resets
+- duplicate sources of truth
+- unexpected legacy dependencies
+- performance regressions
+- large-data behavior
 
-Avoid large-scale formatting changes to legacy source files because they make
-behavioral changes harder to review.
+Add regression tests when the review exposes a plausible failure mode.
 
-## Current State
+---
 
-Completed:
+# Manual Validation
 
-- Git/GitHub development setup
-- Qt 6.11.1 environment verification
-- MSVC v143 environment verification
-- CMake baseline
-- Qt compile/link/runtime smoke test
-- Patched libsmi standalone CMake target
-- Modernization of obsolete MSVC compatibility macros in libsmi
-- Standalone smilint target
-- Automated historical MIB parser regression suite
-- 5/5 regression tests currently passing
+Manual testing should be the final step, not the first debugging step.
 
-Next planned technical milestone:
+Only ask the user to test behavior that cannot reasonably be validated
+programmatically.
 
-Create SNMP++ as an independent CMake target while preserving existing SnmpB
-behavior and keeping its platform/crypto dependencies explicit.
+Manual instructions must be short and non-technical.
+
+Good:
+
+    1. Start this executable.
+    2. Select Extreme Networks Fabric Engine.
+    3. Confirm the expected tree appears.
+    4. Tell me what happened.
+
+Bad:
+
+    Validate provider precedence, dependency closure, QModelIndex lifetime,
+    runtime intent, and parser state.
+
+The user should validate USER EXPERIENCE, not internal implementation.
+
+---
+
+# Release / Manual-Validation Build
+
+For every substantial milestone, create one stable manual-validation build.
+
+Always report:
+
+- exact build directory
+- exact full executable path
+- whether `windeployqt` ran successfully
+
+A fresh Windows deployment tree must contain the required Qt runtime and
+platform plugin before asking the user to launch it.
+
+Do not assume a previously deployed directory is still valid.
+
+---
+
+# Final Report Format
+
+Do not provide a long development diary.
+
+Report:
+
+1. User-facing behavior now implemented.
+2. Important architecture discovered or changed.
+3. Bugs discovered during autonomous validation.
+4. Bugs fixed.
+5. Remaining known limitations.
+6. Focused test results.
+7. Complete deterministic suite result.
+8. Five libsmi golden result when applicable.
+9. `git diff --check` result.
+10. Release build/install result.
+11. Any warnings, flakes, timeouts, or environmental limitations.
+12. Whether the implementation is ready for manual validation.
+13. The minimum manual validation still required.
+14. Exact latest successful build directory.
+15. Exact full executable path.
+16. Whether `windeployqt` completed successfully.
+
+If something appears architecturally wrong even though all tests pass, say so.
+
+Do not declare a feature complete merely because the test suite is green.

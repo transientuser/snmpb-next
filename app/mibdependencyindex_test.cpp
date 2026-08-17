@@ -141,7 +141,13 @@ int main(int argc, char **argv)
     ok &= check(circular.passes == 1 && circular.failures.size() == 2, "circular imports cannot retry forever");
 
     writeFile(QDir(first).filePath("duplicate.mib"), mib("ROOT-MIB")); index.update({first, second});
-    ok &= check(index.provider("ROOT-MIB").status == MibProviderStatus::Ambiguous, "same-precedence providers are ambiguous");
+    ok &= check(index.provider("ROOT-MIB").status == MibProviderStatus::Found,
+                "same-precedence identical providers collapse deterministically");
+    writeFile(QDir(first).filePath("different.mib"), mib("ROOT-MIB") + "-- different\n");
+    index.update({first, second});
+    ok &= check(index.provider("ROOT-MIB").status == MibProviderStatus::Ambiguous,
+                "same-precedence different-content providers remain ambiguous");
+    QFile::remove(QDir(first).filePath("different.mib"));
     QFile::remove(QDir(first).filePath("duplicate.mib")); writeFile(QDir(second).filePath("preferred-later.mib"), mib("ROOT-MIB")); index.update({first, second});
     ok &= check(index.provider("ROOT-MIB").status == MibProviderStatus::Found && index.provider("ROOT-MIB").path.endsWith("odd-provider.mib"),
                 "earlier configured search path wins");
@@ -162,6 +168,36 @@ int main(int argc, char **argv)
     QFile changedFile(QDir(first).filePath("b.mib")); changedFile.setFileTime(QDateTime::currentDateTime().addSecs(2), QFileDevice::FileModificationTime);
     const auto changed = reloaded.update({first, second});
     ok &= check(changed.scanned >= 1 && reloaded.imports("B-MIB").contains("NEW-DEP"), "changed file invalidates cached hash/edges");
+
+    QTemporaryDir productFixture;
+    const QString standardsTree = QDir(productFixture.path()).filePath("Standards/IETF");
+    const QString unassignedTree = QDir(productFixture.path()).filePath("Unassigned/Misc");
+    const QString vossTree = QDir(productFixture.path()).filePath("Extreme/VOSS");
+    const QString exosTree = QDir(productFixture.path()).filePath("Extreme/EXOS");
+    for (const QString &directory : {standardsTree, unassignedTree, vossTree, exosTree})
+        QDir().mkpath(directory);
+    writeFile(QDir(standardsTree).filePath("base.mib"), mib("BASE-SMI"));
+    writeFile(QDir(unassignedTree).filePath("misc.mib"), mib("MISC-COMMON"));
+    const QByteArray equivalent = mib("EXTREME-BASE-MIB", {"BASE-SMI"});
+    writeFile(QDir(vossTree).filePath("base.mib"), equivalent);
+    writeFile(QDir(exosTree).filePath("base-copy.mib"), equivalent);
+    MibDependencyIndex productIndex(QDir(productFixture.path()).filePath("index.json"));
+    productIndex.update({standardsTree, unassignedTree, vossTree, exosTree});
+    ok &= check(productIndex.provider("BASE-SMI").status == MibProviderStatus::Found &&
+                productIndex.provider("MISC-COMMON").status == MibProviderStatus::Found &&
+                productIndex.provider("EXTREME-BASE-MIB").status == MibProviderStatus::Found,
+                "standards unassigned and product candidates share the global index");
+    const QString equivalentProvider = productIndex.provider("EXTREME-BASE-MIB").path;
+    productIndex.update({standardsTree, unassignedTree, exosTree, vossTree});
+    ok &= check(productIndex.provider("EXTREME-BASE-MIB").status == MibProviderStatus::Found &&
+                productIndex.provider("EXTREME-BASE-MIB").path == equivalentProvider,
+                "equivalent product provider is independent of product path ordering");
+    writeFile(QDir(exosTree).filePath("base-copy.mib"), equivalent + "-- EXOS variant\n");
+    QFile variant(QDir(exosTree).filePath("base-copy.mib"));
+    variant.setFileTime(QDateTime::currentDateTime().addSecs(2), QFileDevice::FileModificationTime);
+    productIndex.update({standardsTree, unassignedTree, vossTree, exosTree});
+    ok &= check(productIndex.provider("EXTREME-BASE-MIB").status == MibProviderStatus::Ambiguous,
+                "different-content product copies expose one global ambiguity");
 
     const QString signature = MibDependencyIndex::profileSignature({"A-MIB"}, true);
     MibProfileDependencyCheck profile; profile.profileSignature = signature; profile.indexGeneration = reloaded.generation(); profile.checkedUtc = QDateTime::currentDateTimeUtc();

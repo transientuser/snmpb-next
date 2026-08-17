@@ -1,6 +1,8 @@
 #include "trapdecoder.h"
 #include "traphistorystore.h"
 #include "trappresenter.h"
+#include "mibenvironmentextractor.h"
+#include "mibenvironmentregistry.h"
 #include "trapservice.h"
 #include "smi.h"
 
@@ -14,6 +16,7 @@ void check(bool condition, const char *message)
 {
     if (!condition) { QTextStream(stderr) << "FAIL: " << message << Qt::endl; ++failures; }
 }
+void publishEnvironment(){MibEffectivePlan p;p.sha256="trap-test";for(SmiModule*m=smiGetFirstModule();m;m=smiGetNextModule(m)){MibEffectivePlanMember x;x.identity=QString::fromLatin1(m->name);x.provider.canonicalPath=QString::fromLocal8Bit(m->path);p.members<<x;p.effectiveModules<<x.identity;}MibEnvironmentRegistry::publish(MibEnvironmentExtractor().extract(p));}
 
 Pdu notification(unsigned short type, const char *oid, const char *value = "one")
 {
@@ -126,6 +129,7 @@ int main(int argc, char **argv)
     smiSetPath(mibPath.constData());
     check(smiLoadModule("SNMPv2-MIB") != nullptr, "bundled symbolic MIB loads");
     check(smiLoadModule("IF-MIB") != nullptr, "bundled formatting MIB loads");
+    publishEnvironment();
     check(TrapPresenter::symbolicOid("1.3.6.1.6.3.1.1.5.1") == "coldStart",
           "loaded MIB enriches numeric notification OID");
 
@@ -177,6 +181,7 @@ int main(int argc, char **argv)
           "NULL fallback retained");
     check(smiLoadModule("ACCOUNTING-CONTROL-MIB") != nullptr,
           "bundled BITS fixture MIB loads");
+    publishEnvironment();
     const QString bits = formatted("acctngSelectionType", sNMP_SYNTAX_OCTETS,
                                    "  C0                                           .\n");
     check(bits.contains("svcIncoming") && bits.contains("svcOutgoing"),

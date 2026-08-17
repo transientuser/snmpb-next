@@ -66,6 +66,17 @@ struct MibProviderResolution {
     QStringList alternatives;
 };
 
+struct MibIndexedProvider {
+    QString moduleName;
+    QString canonicalPath;
+    int searchPathPrecedence = -1;
+    QString filename;
+    QString sha256;
+    QString origin;
+    QStringList imports;
+    QString checkState;
+};
+
 struct MibProfileDependencyCheck {
     QString profileSignature;
     quint64 indexGeneration = 0;
@@ -87,6 +98,7 @@ public:
     MibDependencyScanResult update(const QStringList &searchPaths, QString *error = nullptr);
     MibDependencyInspection inspect(const QStringList &searchPaths) const;
     MibProviderResolution provider(const QString &moduleName) const;
+    QList<MibIndexedProvider> providersFor(const QString &moduleName) const;
     QStringList imports(const QString &moduleName) const;
     bool semanticallyVerified(const QString &moduleName) const;
     QStringList moduleNames() const;
@@ -110,6 +122,8 @@ private:
     MibDependencyIndexLoadStatus currentLoadStatus = MibDependencyIndexLoadStatus::NotLoaded;
     QString currentLoadDiagnostic;
 };
+
+struct MibEffectivePlan;
 
 QString MibDependencyIndexLoadStatusText(MibDependencyIndexLoadStatus status);
 
@@ -143,6 +157,8 @@ public:
         const QString &physicalPath, const QString &expectedModule)>;
     MibDependencyCheckResult load(const QStringList &roots,
                                   const MibDependencyIndex &index,
+                                  const LoadFile &loadFile) const;
+    MibDependencyCheckResult load(const MibEffectivePlan &plan,
                                   const LoadFile &loadFile) const;
 };
 

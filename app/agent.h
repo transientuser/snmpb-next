@@ -19,6 +19,7 @@
 */
 #ifndef AGENT_H
 #define AGENT_H
+#include "smi.h"
 
 #include <memory>
 #include <qtimer.h>

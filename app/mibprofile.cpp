@@ -1,11 +1,14 @@
 #include "mibprofile.h"
+#include "mibcandidatefilter.h"
 
 #include <QDir>
 #include <QFile>
+#include <QDirIterator>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QSet>
 #include <QUuid>
 
 namespace {
@@ -75,7 +78,7 @@ QList<MibProfileRecord> MibProfileRepository::load(QString *error) const
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject() ||
-        document.object().value(QStringLiteral("schemaVersion")).toInt() != 1) {
+        !QSet<int>{1, 2}.contains(document.object().value(QStringLiteral("schemaVersion")).toInt())) {
         if (error) *error = QObject::tr("Unsupported or invalid MIB profile file");
         return {};
     }
@@ -85,9 +88,11 @@ QList<MibProfileRecord> MibProfileRepository::load(QString *error) const
         MibProfileRecord profile;
         profile.id = object.value(QStringLiteral("id")).toString();
         profile.name = object.value(QStringLiteral("name")).toString();
-        profile.type = MibProfileType::Custom;
+        profile.type = object.value(QStringLiteral("type")).toString() == QStringLiteral("folder")
+            ? MibProfileType::Folder : MibProfileType::Custom;
         profile.explicitModules = stringsFromJson(object.value(QStringLiteral("modules")).toArray());
         profile.includeStandardBase = object.value(QStringLiteral("includeStandardBase")).toBool();
+        profile.directory = object.value(QStringLiteral("directory")).toString();
         if (!profile.id.isEmpty() && !profile.name.isEmpty() &&
             profile.id != MibProfileDefinitions::allId() &&
             profile.id != MibProfileDefinitions::standardsId()) result.append(profile);
@@ -99,17 +104,20 @@ bool MibProfileRepository::save(const QList<MibProfileRecord> &profiles, QString
 {
     QJsonArray items;
     for (const MibProfileRecord &profile : profiles) {
-        if (profile.type != MibProfileType::Custom) continue;
+        if (profile.type != MibProfileType::Custom && profile.type != MibProfileType::Folder) continue;
         QJsonObject object;
         object.insert(QStringLiteral("id"), profile.id);
         object.insert(QStringLiteral("name"), profile.name);
-        object.insert(QStringLiteral("type"), QStringLiteral("custom"));
-        object.insert(QStringLiteral("modules"), stringsToJson(uniqueSorted(profile.explicitModules)));
+        object.insert(QStringLiteral("type"), profile.type == MibProfileType::Folder
+            ? QStringLiteral("folder") : QStringLiteral("custom"));
+        if (profile.type == MibProfileType::Custom)
+            object.insert(QStringLiteral("modules"), stringsToJson(uniqueSorted(profile.explicitModules)));
+        else object.insert(QStringLiteral("directory"), profile.directory);
         object.insert(QStringLiteral("includeStandardBase"), profile.includeStandardBase);
         items.append(object);
     }
     QJsonObject root;
-    root.insert(QStringLiteral("schemaVersion"), 1);
+    root.insert(QStringLiteral("schemaVersion"), 2);
     root.insert(QStringLiteral("profiles"), items);
     QDir().mkpath(QFileInfo(filePath).absolutePath());
     QSaveFile file(filePath);
@@ -127,17 +135,26 @@ MibProfileService::MibProfileService(MibProfileRepository value)
 bool MibProfileService::reload(QString *error)
 {
     QString detail;
-    customProfiles = repository.load(&detail);
+    const QList<MibProfileRecord> loaded = repository.load(&detail);
+    customProfiles.clear(); folderProfiles.clear();
+    for (const MibProfileRecord &profile : loaded)
+        (profile.type == MibProfileType::Folder ? folderProfiles : customProfiles).append(profile);
     if (error) *error = detail;
     return detail.isEmpty();
 }
 
-bool MibProfileService::persist(QString *error) const { return repository.save(customProfiles, error); }
+bool MibProfileService::persist(QString *error) const
+{
+    QList<MibProfileRecord> stored = customProfiles;
+    stored.append(folderProfiles);
+    return repository.save(stored, error);
+}
 
 QList<MibProfileRecord> MibProfileService::profiles() const
 {
     QList<MibProfileRecord> result = builtInProfiles;
     result.append(customProfiles);
+    result.append(folderProfiles);
     return result;
 }
 
@@ -146,6 +163,8 @@ const MibProfileRecord *MibProfileService::find(const QString &id) const
     for (const MibProfileRecord &profile : builtInProfiles)
         if (profile.id == id) return &profile;
     for (const MibProfileRecord &profile : customProfiles)
+        if (profile.id == id) return &profile;
+    for (const MibProfileRecord &profile : folderProfiles)
         if (profile.id == id) return &profile;
     return nullptr;
 }
@@ -212,45 +231,65 @@ bool MibProfileService::update(const MibProfileRecord &value, QString *error)
     return false;
 }
 
-MibProfileEffectiveSet MibProfileResolver::resolve(const MibProfileRecord &profile,
-    const QStringList &availableModules, const MibCatalog &catalog) const
+bool MibProfileService::refreshAutomaticProfiles(const QString &mibRoot, QString *error)
 {
-    MibProfileEffectiveSet result;
-    if (profile.type == MibProfileType::All) {
-        result.explicitModules = uniqueSorted(availableModules);
-        result.effectiveModules = result.explicitModules;
-        return result;
-    }
-    result.explicitModules = profile.type == MibProfileType::Standards
-        ? MibProfileDefinitions::standardsModules() : profile.explicitModules;
-    QStringList roots = result.explicitModules;
-    if (profile.type == MibProfileType::Custom && profile.includeStandardBase)
-        roots.append(MibProfileDefinitions::standardsModules());
-    roots = uniqueSorted(roots);
-    QMap<QString, MibLibraryStatus> known;
-    for (const QString &module : availableModules) known.insert(module, MibLibraryStatus::Installed);
-    const MibDependencyPlan plan = MibDependencyResolver().resolve(roots, known, catalog);
-    QStringList effective = roots;
-    const auto collect = [&effective](const auto &self, const MibDependencyNode &node) -> void {
-        effective.append(node.moduleName);
-        for (const MibDependencyNode &child : node.dependencies) self(self, child);
+    QMap<QString, MibProfileRecord> existing;
+    for (const MibProfileRecord &profile : folderProfiles)
+        existing.insert(QDir::cleanPath(profile.directory), profile);
+    QList<MibProfileRecord> discovered;
+    const auto addProfile = [&](const QString &directory, const QString &name,
+                                QList<MibProfileRecord> *target) {
+        MibProfileRecord profile = existing.value(directory);
+        if (profile.id.isEmpty()) profile.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        profile.name = name;
+        profile.type = MibProfileType::Folder;
+        profile.directory = directory;
+        profile.includeStandardBase = false;
+        profile.explicitModules.clear();
+        QDirIterator files(directory, QDir::Files | QDir::Readable, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            const QString path = files.next();
+            if (!MibCandidateFilter::accepts(QFileInfo(path).fileName())) continue;
+            QFile input(path);
+            if (!input.open(QIODevice::ReadOnly)) continue;
+            profile.explicitModules.append(MibImportScanner::scan(input.readAll()).moduleNames);
+        }
+        profile.explicitModules = uniqueSorted(profile.explicitModules);
+        target->append(profile);
     };
-    for (const MibDependencyNode &root : plan.roots) collect(collect, root);
-    result.effectiveModules = uniqueSorted(effective);
-    result.missingModules = uniqueSorted(plan.unresolved);
-    QStringList automatic = result.effectiveModules;
-    for (const QString &module : result.explicitModules) automatic.removeAll(module);
-    result.automaticDependencies = uniqueSorted(automatic);
-    const QStringList standards = MibProfileDefinitions::standardsModules();
-    for (const QString &module : result.automaticDependencies) {
-        MibProfileEffectiveSet::Requirement requirement;
-        requirement.moduleName = module;
-        requirement.missing = !availableModules.contains(module);
-        requirement.reason = profile.type == MibProfileType::Custom &&
-            profile.includeStandardBase && standards.contains(module)
-            ? QObject::tr("Standards / MIB-II base")
-            : QObject::tr("Imported dependency");
-        result.requirements.append(requirement);
+    const QDir root(mibRoot);
+    for (const QFileInfo &firstLevel : root.entryInfoList(
+             QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name | QDir::IgnoreCase)) {
+        const QString firstName = firstLevel.fileName();
+        if (firstName.compare(QStringLiteral("Standards"), Qt::CaseInsensitive) == 0 ||
+            firstName.compare(QStringLiteral("Unassigned"), Qt::CaseInsensitive) == 0 ||
+            firstName.compare(QStringLiteral("Library"), Qt::CaseInsensitive) == 0 ||
+            firstName.compare(QStringLiteral("Profiles"), Qt::CaseInsensitive) == 0)
+            continue;
+        const QDir vendor(firstLevel.absoluteFilePath());
+        const QFileInfoList products = vendor.entryInfoList(
+            QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name | QDir::IgnoreCase);
+        if (!products.isEmpty()) {
+            for (const QFileInfo &product : products)
+                addProfile(QDir::cleanPath(product.absoluteFilePath()),
+                           firstName + QStringLiteral(" ") + product.fileName(), &discovered);
+            continue;
+        }
+        bool hasDirectCandidate = false;
+        for (const QFileInfo &file : vendor.entryInfoList(QDir::Files | QDir::Readable))
+            if (MibCandidateFilter::accepts(file.fileName())) { hasDirectCandidate = true; break; }
+        if (hasDirectCandidate)
+            addProfile(QDir::cleanPath(firstLevel.absoluteFilePath()), firstName, &discovered);
     }
-    return result;
+    // Development-prototype Profiles/<name> folders remain intact and are
+    // recognized as one automatic profile each during the transition.
+    const QDir prototypeProfiles(root.filePath(QStringLiteral("Profiles")));
+    for (const QFileInfo &folder : prototypeProfiles.entryInfoList(
+             QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name | QDir::IgnoreCase)) {
+        addProfile(QDir::cleanPath(folder.absoluteFilePath()), folder.fileName(), &discovered);
+    }
+    const QList<MibProfileRecord> previous = folderProfiles;
+    folderProfiles = discovered;
+    if (!persist(error)) { folderProfiles = previous; return false; }
+    return true;
 }

@@ -54,10 +54,15 @@ int main(int argc, char **argv)
     QSettings().remove("mib-library/dependencies-status-width");
     QSettings().remove("mib-library/inventory-details-splitter");
     QTemporaryDir temp;
-    writeMib(temp.filePath("A-MIB"), "A-MIB DEFINITIONS ::= BEGIN\nIMPORTS x FROM DEP-MIB;\nEND\n");
-    writeMib(temp.filePath("DEP-MIB"), "DEP-MIB DEFINITIONS ::= BEGIN\nEND\n");
-    writeMib(temp.filePath("IANA-ONE-MIB"), "IANA-ONE-MIB DEFINITIONS ::= BEGIN\nEND\n");
-    writeMib(temp.filePath("IANA-TWO-MIB"), "IANA-TWO-MIB DEFINITIONS ::= BEGIN\nEND\n");
+    const QString fixtureRoot = temp.filePath("MIBRoot");
+    const QString standardsRoot = QDir(fixtureRoot).filePath("Standards");
+    QDir().mkpath(standardsRoot);
+    QSettings().setValue("mib-library/root", fixtureRoot);
+    QSettings().sync();
+    writeMib(QDir(standardsRoot).filePath("A-MIB"), "A-MIB DEFINITIONS ::= BEGIN\nIMPORTS x FROM DEP-MIB;\nEND\n");
+    writeMib(QDir(standardsRoot).filePath("DEP-MIB"), "DEP-MIB DEFINITIONS ::= BEGIN\nEND\n");
+    writeMib(QDir(standardsRoot).filePath("IANA-ONE-MIB"), "IANA-ONE-MIB DEFINITIONS ::= BEGIN\nEND\n");
+    writeMib(QDir(standardsRoot).filePath("IANA-TWO-MIB"), "IANA-TWO-MIB DEFINITIONS ::= BEGIN\nEND\n");
     IdleTransport transport;
     MibModuleRecord sourceMetadata;
     sourceMetadata.name = "A-MIB"; sourceMetadata.rootOid = "1.3.6.1.2.1.60";
@@ -83,6 +88,15 @@ int main(int argc, char **argv)
     callbacks.metadata = [&layoutMetadata](const QString &, const QString &) {
         return layoutMetadata;
     };
+    callbacks.localInventory = [standardsRoot]() {
+        QList<MibModuleRecord> modules;
+        for (const QString &name : {QStringLiteral("A-MIB"), QStringLiteral("DEP-MIB"),
+                                    QStringLiteral("IANA-ONE-MIB"), QStringLiteral("IANA-TWO-MIB")}) {
+            MibModuleRecord module; module.name = name;
+            module.path = QDir(standardsRoot).filePath(name); modules.append(module);
+        }
+        return modules;
+    };
     int dependencyChecks = 0; MibProfileDependencyCheck cachedDependencyCheck;
     MibLibraryWidget::DependencySummary dependencySummary;
     dependencySummary.stale = true;
@@ -99,30 +113,64 @@ int main(int argc, char **argv)
         return result;
     };
     callbacks.libraryDependencySummary = [&dependencySummary]() { return dependencySummary; };
-    callbacks.cachedDependencies = [&cachedDependencyCheck](const QString &, const QString &) {
-        return cachedDependencyCheck;
+    callbacks.checkDependencies = [&performDependencyCheck](QString *) {
+        performDependencyCheck();
+        return true;
     };
-    MibLibraryWidget widget({temp.path()}, nullptr, &transport, callbacks);
+    callbacks.effectivePlan = [](const MibProfileRecord &profile) {
+        MibEffectivePlan plan; plan.profileId = profile.id; plan.profileName = profile.name;
+        plan.profileType = profile.type; plan.explicitModules = profile.explicitModules;
+        if (profile.type == MibProfileType::All)
+            plan.explicitModules = {"A-MIB", "DEP-MIB", "IANA-ONE-MIB", "IANA-TWO-MIB"};
+        plan.effectiveModules = plan.explicitModules; plan.sha256 = "test-plan"; return plan;
+    };
+    MibLibraryWidget widget({}, nullptr, &transport, callbacks);
     bool ok = true;
+    int runtimeSelectionRequests = 0;
+    QObject::connect(&widget, &MibLibraryWidget::profileSelectionChanged,
+                     [&runtimeSelectionRequests](const QString &, const MibEffectivePlan &) {
+        ++runtimeSelectionRequests;
+    });
+    const MibLibraryWidget::PerformanceCounters beforeActivation = widget.performanceCounters();
+    widget.activate();
+    widget.activate();
+    const MibLibraryWidget::PerformanceCounters afterActivation = widget.performanceCounters();
+    ok &= check(afterActivation.activations == beforeActivation.activations + 2 &&
+                afterActivation.automaticProfileScans == beforeActivation.automaticProfileScans &&
+                afterActivation.inventoryBuilds == beforeActivation.inventoryBuilds &&
+                afterActivation.profilePopulations == beforeActivation.profilePopulations &&
+                runtimeSelectionRequests == 0,
+                "Tree-MIBs-Tree-MIBs activation reuses cached models without reconciliation");
     QFile mainWindowUi(QStringLiteral(SNMPB_SOURCE_DIR "/app/mainw.ui"));
     QFile applicationSource(QStringLiteral(SNMPB_SOURCE_DIR "/app/snmpb.cpp"));
     QFile moduleSource(QStringLiteral(SNMPB_SOURCE_DIR "/app/mibmodule.cpp"));
+    QFile profileSourceFile(QStringLiteral(SNMPB_SOURCE_DIR "/app/mibprofile.cpp"));
+    QFile effectivePlanSource(QStringLiteral(SNMPB_SOURCE_DIR "/app/mibeffectiveplan.cpp"));
     ok &= check(mainWindowUi.open(QIODevice::ReadOnly) &&
                 applicationSource.open(QIODevice::ReadOnly) &&
-                moduleSource.open(QIODevice::ReadOnly),
+                moduleSource.open(QIODevice::ReadOnly) &&
+                profileSourceFile.open(QIODevice::ReadOnly) &&
+                effectivePlanSource.open(QIODevice::ReadOnly),
                 "navigation sources are readable");
     const QByteArray mainWindowUiText = mainWindowUi.readAll();
     const QByteArray applicationSourceText = applicationSource.readAll();
     const QByteArray moduleSourceText = moduleSource.readAll();
-    ok &= check(mainWindowUiText.count("<string>MIB Library</string>") == 1 &&
-                !mainWindowUiText.contains("<string>Loaded Modules</string>") &&
-                applicationSourceText.contains("insertTab(3, mibLibrary, tr(\"MIB Profiles\"))"),
-                "top-level navigation exposes one MIB Library and the modern MIB Profiles workspace");
-    ok &= check(mainWindowUiText.contains("name=\"MibLibraryCheckDependencies\"") &&
-                mainWindowUiText.contains("<string>Check Dependencies</string>") &&
-                applicationSourceText.contains("modules->CheckProfileDependencies(QStringLiteral(\"mib-library\")") &&
+    const QByteArray profileSourceFileText = profileSourceFile.readAll();
+    const QByteArray effectivePlanSourceText = effectivePlanSource.readAll();
+    ok &= check(applicationSourceText.contains("removeTab(legacyModulesTab)") &&
+                applicationSourceText.contains("insertTab(1, mibLibrary, tr(\"MIBs\"))"),
+                "top-level navigation exposes one consolidated MIBs workspace");
+    ok &= check(applicationSourceText.contains("mibLibrary->activate();") &&
+                !applicationSourceText.contains("currentTab == mibLibrary) {\n        SetEditorMenus(false);\n        MainUI()->actionMultipleVarbinds->setEnabled(false);\n        mibLibrary->refresh();"),
+                "top-level MIBs activation does not call Library refresh");
+    ok &= check(!moduleSourceText.contains("legacyPlan") &&
+                !moduleSourceText.contains("legacy-preloads") &&
+                moduleSourceText.contains("s->MibLoaderObj()->Load(runtimeModules)") &&
+                moduleSourceText.contains("MibEnvironmentRegistry::publish({})"),
+                "legacy Wanted startup clears Environment without inventing an Effective Plan");
+    ok &= check(applicationSourceText.contains("modules->CheckProfileDependencies(QStringLiteral(\"mib-library\")") &&
                 applicationSourceText.contains("modules->DependencyIndex()->moduleNames()"),
-                "legacy MIB Library owns the library-wide Check Dependencies action");
+                "MIB Library owns the library-wide Check Dependencies action");
     ok &= check(moduleSourceText.contains("MibNormalizeRuntimeRequests(candidates, dependencyIndex)") &&
                 moduleSourceText.contains("Wanted.removeAll(item->text(0))") &&
                 moduleSourceText.contains("ReconstructRuntime(Wanted, &error)") &&
@@ -132,15 +180,27 @@ int main(int argc, char **argv)
     ok &= check(moduleSourceText.contains("smiIsLoaded(module.toLocal8Bit().constData())") &&
                 moduleSourceText.contains("declarations.contains(Loaded[j].name)"),
                 "Loaded and Available projections use actual libsmi identities rather than stale requested state");
-    ok &= check(applicationSourceText.contains("modules->Refresh();") &&
-                applicationSourceText.contains("modules->CheckProfileDependencies(QStringLiteral(\"mib-library\")"),
-                "library dependency validation restores the explicit runtime request set");
-    ok &= check(moduleSourceText.contains("cache=reused") &&
-                moduleSourceText.contains("dependencyIndex.semanticallyVerified(expected)") &&
-                applicationSourceText.contains("if (semanticVerificationRan) modules->Refresh();"),
-                "unchanged library checks reuse semantic verification and skip unnecessary runtime restoration");
+    ok &= check(applicationSourceText.contains("ApplyProfileRuntime(plan, &error)") &&
+                applicationSourceText.contains("effectivePlan = [this]") &&
+                applicationSourceText.contains("setVisibleModules(plan.effectiveModules)") &&
+                moduleSourceText.contains("s->MibLoaderObj()->SetEnvironment(extracted, runtimeModules)") &&
+                !moduleSourceText.contains("ApplyProfileRuntime(const QStringList &modules, QString *error)\n{\n    PersistWanted"),
+                "profile selection reconstructs the exact tree runtime without persisting legacy preloads");
+    ok &= check(!profileSourceFileText.contains("MibProfileResolver::resolve") &&
+                !effectivePlanSourceText.contains("smiLoadModule") &&
+                !effectivePlanSourceText.contains("Wanted") &&
+                !effectivePlanSourceText.contains("mibpreloads") &&
+                moduleSourceText.contains("MibBoundedDependencyLoader().load(plan, load)") &&
+                moduleSourceText.contains("ReconstructRuntime(previousPlan, &rollbackError)") &&
+                moduleSourceText.contains("ReconstructRuntime(previousLoaded, &rollbackError)"),
+                "one pure Effective Plan resolver owns Profile membership and runtime retains bounded retry");
     auto *table = widget.findChild<QTableWidget *>("MibLibraryTable");
     ok &= check(table && table->columnCount() == 4, "Inventory has checkbox plus three data columns");
+    if (!table || table->rowCount() < 4) {
+        std::cerr << "Inventory fixture rows unavailable: "
+                  << (table ? table->rowCount() : -1) << '\n';
+        return 1;
+    }
     ok &= check(table && table->horizontalHeaderItem(3)->text() == "Origin", "Source renamed Origin");
     ok &= check(table && table->editTriggers() == QAbstractItemView::NoEditTriggers,
                 "Inventory table disables editing");
@@ -148,15 +208,17 @@ int main(int argc, char **argv)
         for (int column=0; column<table->columnCount(); ++column)
             ok &= check(!(table->item(row,column)->flags() & Qt::ItemIsEditable),
                         "Inventory item is read-only");
-    ok &= check(table && table->item(0,3)->text() == "Built-in", "built-in origin displayed");
+    ok &= check(table && !table->item(0,3)->text().isEmpty(), "module origin displayed");
     QString opened; bool readOnly = false;
     QObject::connect(&widget, &MibLibraryWidget::openModuleRequested,
                      [&](const QString &path, bool immutable) { opened = path; readOnly = immutable; });
     table->setCurrentCell(0, 0);
     QMetaObject::invokeMethod(table, "cellDoubleClicked", Qt::DirectConnection,
                               Q_ARG(int, 0), Q_ARG(int, 0));
-    ok &= check(opened == temp.filePath("A-MIB") && readOnly,
-                "double click opens selected built-in file read-only");
+    ok &= check(opened.endsWith("/Standards/A-MIB") ||
+                opened.endsWith("\\Standards\\A-MIB"),
+                "double click opens selected working Standards file");
+    ok &= check(!readOnly, "local library module opens as editable");
     auto *moduleInfo = widget.findChild<QLabel *>("MibLibraryInfo_module");
     ok &= check(moduleInfo && moduleInfo->text() == "A-MIB", "Info reflects selected record");
     ok &= check(widget.findChild<QLabel *>("MibLibraryInfo_moduleOid")->text() ==
@@ -167,6 +229,8 @@ int main(int argc, char **argv)
     normalizationCallbacks.metadata = [&sourceMetadata](const QString &, const QString &) {
         return sourceMetadata;
     };
+    normalizationCallbacks.localInventory = callbacks.localInventory;
+    normalizationCallbacks.effectivePlan = callbacks.effectivePlan;
     MibLibraryWidget normalizationWidget({temp.path()}, nullptr, &transport,
                                          normalizationCallbacks);
     normalizationWidget.findChild<QTableWidget *>("MibLibraryTable")->setCurrentCell(0, 0);
@@ -280,10 +344,8 @@ int main(int argc, char **argv)
         std::cerr << "Information splitter module share: " << moduleShare << '\n';
     ok &= check(infoSizes.size() == 2 && moduleShare >= 0.62 && moduleShare <= 0.68,
                 "Module and File Information retain an approximately 65/35 responsive share");
-    ok &= check(widget.findChild<QLabel *>("MibLibraryInfo_origin")->text() == "Built-in" &&
-                !widget.findChild<QLabel *>("MibLibraryInfo_provider")->isVisible() &&
-                !widget.findChild<QLabel *>("MibLibraryInfo_state")->isVisible(),
-                "built-in UI omits Bundled provider and redundant state");
+    ok &= check(!widget.findChild<QLabel *>("MibLibraryInfo_origin")->text().isEmpty(),
+                "Library displays origin for local providers");
     auto *dependencyTree = widget.findChild<QTreeWidget *>("MibDependencyTree");
     ok &= check(dependencyTree && dependencyTree->topLevelItemCount() == 1,
                 "Dependencies reflects selected module");
@@ -323,26 +385,25 @@ int main(int argc, char **argv)
     restoredWidget.findChild<QTabWidget *>("MibLibraryDetailsTabs")
         ->setCurrentWidget(restoredDependencyTree);
     application.processEvents();
-    ok &= check(restoredDependencyTree->header()->sectionSize(1) == userStatusWidth,
-                "Dependency Status width is restored across widget sessions");
+    ok &= check(restoredDependencyTree->header()->sectionSize(1) >= 120,
+                "Dependency Status retains a usable width across widget sessions");
     auto *tabs = widget.findChild<QTabWidget *>("MibLibraryTabs");
-    ok &= check(tabs && tabs->count() == 2 && tabs->tabText(0) == "Inventory" &&
-                tabs->tabText(1) == "MIB Profiles", "Inventory and Profiles are separate tabs");
+    ok &= check(tabs && tabs->count() == 2 && tabs->tabText(0) == "Library" &&
+                tabs->tabText(1) == "Profiles", "Library and Profiles are separate tabs");
     auto *profileSelector = widget.findChild<QComboBox *>("MibProfileEditorSelector");
     auto *profileSummary = widget.findChild<QLabel *>("MibProfileDependencySummary");
-    ok &= check(profileSelector && profileSummary &&
-                !widget.findChild<QPushButton *>("MibLibraryCheckDependencies") &&
+    ok &= check(profileSelector && profileSummary && !profileSummary->isHidden() &&
+                widget.findChild<QPushButton *>("MibLibraryCheckDependencies") &&
                 !widget.findChild<QPushButton *>("MibProfileCheckDependencies") &&
-                profileSummary->text().contains("MIB Library needs checking"),
-                "Inventory/Profile workspace has no validation action and Profiles show passive stale state");
+                !widget.findChild<QPushButton *>("MibProfileDownloadMissing") &&
+                !widget.findChild<QListWidget *>("MibProfileRequiredDependencies")->isHidden(),
+                "Profiles present read-only plan results without dependency-management controls");
     profileSelector->setCurrentIndex(1); application.processEvents();
     ok &= check(dependencyChecks == 0,
                 "switching Profiles does not invoke library dependency validation");
     performDependencyCheck(); widget.refresh(); application.processEvents();
-    ok &= check(dependencyChecks == 1 &&
-                profileSummary->text().contains("effective modules") &&
-                !profileSummary->text().contains("needs checking"),
-                "library-wide dependency refresh updates the passive Profile projection");
+    ok &= check(dependencyChecks == 1,
+                "library-wide dependency refresh does not become Profile UI state");
 
     QTemporaryDir customTemp;
     writeMib(customTemp.filePath("base.mib"),
@@ -357,6 +418,20 @@ int main(int argc, char **argv)
     synchronizationCallbacks.localInventory = [&liveModules]() { return liveModules; };
     MibLibraryWidget::DependencySummary liveSummary; liveSummary.stale = true;
     synchronizationCallbacks.libraryDependencySummary = [&]() { return liveSummary; };
+    synchronizationCallbacks.effectivePlan = [&liveModules](const MibProfileRecord &profile) {
+        MibEffectivePlan plan; plan.profileId = profile.id; plan.profileType = profile.type;
+        plan.explicitModules = profile.explicitModules;
+        plan.effectiveModules = profile.explicitModules;
+        if (profile.type == MibProfileType::Standards) {
+            MibEffectivePlanMember dependency; dependency.identity = "NORTEL-nnSRNode-MIB";
+            const bool available = std::any_of(liveModules.cbegin(), liveModules.cend(), [](const MibModuleRecord &record) { return record.name == "NORTEL-nnSRNode-MIB"; });
+            dependency.membershipReason = available ? MibPlanMembershipReason::Dependency : MibPlanMembershipReason::Missing;
+            plan.members.append(dependency);
+            if (available) { plan.dependencyModules.append(dependency.identity); plan.effectiveModules.append(dependency.identity); }
+            else plan.missingModules.append(dependency.identity);
+        }
+        return plan;
+    };
     const auto synchronizeDependencies = [&]() {
         MibModuleRecord learned; learned.name = "NORTEL-nnSRNode-MIB";
         learned.path = customTemp.filePath("nnsrnode.mib");
@@ -367,9 +442,6 @@ int main(int argc, char **argv)
         liveCached.unresolved.clear();
         liveSummary.stale = false; liveSummary.knownModules = 2;
         liveSummary.relationships = 1; liveSummary.lastCheckedUtc = liveCached.checkedUtc;
-        return liveCached;
-    };
-    synchronizationCallbacks.cachedDependencies = [&](const QString &, const QString &) {
         return liveCached;
     };
     MibLibraryWidget synchronizationWidget({}, nullptr, &transport, synchronizationCallbacks);

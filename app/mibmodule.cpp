@@ -29,6 +29,9 @@
 #include <algorithm>
 
 #include "mibmodule.h"
+#include "mibenvironmentextractor.h"
+#include "mibenvironmentregistry.h"
+#include "mibcollection.h"
 #include "miblibrary.h"
 #include "diagnosticlogger.h"
 #include "agent.h"
@@ -488,6 +491,46 @@ QStringList MibModule::LoadPreferredModules(const QStringList &modules)
     return resolution.unavailable;
 }
 
+MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) const
+{
+    return MibEffectivePlanResolver().resolve(profile, dependencyIndex);
+}
+
+QStringList MibModule::LoadEffectivePlan(const MibEffectivePlan &plan)
+{
+    const auto load = [this](const QString &path, const QString &identity) {
+            MibDependencyLoadAttempt attempt;
+            SmiModule *loaded = smiGetModule(identity.toLocal8Bit().constData());
+            if (!loaded) {
+                ErrorWhileLoading = false;
+                smiLoadModule(QDir::toNativeSeparators(path).toLocal8Bit().constData());
+                loaded = smiGetModule(identity.toLocal8Bit().constData());
+            } else ErrorWhileLoading = false;
+            const QString actualPath = loaded && loaded->path
+                ? QFileInfo(QString::fromLocal8Bit(loaded->path)).canonicalFilePath() : QString();
+            const QString plannedPath = QFileInfo(path).canonicalFilePath();
+            const bool providerMatches = !actualPath.isEmpty() &&
+                actualPath.compare(plannedPath, Qt::CaseInsensitive) == 0;
+            if (!ErrorWhileLoading && loaded && providerMatches) {
+                attempt.success = true; attempt.loadedModuleNames = {identity};
+            } else if (loaded && !providerMatches) {
+                attempt.diagnostic = tr("planned=%1 actual=%2").arg(plannedPath, actualPath);
+                DiagnosticLogger::log("MIB", tr("Effective Plan provider mismatch module=%1 %2")
+                    .arg(identity, attempt.diagnostic));
+            }
+            return attempt;
+    };
+    const MibDependencyCheckResult result = MibBoundedDependencyLoader().load(plan, load);
+    QStringList unavailable;
+    for (const MibDependencyFailure &failure : result.failures)
+        unavailable.append(failure.moduleName);
+    unavailable.removeDuplicates();
+    unavailable.sort(Qt::CaseSensitive);
+    for (const QString &identity : std::as_const(unavailable))
+        emit LogError(tr("Effective Plan MIB module '%1' is unavailable").arg(identity));
+    return unavailable;
+}
+
 // Attempts to identify and load a mib module that resolves a specific oid
 //
 // Returns the mib module's filename if there is a match, otherwise
@@ -704,9 +747,10 @@ void MibModule::ReadMibPaths()
         paths << settings.value("dir").toString();
     }
 
-    const QString userLibrary = MibLibraryService().downloadedPath();
-    if (!paths.contains(userLibrary))
-        paths.append(userLibrary);
+    QSettings rootSettings;
+    const MibCollection collection(MibCollection::configuredRoot(rootSettings));
+    for (const QString &path : collection.runtimeSearchPaths())
+        if (!paths.contains(path)) paths.append(path);
 
     smiSetPath(paths.join(SMI_PATH_SEPARATOR).toLocal8Bit().data());
 }
@@ -744,21 +788,105 @@ void MibModule::PersistWanted() const
 
 bool MibModule::ReconstructRuntime(const QStringList &requests, QString *error)
 {
+    hasActiveProfilePlan = false;
+    currentEnvironment.reset();
+    MibEnvironmentRegistry::publish({});
+    QElapsedTimer totalTimer; totalTimer.start();
+    QElapsedTimer phaseTimer; phaseTimer.start();
     RegenerateSmiConf();
+    const qint64 configurationMs = phaseTimer.restart();
     InitLib(1);
+    const qint64 parserResetMs = phaseTimer.restart();
     Loaded.clear();
     const QStringList unavailable = LoadPreferredModules(requests);
+    const qint64 moduleLoadMs = phaseTimer.restart();
     RebuildLoadedList();
     RebuildUnloadedList();
+    const qint64 legacyProjectionMs = phaseTimer.restart();
+    QStringList runtimeModules = LoadedModuleNames();
+    // Legacy parser state is not an Environment. Clear migrated semantic
+    // projections even when one or more Wanted modules fail to load.
+    s->MibLoaderObj()->Load(runtimeModules);
+    const qint64 treeModelMs = phaseTimer.restart();
     QStringList missing;
     for (const QString &identity : requests)
         if (!smiIsLoaded(identity.toLocal8Bit().constData())) missing.append(identity);
     missing.removeDuplicates();
     if (!unavailable.isEmpty() || !missing.isEmpty()) {
+        DiagnosticLogger::log("MIB", tr("Runtime reconstruction total-ms=%1 configuration-ms=%2 parser-reset-ms=%3 module-load-ms=%4 legacy-projection-ms=%5 tree-model-ms=%6 verification-ms=%7 requested=%8 loaded=%9 missing=%10")
+            .arg(totalTimer.elapsed()).arg(configurationMs).arg(parserResetMs)
+            .arg(moduleLoadMs).arg(legacyProjectionMs).arg(treeModelMs)
+            .arg(phaseTimer.elapsed()).arg(requests.size()).arg(runtimeModules.size())
+            .arg(missing.size()));
         if (error) *error = tr("%n requested module(s) did not load", nullptr, missing.size());
         return false;
     }
+    // Wanted/mibpreloads remain legacy authority until Phase 8. They must not
+    // manufacture a competing Environment without a governing Effective Plan.
+    DiagnosticLogger::log("MIB", tr("Runtime reconstruction total-ms=%1 configuration-ms=%2 parser-reset-ms=%3 module-load-ms=%4 legacy-projection-ms=%5 tree-model-ms=%6 verification-ms=%7 requested=%8 loaded=%9 missing=0")
+        .arg(totalTimer.elapsed()).arg(configurationMs).arg(parserResetMs)
+        .arg(moduleLoadMs).arg(legacyProjectionMs).arg(treeModelMs)
+        .arg(phaseTimer.elapsed()).arg(requests.size()).arg(runtimeModules.size()));
     return true;
+}
+
+bool MibModule::ReconstructRuntime(const MibEffectivePlan &plan, QString *error)
+{
+    QElapsedTimer totalTimer; totalTimer.start();
+    RegenerateSmiConf();
+    InitLib(1);
+    Loaded.clear();
+    const QStringList unavailable = LoadEffectivePlan(plan);
+    RebuildLoadedList();
+    RebuildUnloadedList();
+    QStringList runtimeModules = LoadedModuleNames();
+    QStringList missing;
+    for (const QString &identity : plan.effectiveModules)
+        if (!smiIsLoaded(identity.toLocal8Bit().constData())) missing.append(identity);
+    missing.append(unavailable);
+    missing.removeDuplicates();
+    MibEnvironmentPtr extracted = MibEnvironmentExtractor().extract(plan, missing);
+    const MibEnvironmentTelemetry telemetry = extracted->telemetry();
+    DiagnosticLogger::log("MIB", tr("Environment extraction ms=%1 plan=%2 status=%3 modules=%4 nodes=%5 types=%6 utf16-chars=%7 approximate-bytes=%8 findings=%9")
+        .arg(telemetry.extractionMilliseconds).arg(plan.sha256)
+        .arg(extracted->status() == MibEnvironmentStatus::Complete ? QStringLiteral("complete") : QStringLiteral("partial"))
+        .arg(telemetry.moduleCount).arg(telemetry.nodeCount).arg(telemetry.typeCount)
+        .arg(telemetry.ownedUtf16Characters).arg(telemetry.approximateOwnedBytes)
+        .arg(extracted->findings().size()));
+    DiagnosticLogger::log("MIB", tr("Effective Plan runtime reconstruction total-ms=%1 plan=%2 requested=%3 loaded=%4 missing=%5")
+        .arg(totalTimer.elapsed()).arg(plan.sha256).arg(plan.effectiveModules.size())
+        .arg(runtimeModules.size()).arg(missing.size()));
+    if (!MibEnvironmentRegistry::isUsableMaterialization(extracted)) {
+        if (error) *error = tr("No planned MIB modules could be materialized");
+        return false;
+    }
+    s->MibLoaderObj()->SetEnvironment(extracted, runtimeModules);
+    currentEnvironment = extracted;
+    MibEnvironmentRegistry::publishMaterialization(std::move(extracted));
+    if (!missing.isEmpty() && error)
+        *error = tr("%n planned module(s) did not load; the usable partial environment was activated",
+                    nullptr, missing.size());
+    return true;
+}
+
+bool MibModule::ApplyProfileRuntime(const MibEffectivePlan &plan, QString *error)
+{
+    const QStringList previousLoaded = LoadedModuleNames();
+    const MibEffectivePlan previousPlan = activeProfilePlan;
+    const bool hadPreviousPlan = hasActiveProfilePlan;
+    if (ReconstructRuntime(plan, error)) {
+        activeProfilePlan = plan;
+        hasActiveProfilePlan = true;
+        return true;
+    }
+    QString rollbackError;
+    const bool restored = hadPreviousPlan
+        ? ReconstructRuntime(previousPlan, &rollbackError)
+        : ReconstructRuntime(previousLoaded, &rollbackError);
+    DiagnosticLogger::log("MIB", restored
+        ? tr("Effective Plan activation failed; previous runtime restored")
+        : tr("Effective Plan activation and rollback failed: %1").arg(rollbackError));
+    return false;
 }
 
 bool MibModule::ValidateModuleFile(const QString &path, QString *error,

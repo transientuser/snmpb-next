@@ -3,7 +3,7 @@
 
 #include <QString>
 
-#include "smi.h"
+#include "mibenvironment.h"
 #include "snmp_pp/oid.h"
 
 bool HasVarbindAt(int varbindCount, int index);
@@ -11,7 +11,7 @@ bool IsOidInSubtree(const Oid &oid, const Oid &root);
 bool BuildFirstColumnRoot(const Oid &tableRow, const Oid &returned,
                           Oid *columnRoot);
 bool ExtractOidSuffix(const Oid &root, const Oid &oid, QString *suffix);
-bool RenderSmiNodeOid(const SmiNode *node, Oid *oid);
-bool HasValidColumnInfo(const SmiNode *node);
+bool RenderEnvironmentNodeOid(const MibEnvironmentNodeRecord *node, Oid *oid);
+bool HasValidColumnInfo(const MibEnvironmentNodeRecord *node);
 
 #endif

@@ -7,7 +7,7 @@
 #include <QMap>
 #include <QStringList>
 
-enum class MibProfileType { All, Standards, Custom };
+enum class MibProfileType { All, Standards, Custom, Folder };
 
 struct MibProfileRecord {
     QString id;
@@ -15,6 +15,7 @@ struct MibProfileRecord {
     MibProfileType type = MibProfileType::Custom;
     QStringList explicitModules;
     bool includeStandardBase = false;
+    QString directory;
 };
 
 class MibProfileDefinitions
@@ -52,31 +53,13 @@ public:
     bool rename(const QString &id, const QString &name, QString *error = nullptr);
     bool remove(const QString &id, QString *error = nullptr);
     bool update(const MibProfileRecord &profile, QString *error = nullptr);
+    bool refreshAutomaticProfiles(const QString &mibRoot, QString *error = nullptr);
 private:
     static bool isBuiltIn(const QString &id);
     MibProfileRepository repository;
     QList<MibProfileRecord> builtInProfiles = MibProfileDefinitions::builtIns();
     QList<MibProfileRecord> customProfiles;
-};
-
-struct MibProfileEffectiveSet {
-    struct Requirement {
-        QString moduleName;
-        bool missing = false;
-        QString reason;
-    };
-    QStringList explicitModules;
-    QStringList automaticDependencies;
-    QStringList effectiveModules;
-    QStringList missingModules;
-    QList<Requirement> requirements;
-};
-
-class MibProfileResolver
-{
-public:
-    MibProfileEffectiveSet resolve(const MibProfileRecord &profile,
-        const QStringList &availableModules, const MibCatalog &catalog) const;
+    QList<MibProfileRecord> folderProfiles;
 };
 
 #endif

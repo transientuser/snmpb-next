@@ -1,4 +1,5 @@
 #include "miblibrary.h"
+#include "mibcollection.h"
 #include "mibdownloadtransport.h"
 #include "mibdiagnosticcollector.h"
 
@@ -7,6 +8,8 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QStandardPaths>
+#include <QSettings>
 #include <iostream>
 
 namespace {
@@ -191,7 +194,12 @@ END
     QFile bundledFile(QDir(bundled).filePath("base.txt"));
     ok &= check(bundledFile.open(QIODevice::WriteOnly), "open bundled fixture");
     bundledFile.write(mib("BASE-MIB")); bundledFile.close();
-    MibLibraryService library(root.filePath("user-mibs"));
+    MibLibraryService library(root.filePath("user-mibs"), root.filePath("internal-state"));
+    const MibCollectionResult initialized = MibCollection(library.rootPath()).initialize(
+        {bundled}, root.filePath("legacy-mibs"));
+    ok &= check(initialized.success && QDir(library.standardsPath()).exists() &&
+                QDir(library.downloadedPath()).exists() && QDir(library.rootPath()).exists(),
+                "user-visible Standards/Imported/Profiles tree initializes");
     smiInit("snmpb-mib-library-test");
     const int normalFlags = smiGetFlags() | SMI_FLAG_ERRORS | SMI_FLAG_NODESCR;
     smiSetFlags(normalFlags);
@@ -362,6 +370,63 @@ END
     ok &= check(observed.timedOut, "scripted timeout");
     transport.cancel(); transport.get(QUrl("https://example.invalid/cancel"));
     ok &= check(observed.cancelled, "scripted cancellation");
+
+    QTemporaryDir migration;
+    const QString baseline = migration.filePath("baseline");
+    const QString legacy = migration.filePath("legacy");
+    const QString targetRoot = migration.filePath("visible-root");
+    QDir().mkpath(baseline); QDir().mkpath(QDir(legacy).filePath("downloaded"));
+    QFile standard(QDir(baseline).filePath("STANDARD-MIB"));
+    standard.open(QIODevice::WriteOnly); standard.write(mib("STANDARD-MIB")); standard.close();
+    QFile imported(QDir(legacy).filePath("downloaded/vendor-file.mib"));
+    imported.open(QIODevice::WriteOnly); imported.write(mib("DECLARED-VENDOR-MIB")); imported.close();
+    const QByteArray legacyBefore = [&] { QFile f(imported.fileName()); f.open(QIODevice::ReadOnly); return f.readAll(); }();
+    MibCollection collection(targetRoot);
+    const MibCollectionResult migrated = collection.initialize({baseline}, legacy);
+    const MibCollectionResult migratedAgain = collection.initialize({baseline}, legacy);
+    ok &= check(migrated.success && migrated.standardsCopied == 1 && migrated.importedCopied == 1 &&
+                QFileInfo::exists(QDir(collection.importedPath()).filePath("vendor-file.mib")),
+                "legacy imported file copies into visible Imported library");
+    QFile legacyAfter(imported.fileName()); legacyAfter.open(QIODevice::ReadOnly);
+    ok &= check(legacyAfter.readAll() == legacyBefore && migratedAgain.success &&
+                migratedAgain.standardsCopied == 0 && migratedAgain.importedCopied == 0,
+                "migration is idempotent and leaves legacy originals untouched");
+    QFile conflict(QDir(collection.importedPath()).filePath("vendor-file.mib"));
+    conflict.open(QIODevice::WriteOnly | QIODevice::Truncate); conflict.write("different"); conflict.close();
+    const MibCollectionResult conflicted = collection.initialize({baseline}, legacy);
+    QFile preserved(conflict.fileName()); preserved.open(QIODevice::ReadOnly);
+    ok &= check(conflicted.success && conflicted.conflicts.contains(conflict.fileName()) &&
+                preserved.readAll() == QByteArray("different"),
+                "different-content migration collision is reported and not overwritten");
+    QDir().mkpath(QDir(targetRoot).filePath("Library/Standards/IETF"));
+    QDir().mkpath(QDir(targetRoot).filePath("Library/Imported/Vendor"));
+    QFile prototypeStandard(QDir(targetRoot).filePath("Library/Standards/IETF/OLD-STANDARD.mib"));
+    prototypeStandard.open(QIODevice::WriteOnly); prototypeStandard.write(mib("OLD-STANDARD")); prototypeStandard.close();
+    QFile prototypeImported(QDir(targetRoot).filePath("Library/Imported/Vendor/OLD-VENDOR.mib"));
+    prototypeImported.open(QIODevice::WriteOnly); prototypeImported.write(mib("OLD-VENDOR")); prototypeImported.close();
+    const MibCollectionResult transitioned = collection.initialize({baseline}, QString());
+    ok &= check(transitioned.success &&
+                QFileInfo::exists(QDir(collection.standardsPath()).filePath("IETF/OLD-STANDARD.mib")) &&
+                QFileInfo::exists(QDir(collection.unassignedPath()).filePath("Vendor/OLD-VENDOR.mib")) &&
+                prototypeStandard.exists() && prototypeImported.exists(),
+                "prototype library trees copy safely without deleting originals");
+    ok &= check(MibCollection::defaultRoot().startsWith(
+                    QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)) &&
+                MibCollection::internalStateRoot().startsWith(
+                    QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)),
+                "visible root uses Documents while dependency index remains internal");
+    QSettings rootSettings(migration.filePath("settings.ini"), QSettings::IniFormat);
+    const QString validRoot = migration.filePath("configured-root");
+    MibCollectionResult configured;
+    ok &= check(MibCollection::setConfiguredRoot(rootSettings, validRoot, {baseline}, &configured) &&
+                MibCollection::configuredRoot(rootSettings) == QDir::cleanPath(validRoot),
+                "valid user root persists across settings reload");
+    const QString invalidRoot = migration.filePath("not-a-directory");
+    QFile invalidRootFile(invalidRoot); invalidRootFile.open(QIODevice::WriteOnly); invalidRootFile.write("x"); invalidRootFile.close();
+    MibCollectionResult rejected;
+    ok &= check(!MibCollection::setConfiguredRoot(rootSettings, invalidRoot, {baseline}, &rejected) &&
+                MibCollection::configuredRoot(rootSettings) == QDir::cleanPath(validRoot),
+                "invalid root change preserves prior valid configuration");
     smiExit();
     return ok ? 0 : 1;
 }

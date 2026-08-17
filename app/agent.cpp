@@ -40,6 +40,7 @@
 #include "snmprequestconfigadapter.h"
 #include "tablenodevalidation.h"
 #include "tabletraversal.h"
+#include "mibenvironmentregistry.h"
 #include "mibselection.h"
 
 #define ASYNC_TIMER_MSEC 5
@@ -1647,13 +1648,13 @@ void Agent::TableViewFrom(const QString& oid)
     
     /* Set the parent oid & parent node */
     Oid poid(oid.toLatin1().data());
-    SmiNode *pnode = GetNodeFromOid(poid);
-    const bool tableNode = pnode && pnode->nodekind == SMI_NODEKIND_TABLE;
-    SmiNode *firstChild = tableNode ? smiGetFirstChildNode(pnode) : nullptr;
-    SmiNode *rowNode = nullptr;
+    const auto environment=MibEnvironmentRegistry::active();
+    const auto *pnode=environment?environment->longestPrefixNode(oid):nullptr;
+    const bool tableNode=pnode&&pnode->kind==MibEnvironmentNodeKind::Table;
+    const MibEnvironmentNodeRecord *rowNode=nullptr;
 
     /* Make sure the parent is a table or row entry ... */
-    if (ResolveTableRowNode(pnode, firstChild, &rowNode) !=
+    if (!environment || ResolveTableRowNode(pnode,pnode?environment->nodeByOid(pnode->rowOid):nullptr,&rowNode) !=
         TableNodeValidation::Valid)
     {
         s->MainUI()->Query->append(tr("<font color=red>Abort, not a table or row entry</font>"));
@@ -1663,7 +1664,7 @@ void Agent::TableViewFrom(const QString& oid)
     /* If the oid is the table element, get the row entry element */ 
     if (tableNode)
     {
-        if (!RenderSmiNodeOid(rowNode, &poid))
+        if (!RenderEnvironmentNodeOid(rowNode, &poid))
         {
             s->MainUI()->Query->append(tr("<font color=red>Abort, not a table or row entry</font>"));
             return;
@@ -1671,14 +1672,14 @@ void Agent::TableViewFrom(const QString& oid)
     }
     SnmpTablePlan plan;
     plan.rowOid = poid;
-    for (SmiNode *node = smiGetFirstChildNode(rowNode); node != NULL;
-         node = smiGetNextChildNode(node))
+    for (const QString &column : rowNode->columnOids)
     {
+        const auto *node=environment->nodeByOid(column);
         if (!HasValidColumnInfo(node))
             continue;
         Oid columnOid;
-        if (RenderSmiNodeOid(node, &columnOid))
-            plan.columns.append({QString::fromLatin1(node->name), columnOid});
+        if (RenderEnvironmentNodeOid(node, &columnOid))
+            plan.columns.append({node->name, columnOid});
     }
     const SnmpRequestContext context(config, SnmpRequestOperation::Walk);
     s->MainUI()->actionStop->setEnabled(true);
@@ -2091,7 +2092,8 @@ int Agent::SelectTableInstance(const QString &oid, QString &outinstance)
     delete target;
     delete pdu;
     Oid root(oid.toLatin1().constData());
-    if (!IsValidTableColumnNode(GetNodeFromOid(root))) return 0;
+    const auto environment=MibEnvironmentRegistry::active();
+    if (!environment || !IsValidTableColumnNode(environment->longestPrefixNode(oid))) return 0;
     SnmpInstanceAsyncRunner runner;
     QEventLoop loop;
     SnmpInstanceResult result;
@@ -2129,7 +2131,8 @@ void Agent::GetFromSelectInstance(const QString& oid, int op)
     delete target;
     delete pdu;
     Oid root(oid.toLatin1().constData());
-    if (!IsValidTableColumnNode(GetNodeFromOid(root))) return;
+    const auto environment=MibEnvironmentRegistry::active();
+    if (!environment || !IsValidTableColumnNode(environment->longestPrefixNode(oid))) return;
     pendingInstanceOid = oid;
     pendingInstanceOperation = op;
     s->MainUI()->actionStop->setEnabled(true);

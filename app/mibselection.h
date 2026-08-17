@@ -19,6 +19,7 @@
 */
 #ifndef MIBSELECTION_H
 #define MIBSELECTION_H
+#include "smi.h"
 
 #include <QValidator>
 #include <QDialog>

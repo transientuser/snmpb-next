@@ -1,5 +1,71 @@
 # MIB browser and loader architecture
 
+## Governing decision: Model C accepted with amendments
+
+The governing MIB architecture is:
+
+```text
+MIB files -> Library -> Profile -> Effective Plan -> Environment -> Tree/SNMP presentation
+```
+
+Phase 1 implements `MibEffectivePlan` as the single authority for Profile
+effective membership and current synchronous Profile runtime construction. The
+plan is a pure value: it contains canonical explicit identities, selected
+indexed providers and raw SHA-256 values, provider-specific import edges,
+missing and ambiguous findings, deterministic dependency-first initial order,
+and a schema/policy-versioned hash. It contains no libsmi, widget, model-index,
+Tree, `Wanted`, or `mibpreloads` state.
+
+Profiles persist explicit membership only. Automatic membership comes from all
+declared identities recursively discovered in the product directory; Custom
+membership comes from the user's saved identities. Dependency closure is always
+calculated from the selected indexed provider's own imports. The former
+catalog-based `MibProfileResolver` effective-membership path has been retired.
+Catalog dependency resolution remains only for download planning and does not
+define Profile or runtime membership.
+
+Plan-scoped provider policy in this phase is: an Automatic profile's explicit
+identity prefers an indexed provider inside that profile directory; otherwise
+the deterministic global precedence applies. Equal raw-content providers are
+equivalent, while different content at the applicable precedence is ambiguous.
+Custom profiles have no folder affinity. Provider-pin UI is deferred.
+
+Dependency-first ordering is an initial attempt, not a compatibility claim.
+Runtime materialization continues through `MibBoundedDependencyLoader` with
+bounded fixed-point retry. Absolute-path loading selects planned root files but
+does not prevent libsmi from searching recursively for an import that was not
+already loaded, so planned-versus-actual provider paths are verified and
+mismatches are logged.
+
+Phase 2 now defines and synchronously extracts an immutable, value-owned
+`MibEnvironment` from the successfully materialized Plan runtime. It preserves
+rich module/node/type/table/notification semantics, deterministic lookup
+indexes, structured materialization findings, and memory telemetry, and remains
+valid after libsmi teardown. See `ADR-001-mib-library-profiles-environment.md`.
+Phase-4 value consumers and Phase-5 parser operations have not migrated.
+Asynchronous switching, the dedicated libsmi engine thread, Environment
+LRU/persistence, and legacy preload migration remain later phases.
+
+Phase 3 migrates the read-only semantic consumers. The Tree and its OID Info
+presentation are Environment projections; graph labels, TrapPresenter, and
+table classification/planning resolve immutable Environment records. A small
+process-wide registry owns the currently published `shared_ptr<const
+MibEnvironment>` for stateless graph/trap callbacks, while Tree nodes retain
+their own shared ownership. Absence of a Plan-backed Environment produces an
+empty Tree or numeric-only labels rather than falling back to libsmi.
+The built-in **All MIBs** entry is a real Profile whose Effective Plan covers
+all resolvable Library identities; it is materialized normally, including at
+startup. Environment replacement invalidates Qt indexes, retains only numeric
+OID selection intent, clears OID Info during reset, and restores selection only
+when that OID exists in the destination model.
+
+`MibSelection` and Agent value decoding remain Phase 4. Parser loading,
+diagnostics, editor validation, and the older MibService parser snapshot helper
+remain Phase 5. No engine thread, asynchronous Environment construction, or
+Environment cache exists yet.
+Persisted Environment caching is deferred. Raw hashes remain authoritative;
+normalized semantic hashes are not used.
+
 Patched libsmi remains the authoritative parser, loader, semantic database,
 and diagnostic source. Its tolerant handling and historical diagnostic output
 are compatibility requirements; application adapters must not reinterpret or
@@ -135,3 +201,66 @@ Structured application diagnostics use local ISO-8601 timestamps with
 milliseconds and an explicit numeric UTC offset. Backlog: normalize or wrap
 raw libsmi callbacks and SNMP++ messages so every displayed entry ultimately
 uses that same timestamp form. This remains a dedicated future logging task.
+
+## User MIB collection and product profiles
+
+Actual working MIB/PIB sources live below the configurable **MIB Library
+Location**. Its cross-platform default is Qt's `DocumentsLocation` plus
+`MIB Navigator/MIBs`:
+
+```text
+MIBs/
+  Standards/           global standards library; never automatic profiles
+  Unassigned/          global miscellaneous/download library; never automatic profiles
+  <Vendor>/<Product>/  recursive product source; one Automatic profile
+```
+
+The packaged `mibs` and `pibs` directories remain pristine initialization and
+recovery sources. Initialization copies missing files into Standards but never
+overwrites different content. Legacy managed downloads are copied into Unassigned
+once, originals are retained, identical files are skipped, and same-name
+different-content files are reported and preserved. Changing the configured
+root initializes the new location and never deletes or moves the previous one.
+
+Generated state remains under the established application-data locations:
+download provenance, the IANA catalog cache, Custom/Automatic stable profile IDs,
+settings and migration markers stay in AppData; the dependency/provider index
+remains at `GenericData/SnmpB/mibs/dependency-index-v1.json`.
+
+Automatic profiles express product applicability. A non-reserved first-level
+directory with immediate child directories is a vendor container: every child
+is one recursively scanned product profile named `<Vendor> <Product>`, while
+deeper folders never create profiles. A non-reserved first-level directory with
+no child directories becomes a simple product profile only when it contains a
+supported file directly. Empty product children are retained; empty standalone
+first-level directories are ignored. `Standards` and `Unassigned`, including all
+descendants, never generate automatic profiles.
+
+File declarations, not filenames, define explicit membership; every identity
+in a multi-declaration file is included. Automatic membership is read-only and
+its stable ID is stored internally, while the directory remains authoritative.
+Custom Profiles remain editable purpose/subset/combination sets.
+
+Global conflict facts retain the precedence Standards, then Unassigned, then all
+product trees as one precedence class. Effective Plans make the runtime choice:
+an Automatic profile may select its own explicit product provider before the
+global default. Same-identity providers with identical raw SHA-256 content are
+equivalent; different content remains distinguishable and unresolved unless a
+documented plan policy selects it. Provider-specific imports drive closure, so
+standards dependencies need not be copied into each product directory. Profile
+selection materializes the same plan shown by Profiles and does not rewrite the
+legacy `Wanted`/`mibpreloads` preference.
+
+Library and Profile models are reconciled during construction and explicit
+collection-changing actions such as Refresh, downloads, root changes, and
+profile edits. Merely making the top-level MIBs workspace visible reuses those
+models: it performs no collection scan, inventory rebuild, dependency check,
+profile regeneration, or libsmi reconstruction. Timings for explicit Library
+refresh phases, runtime reconstruction phases, and cached tab activation are
+written to the structured diagnostic log.
+
+During transition from the development prototype, `Library/Standards` and
+`Library/Imported` are copied safely into the new reserved trees, without
+overwrites or deletion. Existing `Profiles/<name>` directories remain in place
+and are recognized as legacy Automatic profiles. A directory rename is treated
+as removal of the old Automatic profile and discovery of a new one.

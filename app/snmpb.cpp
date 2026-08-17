@@ -53,6 +53,7 @@
 #include "profilemetadataservice.h"
 #include "profiletransfer.h"
 #include "discoverydestination.h"
+#include "mibcollection.h"
 #include "usmprofile.h"
 #include "communitycredentialservice.h"
 #include "communitycredentialmanager.h"
@@ -165,6 +166,21 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     // Creation order is VERY important here
     logsnmpb = new LogSnmpb(this);
     DiagnosticLogger::attachLogWidget(w.LogOutput);
+    QSettings mibRootSettings;
+    const bool migrationComplete = mibRootSettings.value(
+        "mib-library/migration-v1-complete", false).toBool();
+    MibCollectionResult collectionResult = MibCollection(
+        MibCollection::configuredRoot(mibRootSettings)).initialize(
+            prefs->DefaultMibPaths(), migrationComplete ? QString() : MibCollection::legacyManagedRoot());
+    if (!collectionResult.success)
+        DiagnosticLogger::log("MIB", tr("MIB collection initialization failed: %1")
+                              .arg(collectionResult.error));
+    else {
+        mibRootSettings.setValue("mib-library/migration-v1-complete", true);
+        DiagnosticLogger::log("MIB", tr("MIB collection initialized standards-copied=%1 imported-copied=%2 identical=%3 conflicts=%4")
+            .arg(collectionResult.standardsCopied).arg(collectionResult.importedCopied)
+            .arg(collectionResult.identicalSkipped).arg(collectionResult.conflicts.size()));
+    }
     QElapsedTimer mibStartupTimer; mibStartupTimer.start();
     modules = new MibModule(this);
     DiagnosticLogger::log("Startup", QStringLiteral("MIB initialization complete elapsed_ms=%1").arg(mibStartupTimer.elapsed()));
@@ -233,18 +249,29 @@ void Snmpb::BindToGUI(QMainWindow* mw)
         return summary;
     };
     mibLibraryCallbacks.libraryDependencySummary = libraryDependencySummary;
-    mibLibraryCallbacks.cachedDependencies = [this](const QString &id, const QString &signature) {
-        return modules->CachedProfileDependencies(id, signature);
+    mibLibraryCallbacks.collectionChanged = [this]() {
+        modules->RescanPath();
+        QString error;
+        modules->RefreshDependencyIndex(&error);
+        if (!error.isEmpty()) DiagnosticLogger::log("MIB", error);
+    };
+    mibLibraryCallbacks.checkDependencies = [this](QString *error) {
+        modules->CheckProfileDependencies(QStringLiteral("mib-library"),
+            modules->DependencyIndex()->moduleNames(), false, error);
+        return !error || error->isEmpty();
+    };
+    mibLibraryCallbacks.effectivePlan = [this](const MibProfileRecord &profile) {
+        return modules->BuildEffectivePlan(profile);
     };
     phaseTimer.restart();
     mibLibrary = new MibLibraryWidget(prefs->DefaultMibPaths(), w.TabW, nullptr,
                                       mibLibraryCallbacks);
     DiagnosticLogger::log("Startup", QStringLiteral("Inventory construction complete elapsed_ms=%1").arg(phaseTimer.elapsed()));
-    const int mibProfilesTab = w.TabW->insertTab(3, mibLibrary, tr("MIB Profiles"));
-    w.TabW->setTabToolTip(mibProfilesTab,
-        tr("Choose which MIB modules are visible for a device family or task."));
-    w.TabW->setTabToolTip(w.TabW->indexOf(w.ModulesTab),
-        tr("Manage available and loaded MIB modules and validate library dependencies."));
+    const int legacyModulesTab = w.TabW->indexOf(w.ModulesTab);
+    if (legacyModulesTab >= 0) w.TabW->removeTab(legacyModulesTab);
+    const int mibsTab = w.TabW->insertTab(1, mibLibrary, tr("MIBs"));
+    w.TabW->setTabToolTip(mibsTab,
+        tr("Browse the MIB library and choose Automatic or Custom profiles."));
     const auto refreshLibraryDependencyStatus = [this, libraryDependencySummary]() {
         const MibLibraryWidget::DependencySummary summary = libraryDependencySummary();
         if (summary.stale) w.MibLibraryDependencyState->setText(tr("Dependencies need checking"));
@@ -320,13 +347,17 @@ void Snmpb::BindToGUI(QMainWindow* mw)
         mibLibrary->selectProfile(browserProfile->currentData().toString());
     });
     connect(mibLibrary, &MibLibraryWidget::profileSelectionChanged, mw,
-            [this, browserProfile](const QString &id, const QStringList &effective) {
+            [this, browserProfile](const QString &id, const MibEffectivePlan &plan) {
         { const QSignalBlocker blocker(browserProfile);
           const int index = browserProfile->findData(id); if (index >= 0) browserProfile->setCurrentIndex(index); }
-        if (!(initializingMibProfile && id == MibProfileDefinitions::allId()))
-            modules->LoadPreferredModules(effective);
+        QString error;
+        if (!modules->ApplyProfileRuntime(plan, &error)) {
+            if (!error.isEmpty())
+                DiagnosticLogger::log("MIB", tr("Unable to apply MIB profile: %1").arg(error));
+            return;
+        }
         if (id == MibProfileDefinitions::allId()) w.MIBTree->showAllModules();
-        else w.MIBTree->setVisibleModules(effective);
+        else w.MIBTree->setVisibleModules(plan.effectiveModules);
         w.MIBTree->Populate();
     });
     phaseTimer.restart(); mibLibrary->selectProfile(browserProfile->currentData().toString());
@@ -755,9 +786,8 @@ void Snmpb::SetEditorMenus(bool value)
  */
 void Snmpb::TabSelected(void)
 {
-    switch (w.TabW->currentIndex())
-    {
-    case 0: // Tree
+    QWidget *currentTab = w.TabW->currentWidget();
+    if (currentTab == w.TreeTab) {
         SetEditorMenus(false);
         // Set find func to MIB tree
         MainUI()->actionFind->setEnabled(true);
@@ -771,12 +801,14 @@ void Snmpb::TabSelected(void)
         MainUI()->actionMultipleVarbinds->setEnabled(true);
         // Refresh MIB tree if needed
         w.MIBTree->Populate();
-        break;
-    case 1: // Modules
+    } else if (currentTab == mibLibrary) {
+        QElapsedTimer activationTimer; activationTimer.start();
         SetEditorMenus(false);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
-        break;
-    case 2: // Editor
+        mibLibrary->activate();
+        DiagnosticLogger::log("UI", tr("MIBs workspace activation total-ms=%1")
+            .arg(activationTimer.elapsed()));
+    } else if (currentTab == w.EditorTab) {
         SetEditorMenus(true);
         // Set find func to MIB editor 
         disconnect(MainUI()->actionFind, SIGNAL( triggered() ), 0, 0);
@@ -786,32 +818,20 @@ void Snmpb::TabSelected(void)
         connect( MainUI()->actionFindNext, SIGNAL( triggered() ),
                 editor, SLOT( ExecuteFindNext() ) );
         MainUI()->actionMultipleVarbinds->setEnabled(false);
-        break;
-    case 3: // MIB Library
+    } else if (currentTab == w.DiscoveryTab) {
         SetEditorMenus(false);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
-        mibLibrary->refresh();
-        break;
-    case 4: // Discovery
+    } else if (currentTab == w.TrapsTab) {
         SetEditorMenus(false);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
-        break;
-    case 5: // Traps
-        SetEditorMenus(false);
-        MainUI()->actionMultipleVarbinds->setEnabled(false);
-        break;
-    case 6: // Graphs
+    } else if (currentTab == w.GraphsTab) {
         SetEditorMenus(false);
         disconnect(MainUI()->actionFind, SIGNAL( triggered() ), 0, 0);
         disconnect(MainUI()->actionFindNext, SIGNAL( triggered() ), 0, 0);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
-        break;
-    case 7: // Log
+    } else if (currentTab == w.LogTab) {
         SetEditorMenus(false);
         MainUI()->actionMultipleVarbinds->setEnabled(false);
-        break;
-    default:
-        break;
     }
 }
 

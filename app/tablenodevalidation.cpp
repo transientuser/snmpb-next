@@ -1,22 +1,22 @@
 #include "tablenodevalidation.h"
 
-TableNodeValidation ResolveTableRowNode(SmiNode *node,
-                                        SmiNode *firstChild,
-                                        SmiNode **rowNode)
+TableNodeValidation ResolveTableRowNode(const MibEnvironmentNodeRecord *node,
+ const MibEnvironmentNodeRecord *tableRow,const MibEnvironmentNodeRecord **rowNode)
 {
     if (rowNode)
         *rowNode = nullptr;
     if (!node)
         return TableNodeValidation::MissingNode;
-    if (node->nodekind == SMI_NODEKIND_ROW)
+    if (node->kind == MibEnvironmentNodeKind::Row)
     {
         if (rowNode)
             *rowNode = node;
         return TableNodeValidation::Valid;
     }
-    if (node->nodekind != SMI_NODEKIND_TABLE)
+    if (node->kind != MibEnvironmentNodeKind::Table)
         return TableNodeValidation::WrongNodeKind;
-    if (!firstChild || firstChild->nodekind != SMI_NODEKIND_ROW)
+    const auto *firstChild=tableRow;
+    if (!firstChild || firstChild->kind != MibEnvironmentNodeKind::Row)
         return TableNodeValidation::MissingRowNode;
 
     if (rowNode)
@@ -24,12 +24,12 @@ TableNodeValidation ResolveTableRowNode(SmiNode *node,
     return TableNodeValidation::Valid;
 }
 
-bool IsValidTableColumnNode(const SmiNode *node)
+bool IsValidTableColumnNode(const MibEnvironmentNodeRecord *node)
 {
-    return node && node->nodekind == SMI_NODEKIND_COLUMN;
+    return node && node->kind == MibEnvironmentNodeKind::Column;
 }
 
-bool IsTableQueryCapableNodeKind(SmiNodekind kind)
+bool IsTableQueryCapableNodeKind(MibEnvironmentNodeKind kind)
 {
-    return kind == SMI_NODEKIND_TABLE || kind == SMI_NODEKIND_ROW;
+    return kind == MibEnvironmentNodeKind::Table || kind == MibEnvironmentNodeKind::Row;
 }

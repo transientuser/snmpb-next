@@ -5,6 +5,7 @@
 #include "mibprofile.h"
 #include "mibrecords.h"
 #include "mibdependencyindex.h"
+#include "mibeffectiveplan.h"
 #include <QWidget>
 #include <functional>
 
@@ -24,6 +25,12 @@ class MibLibraryWidget : public QWidget
 {
     Q_OBJECT
 public:
+    struct PerformanceCounters {
+        int activations = 0;
+        int automaticProfileScans = 0;
+        int inventoryBuilds = 0;
+        int profilePopulations = 0;
+    };
     struct DependencySummary {
         bool stale = true;
         int knownModules = 0;
@@ -38,13 +45,17 @@ public:
         std::function<MibModuleRecord(const QString &, const QString &)> metadata;
         std::function<QList<MibModuleRecord>()> localInventory;
         std::function<DependencySummary()> libraryDependencySummary;
-        std::function<MibProfileDependencyCheck(const QString &, const QString &)> cachedDependencies;
+        std::function<void()> collectionChanged;
+        std::function<bool(QString *)> checkDependencies;
+        std::function<MibEffectivePlan(const MibProfileRecord &)> effectivePlan;
     };
     explicit MibLibraryWidget(const QStringList &bundledPaths,
                               QWidget *parent = nullptr,
                               MibDownloadTransport *transport = nullptr,
                               Callbacks callbacks = {});
     void refresh();
+    void activate();
+    PerformanceCounters performanceCounters() const { return counters; }
     MibProfileService *profileService() { return &profiles; }
     QStringList availableModuleNames() const;
     MibCatalog dependencyCatalog() const;
@@ -52,7 +63,7 @@ public:
 signals:
     void openModuleRequested(const QString &path, bool readOnly);
     void profilesChanged();
-    void profileSelectionChanged(const QString &id, const QStringList &effectiveModules);
+    void profileSelectionChanged(const QString &id, const MibEffectivePlan &plan);
 private slots:
     void applyFilter();
     void resolveSelected();
@@ -68,7 +79,9 @@ private slots:
     void deleteProfile();
     void addProfileMembers();
     void removeProfileMembers();
-    void downloadProfileMissing();
+    void browseLibraryRoot();
+    void openLibraryRoot();
+    void openProfileFolder();
 private:
     void loadCachedCatalog();
     QString catalogCachePath() const;
@@ -78,8 +91,9 @@ private:
     void setOperationActive(bool active);
     QString originText(const MibLibraryRecord &record) const;
     void refreshProfiles(const QString &selectId = {});
-    void refreshProfileLists();
+    void refreshProfileLists(const MibEffectivePlan *providedPlan = nullptr);
     void saveCurrentProfile();
+    MibEffectivePlan planFor(const MibProfileRecord &profile) const;
     Callbacks callbacks;
     QStringList bundledPaths;
     MibLibraryService library;
@@ -116,12 +130,15 @@ private:
     QPushButton *deleteProfileButton;
     QPushButton *addMemberButton;
     QPushButton *removeMemberButton;
-    QPushButton *downloadMissingButton;
     QLabel *dependencyCheckSummary;
     QPushButton *downloadButton;
     QPushButton *installDependenciesButton;
     QPushButton *refreshButton;
+    QPushButton *openProfileFolderButton;
+    QLineEdit *libraryRootEdit;
+    QLabel *profileSource;
     QPushButton *cancelButton;
+    PerformanceCounters counters;
 };
 
 #endif

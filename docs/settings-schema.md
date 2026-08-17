@@ -25,6 +25,13 @@ this resolves beneath the configured user-scope INI path as
 | `mibpaths/<index>/dir` | string | empty | MIB/PIB search path array entry |
 | `mibpreloads/size` | int | `0` | QSettings array length; zero triggers built-in preload defaults |
 | `mibpreloads/<index>/mib` | string | empty | Automatically wanted MIB module array entry |
+| `mib-library/root` | absolute directory | Qt `DocumentsLocation/MIB Navigator/MIBs` | User-visible working MIB collection root |
+| `mib-library/migration-v1-complete` | bool | `false` | Successful legacy managed-MIB copy migration marker |
+
+The configured root reserves `Standards` and `Unassigned` as recursive global
+library trees that never create Automatic profiles. Other content may use
+`Vendor/Product`; each immediate product directory creates one Automatic
+profile. Custom profile definitions remain application-owned JSON state.
 
 The built-in preload list is `IF-MIB`, `RFC1213-MIB`, `SNMP-FRAMEWORK-MIB`,
 `SNMP-NOTIFICATION-MIB`, `SNMPv2-MIB`, `SNMPv2-TM`, and

@@ -28,7 +28,7 @@
 #include <qtreewidget.h>
 #include <QCoreApplication>
 
-#include "smi.h"
+#include "mibenvironment.h"
 
 class MibNode : public QTreeWidgetItem
 {
@@ -50,7 +50,8 @@ public:
 
     enum class FoldState { COLLAPSED, EXPANDED };
     
-    MibNode(enum MibType mibtype, SmiNode* node, MibNode* parent, MibNode * sibling = NULL);
+    MibNode(enum MibType mibtype, const MibEnvironmentNodeRecord &node,
+            MibEnvironmentPtr environment, MibNode* parent, MibNode * sibling = NULL);
     MibNode(QString label, QTreeWidget * parent);
 
     void SetPixmap(FoldState);
@@ -59,20 +60,22 @@ public:
     enum MibNode::MibType GetKind(void) { return Type; }
     
 protected:
-    const char *GetAccess(void);
-    const char *GetStatus(void);
-    const char *GetTypeName(void);
-    const char *GetBaseTypeName(void);
-    const char *GetKindName(void);
-    const char *GetSmiTypeName(void);
-    QString GetRowIndex(SmiNode *smiNode);
+    QString GetAccess(void) const;
+    QString GetStatus(void) const;
+    QString GetTypeName(void) const;
+    QString GetBaseTypeName(void) const;
+    QString GetKindName(void) const;
+    QString GetSmiTypeName(void) const;
+    QString GetRowIndex(const MibEnvironmentNodeRecord &node) const;
     QString GetSizeRange(void);
     QString GetValueList(void);
                     
 private:
-    SmiNode *ResolveNode() const;
+    const MibEnvironmentNodeRecord *ResolveNode() const;
     enum MibType Type;
     QString Oid;
+    QString QualifiedName;
+    MibEnvironmentPtr Environment;
 };
 
 #endif /* MIBNODE_H */

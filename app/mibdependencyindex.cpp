@@ -5,6 +5,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -29,6 +30,18 @@ QString keyPath(const QString &value) {
 #else
     return QDir::cleanPath(value);
 #endif
+}
+int pathPrecedence(const QString &path, int fallback)
+{
+    const QString normalized = QDir::fromNativeSeparators(path);
+    if (normalized.contains(QStringLiteral("/Standards/"), Qt::CaseInsensitive) ||
+        normalized.endsWith(QStringLiteral("/Standards"), Qt::CaseInsensitive)) return 0;
+    if (normalized.contains(QStringLiteral("/Unassigned/"), Qt::CaseInsensitive) ||
+        normalized.endsWith(QStringLiteral("/Unassigned"), Qt::CaseInsensitive)) return 1;
+    Q_UNUSED(fallback)
+    // Every product package has one global conflict-detection class. An
+    // Effective Plan may still select its own explicit product provider.
+    return 2;
 }
 }
 
@@ -166,15 +179,18 @@ MibDependencyScanResult MibDependencyIndex::update(const QStringList &searchPath
     for (const auto &record : records) old.insert(keyPath(record.canonicalPath), record);
     QList<MibDependencyFileRecord> next; QSet<QString> seen;
     for (int precedence = 0; precedence < searchPaths.size(); ++precedence) {
-        QDir dir(searchPaths[precedence]);
-        for (const QFileInfo &info : dir.entryInfoList(QDir::Files | QDir::Readable, QDir::Name)) {
+        QDirIterator iterator(searchPaths[precedence], QDir::Files | QDir::Readable,
+                              QDirIterator::Subdirectories);
+        while (iterator.hasNext()) {
+            const QFileInfo info(iterator.nextFileInfo());
             if (!MibCandidateFilter::accepts(info.fileName())) continue;
             const QString path = canonical(info), key = keyPath(path); if (seen.contains(key)) continue; seen.insert(key);
+            const int effectivePrecedence = pathPrecedence(path, precedence);
             const qint64 mtime = info.lastModified().toMSecsSinceEpoch();
             if (old.contains(key) && old[key].size == info.size() && old[key].modifiedMsecs == mtime &&
-                old[key].searchPathPrecedence == precedence) { next.append(old[key]); ++result.reused; continue; }
+                old[key].searchPathPrecedence == effectivePrecedence) { next.append(old[key]); ++result.reused; continue; }
             QFile file(path); MibDependencyFileRecord record; record.canonicalPath = path;
-            record.searchPathPrecedence = precedence; record.filename = info.fileName(); record.size = info.size();
+            record.searchPathPrecedence = effectivePrecedence; record.filename = info.fileName(); record.size = info.size();
             record.modifiedMsecs = mtime; record.lastCheckedUtc = QDateTime::currentDateTimeUtc();
             if (!file.open(QIODevice::ReadOnly)) { record.checkState = "unreadable"; record.diagnostic = file.errorString(); }
             else { const QByteArray content = file.readAll(); record.sha256 = QString::fromLatin1(QCryptographicHash::hash(content, QCryptographicHash::Sha256).toHex());
@@ -199,17 +215,19 @@ MibDependencyInspection MibDependencyIndex::inspect(const QStringList &searchPat
     for (const auto &record : records) indexed.insert(keyPath(record.canonicalPath), record);
     QSet<QString> seen;
     for (int precedence = 0; precedence < searchPaths.size(); ++precedence) {
-        QDir dir(searchPaths[precedence]);
-        for (const QFileInfo &info : dir.entryInfoList(QDir::Files | QDir::Readable, QDir::Name)) {
+        QDirIterator iterator(searchPaths[precedence], QDir::Files | QDir::Readable,
+                              QDirIterator::Subdirectories);
+        while (iterator.hasNext()) {
+            const QFileInfo info(iterator.nextFileInfo());
             if (!MibCandidateFilter::accepts(info.fileName())) continue;
             MibPhysicalCandidate candidate; candidate.canonicalPath = canonical(info);
             const QString key = keyPath(candidate.canonicalPath); if (seen.contains(key)) continue; seen.insert(key);
-            candidate.searchPathPrecedence = precedence; candidate.filename = info.fileName();
+            candidate.searchPathPrecedence = pathPrecedence(candidate.canonicalPath, precedence);
             candidate.size = info.size(); candidate.modifiedMsecs = info.lastModified().toMSecsSinceEpoch();
             candidate.indexed = indexed.contains(key);
             candidate.changed = !candidate.indexed || indexed[key].size != candidate.size ||
                 indexed[key].modifiedMsecs != candidate.modifiedMsecs ||
-                indexed[key].searchPathPrecedence != precedence;
+                indexed[key].searchPathPrecedence != candidate.searchPathPrecedence;
             if (candidate.changed) ++result.newOrChanged; else ++result.unchanged;
             result.candidates.append(candidate);
         }
@@ -234,8 +252,41 @@ MibProviderResolution MibDependencyIndex::provider(const QString &moduleName) co
     for (int index : choices) best = std::min(best, records[index].searchPathPrecedence);
     for (int index : choices) if (records[index].searchPathPrecedence == best) result.alternatives.append(records[index].canonicalPath);
     result.alternatives.removeDuplicates();
-    if (result.alternatives.size() == 1) { result.status = MibProviderStatus::Found; result.path = result.alternatives.first(); }
-    else result.status = MibProviderStatus::Ambiguous;
+    result.alternatives.sort(Qt::CaseInsensitive);
+    QSet<QString> hashes;
+    for (int index : choices)
+        if (records[index].searchPathPrecedence == best) hashes.insert(records[index].sha256);
+    if (result.alternatives.size() == 1 || (hashes.size() == 1 && !hashes.contains(QString()))) {
+        result.status = MibProviderStatus::Found;
+        result.path = result.alternatives.first();
+    } else result.status = MibProviderStatus::Ambiguous;
+    return result;
+}
+
+QList<MibIndexedProvider> MibDependencyIndex::providersFor(const QString &moduleName) const
+{
+    QList<MibIndexedProvider> result;
+    for (int index : providers.value(moduleName)) {
+        const auto &record = records[index];
+        MibIndexedProvider provider;
+        provider.moduleName = moduleName;
+        provider.canonicalPath = record.canonicalPath;
+        provider.searchPathPrecedence = record.searchPathPrecedence;
+        provider.filename = record.filename;
+        provider.sha256 = record.sha256;
+        provider.origin = QStringLiteral("search-path:%1").arg(record.searchPathPrecedence);
+        provider.imports = record.importsByModule.value(moduleName);
+        provider.imports.removeDuplicates();
+        provider.imports.sort(Qt::CaseSensitive);
+        provider.checkState = record.checkState;
+        result.append(provider);
+    }
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
+        if (a.searchPathPrecedence != b.searchPathPrecedence)
+            return a.searchPathPrecedence < b.searchPathPrecedence;
+        const int folded = QString::compare(a.canonicalPath, b.canonicalPath, Qt::CaseInsensitive);
+        return folded == 0 ? a.canonicalPath < b.canonicalPath : folded < 0;
+    });
     return result;
 }
 

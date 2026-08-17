@@ -53,20 +53,17 @@ int main(int argc, char **argv)
           !ExtractOidSuffix(row, tooShort, &suffix),
           "suffix extraction rejects unrelated and shorter OIDs");
 
-    SmiNode invalid{};
-    invalid.nodekind = SMI_NODEKIND_COLUMN;
+    MibEnvironmentNodeRecord invalid;
+    invalid.kind = MibEnvironmentNodeKind::Column;
     Oid rendered;
-    check(!RenderSmiNodeOid(nullptr, &rendered) &&
-          !RenderSmiNodeOid(&invalid, &rendered),
+    check(!RenderEnvironmentNodeOid(nullptr, &rendered) &&
+          !RenderEnvironmentNodeOid(&invalid, &rendered),
           "null and incomplete column metadata are rejected");
-    SmiSubid columnOid[] = {1, 3, 6, 1, 2, 1, 2, 2, 1, 2};
-    char columnName[] = "ifDescr";
-    SmiNode valid{};
-    valid.nodekind = SMI_NODEKIND_COLUMN;
-    valid.name = columnName;
-    valid.oidlen = sizeof(columnOid) / sizeof(columnOid[0]);
-    valid.oid = columnOid;
-    check(HasValidColumnInfo(&valid) && RenderSmiNodeOid(&valid, &rendered) &&
+    MibEnvironmentNodeRecord valid;
+    valid.kind = MibEnvironmentNodeKind::Column;
+    valid.name = "ifDescr";
+    valid.oid = "1.3.6.1.2.1.2.2.1.2";
+    check(HasValidColumnInfo(&valid) && RenderEnvironmentNodeOid(&valid, &rendered) &&
           rendered == Oid("1.3.6.1.2.1.2.2.1.2"),
           "valid column metadata renders unchanged");
 

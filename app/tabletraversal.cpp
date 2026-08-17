@@ -36,19 +36,14 @@ bool ExtractOidSuffix(const Oid &root, const Oid &oid, QString *suffix)
     return true;
 }
 
-bool HasValidColumnInfo(const SmiNode *node)
+bool HasValidColumnInfo(const MibEnvironmentNodeRecord *node)
 {
-    return node && node->nodekind == SMI_NODEKIND_COLUMN && node->name &&
-           node->oidlen > 0 && node->oid;
+    return node && node->kind == MibEnvironmentNodeKind::Column && !node->name.isEmpty() && !node->oid.isEmpty();
 }
 
-bool RenderSmiNodeOid(const SmiNode *node, Oid *oid)
+bool RenderEnvironmentNodeOid(const MibEnvironmentNodeRecord *node, Oid *oid)
 {
-    if (!oid || !node || node->oidlen == 0 || !node->oid)
-        return false;
-    char *rendered = smiRenderOID(node->oidlen, node->oid, SMI_RENDER_NUMERIC);
-    if (!rendered)
-        return false;
-    *oid = Oid(rendered);
+    if (!oid || !node || node->oid.isEmpty()) return false;
+    *oid = Oid(node->oid.toLatin1().constData());
     return oid->valid();
 }

@@ -22,8 +22,8 @@ Origin, catalog revision (or `—`), filename, and local path; provider, URL, do
 SHA-256, and routine state are hidden when they do not apply. IANA downloads retain all
 available provenance fields. State is shown only for transient or exceptional conditions.
 
-Profiles are stored in `mibs/profiles-v1.json` using schema version 1 and atomic `QSaveFile`
-writes. A custom record contains a stable UUID, display name, declared module identities,
+Profiles are stored in `mibs/profiles-v1.json` using schema version 2 and atomic `QSaveFile`
+writes. A Custom record contains a stable UUID, display name, declared module identities,
 and the standard-base option. Missing identities remain in the file so installing a module
 later restores it automatically. Reading does not create or rewrite the file.
 
@@ -47,3 +47,14 @@ The browser selector changes visibility through the existing tree proxy. It does
 libsmi modules or rebuild parser state. A module not already loaded is loaded once when first
 needed; subsequent profile switches filter the retained snapshot and avoid parser teardown.
 Connection-to-profile association and device support detection are intentionally deferred.
+
+Automatic profiles answer which MIBs apply to a product line. Beneath the configured
+user-visible root, `Standards/**` and `Unassigned/**` are recursive global library material
+and never create profiles. A `<Vendor>/<Product>` directory creates one Automatic profile
+named `<Vendor> <Product>`; everything below Product belongs to that one profile. A
+first-level folder with no child directories is a simple-product fallback only when it has
+a supported MIB/PIB file directly. Automatic explicit membership comes from declared module
+identities and is read-only. Dependencies augment its effective set through the same global
+graph. Equivalent copies may belong to several products; different-content provider
+conflicts remain global. Selecting any profile changes visibility only and never changes
+runtime Wanted or actual libsmi Loaded state.

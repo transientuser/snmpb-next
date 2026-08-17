@@ -2,11 +2,13 @@
 
 #include "mibtreemodel.h"
 #include "tablenodevalidation.h"
-#include "smi.h"
 
 #include <QContextMenuEvent>
 #include <QInputDialog>
 #include <QMenu>
+
+namespace { constexpr int NodeScalar=2,NodeTable=4,NodeRow=8,NodeColumn=16;
+MibEnvironmentNodeKind environmentKind(int kind){switch(kind){case NodeScalar:return MibEnvironmentNodeKind::Scalar;case NodeTable:return MibEnvironmentNodeKind::Table;case NodeRow:return MibEnvironmentNodeKind::Row;case NodeColumn:return MibEnvironmentNodeKind::Column;default:return MibEnvironmentNodeKind::Unknown;}} }
 
 MibModelView::MibModelView(QWidget *parent)
     : QTreeView(parent), filterModel(new MibTreeFilterModel(this))
@@ -22,7 +24,7 @@ void MibModelView::currentChanged(const QModelIndex &current, const QModelIndex 
 {
     QTreeView::currentChanged(current, previous);
     updateQueryTableAvailability();
-    if (!current.isValid()) return;
+    if (!current.isValid()) { emit NodeProperties({}); return; }
     retainedOid = current.data(MibTreeModel::OidRole).toString();
     emit NodeProperties(detailsFor(current));
 }
@@ -30,8 +32,7 @@ void MibModelView::currentChanged(const QModelIndex &current, const QModelIndex 
 bool MibModelView::queryTableAvailable() const
 {
     return queryPrerequisitesAvailable && currentIndex().isValid() &&
-           IsTableQueryCapableNodeKind(
-               static_cast<SmiNodekind>(currentKind()));
+           IsTableQueryCapableNodeKind(environmentKind(currentKind()));
 }
 
 void MibModelView::updateQueryTableAvailability()
@@ -61,6 +62,8 @@ void MibModelView::setTreeModel(MibTreeModel *source)
     connect(source, &QAbstractItemModel::modelAboutToBeReset, this, [this]() {
         if (currentIndex().isValid())
             retainedOid = currentOid();
+        emit NodeProperties({});
+        emit QueryTableAvailabilityChanged(false);
     });
     connect(source, &QAbstractItemModel::modelReset, this, &MibModelView::restoreSelection);
 }
@@ -101,7 +104,7 @@ QModelIndex MibModelView::proxyIndexForOid(const QString &oid) const
             candidate.truncate(candidate.lastIndexOf(QLatin1Char('.')));
             sourceIndex = source->indexForOid(candidate);
             if (sourceIndex.isValid() &&
-                sourceIndex.data(MibTreeModel::NodeKindRole).toInt() == SMI_NODEKIND_COLUMN)
+                sourceIndex.data(MibTreeModel::NodeKindRole).toInt() == NodeColumn)
                 break;
             sourceIndex = {};
         }
@@ -187,9 +190,9 @@ QString MibModelView::detailsFor(const QModelIndex &index) const
     row(tr("Module"), value(MibTreeModel::ModuleRole));
     const int kind = index.data(MibTreeModel::NodeKindRole).toInt();
     QString structure;
-    if (kind == SMI_NODEKIND_TABLE) structure = tr("Table");
-    else if (kind == SMI_NODEKIND_ROW) structure = tr("Table Entry");
-    else if (kind == SMI_NODEKIND_COLUMN) structure = tr("Column");
+    if (kind == NodeTable) structure = tr("Table");
+    else if (kind == NodeRow) structure = tr("Table Entry");
+    else if (kind == NodeColumn) structure = tr("Column");
     row(tr("Type"), structure);
     row(tr("Syntax"), value(MibTreeModel::TypeRole));
     row(tr("Base type"), value(MibTreeModel::BaseTypeRole));
@@ -219,7 +222,7 @@ void MibModelView::contextMenuEvent(QContextMenuEvent *event)
     QAction *getNextPromptAction = nullptr, *getNextSelectAction = nullptr;
     QAction *getBulkPromptAction = nullptr, *getBulkSelectAction = nullptr;
     const int kind = currentKind();
-    if (kind == SMI_NODEKIND_COLUMN) {
+    if (kind == NodeColumn) {
         QMenu *getMenu = menu.addMenu(tr("Get"));
         getSelectAction = getMenu->addAction(tr("Select Instance"));
         getPromptAction = getMenu->addAction(tr("Prompt for Instance..."));
@@ -244,8 +247,8 @@ void MibModelView::contextMenuEvent(QContextMenuEvent *event)
     menu.addSeparator();
     QAction *findAction = menu.addAction(tr("Find..."));
 
-    const bool leaf = kind == SMI_NODEKIND_SCALAR || kind == SMI_NODEKIND_COLUMN;
-    if (getAction) getAction->setEnabled(kind == SMI_NODEKIND_SCALAR);
+    const bool leaf = kind == NodeScalar || kind == NodeColumn;
+    if (getAction) getAction->setEnabled(kind == NodeScalar);
     if (getBulkAction) getBulkAction->setEnabled(!agentIsV1);
     setAction->setEnabled(leaf);
     tableAction->setEnabled(queryTableAvailable());
