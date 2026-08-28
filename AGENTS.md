@@ -711,6 +711,7 @@ Report:
 14. Exact latest successful build directory.
 15. Exact full executable path.
 16. Whether `windeployqt` completed successfully.
+17. Whether any file-scope safety guardrail was triggered, including the number of files modified and any unexpected scope expansion.
 
 If something appears architecturally wrong even though all tests pass, say so.
 
