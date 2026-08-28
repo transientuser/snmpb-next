@@ -34,6 +34,7 @@ SnmpTableResult SnmpTableOperation::execute(
 {
     SnmpTableResult result;
     result.columns = tablePlan.columns;
+    result.environment = requestContext.environment();
     Oid nextOid = tablePlan.rowOid;
     Oid firstColumnRoot;
     bool haveFirstColumn = false;

@@ -19,8 +19,6 @@
 */
 #ifndef AGENT_H
 #define AGENT_H
-#include "smi.h"
-
 #include <memory>
 #include <qtimer.h>
 
@@ -52,7 +50,6 @@ public:
     void AsyncCallbackTrap(int reason, Pdu &pdu, SnmpTarget &target);
     void AsyncCallbackSet(int reason, Pdu &pdu, SnmpTarget &target);
     
-    static char *GetPrintableValue(SmiNode *node, Vb *vb);
     void ConfigTargetFromSettings(const SnmpRequestConfig& config,
                                   SnmpTarget *target);
     Oid ConfigPduFromSettings(const SnmpRequestConfig& config,
@@ -65,8 +62,6 @@ public:
     int SelectTableInstance(const QString& oid, QString& outinstance);
 
     inline USM *GetUSMObj(void) { return v3mp->get_usm(); }
-
-    static SmiNode* GetNodeFromOid(Oid &oid);
 
 protected:
     int SetupFromCurrentSelection(const QString& oid, SnmpTarget **t, Pdu **p,

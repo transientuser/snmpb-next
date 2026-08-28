@@ -1,4 +1,5 @@
 #include "graphmanager.h"
+#include "mibenvironmentregistry.h"
 
 #include "agentrequestselection.h"
 #include "agentprofileservice.h"
@@ -149,7 +150,7 @@ void GraphManager::poll()
         if(AgentSelectionResolver::ResolveById(app->AgentProfiles()->profiles(),series.profileId,series.protocol,&selection)!=AgentSelectionError::None){pendingErrors.append((series.label.isEmpty()?series.numericOid:series.label)+tr(": unresolved profile or protocol"));continue;}
         if(series.protocol<2){selection.credentials=app->CommunityCredentials()->resolve(selection.profile).values;selection.hasResolvedCredentials=true;}
         SnmpRequestConfig config; if(!selection.requestConfig(&config)){pendingErrors.append((series.label.isEmpty()?series.numericOid:series.label)+tr(": invalid request configuration"));continue;}
-        plans.append(GraphSampleSeriesPlan(series.seriesId,series.numericOid,SnmpRequestContext(config,SnmpRequestOperation::Get)));
+        plans.append(GraphSampleSeriesPlan(series.seriesId,series.numericOid,SnmpRequestContext(config,SnmpRequestOperation::Get,MibEnvironmentRegistry::active())));
         transports.append(std::make_shared<SnmpPlusTransport>(config));
     }
     if(plans.isEmpty()){pollingState.completeCycle();pollingState.stop();startButton->setEnabled(graph&&!graph->series.isEmpty());stopButton->setEnabled(false);setStatus(pendingErrors.isEmpty()?tr("No series"):tr("No runnable series: ")+pendingErrors.join(QStringLiteral("; ")));return;}

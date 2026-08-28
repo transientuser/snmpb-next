@@ -2,9 +2,15 @@
 
 SnmpRequestContext::SnmpRequestContext(const SnmpRequestConfig &config,
                                        SnmpRequestOperation operation)
-    : requestConfig(config), requestOperation(operation)
+    : SnmpRequestContext(config, operation, {})
 {
 }
+
+SnmpRequestContext::SnmpRequestContext(const SnmpRequestConfig &config,
+                                       SnmpRequestOperation operation,
+                                       MibEnvironmentPtr environment)
+    : requestConfig(config), requestOperation(operation),
+      requestEnvironment(std::move(environment)) {}
 
 const SnmpRequestConfig &SnmpRequestContext::config() const
 {
@@ -24,4 +30,9 @@ int SnmpRequestContext::maxRepetitions() const
 int SnmpRequestContext::nonRepeaters() const
 {
     return requestConfig.nonRepeaters;
+}
+
+const MibEnvironmentPtr &SnmpRequestContext::environment() const
+{
+    return requestEnvironment;
 }

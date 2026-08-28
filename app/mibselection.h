@@ -19,7 +19,7 @@
 */
 #ifndef MIBSELECTION_H
 #define MIBSELECTION_H
-#include "smi.h"
+#include "mibenvironment.h"
 
 #include <QValidator>
 #include <QDialog>
@@ -140,7 +140,8 @@ public:
     QString GetOid(void);
     QString GetValue(void);
     QString GetName(void);
-    SmiNode *GetNode(void);
+    MibEnvironmentPtr GetEnvironment(void) const;
+    QString GetSemanticOid(void) const;
 
 public slots:
     void GetValueCb(int index);
@@ -159,9 +160,9 @@ private:
     Snmpb *s;
 
     Vb vb;
-    SmiType *type;  
     QString syntax;
-    SmiNode *node;
+    MibEnvironmentPtr environment;
+    QString semanticOid;
 
     QGridLayout *gl;
     QLabel *oidlabel;

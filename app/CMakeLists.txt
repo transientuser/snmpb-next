@@ -42,6 +42,7 @@ set(SNMPB_APP_SOURCES
     mibenvironment.cpp
     mibenvironmentextractor.cpp
     mibenvironmentregistry.cpp
+    mibvaluesemantics.cpp
     mibprofile.cpp
     mibdownloadtransport.cpp
     miblibrarywidget.cpp
@@ -132,6 +133,7 @@ set(SNMPB_APP_HEADERS
     mibenvironment.h
     mibenvironmentextractor.h
     mibenvironmentregistry.h
+    mibvaluesemantics.h
     mibprofile.h
     mibdownloadtransport.h
     miblibrarywidget.h
@@ -502,6 +504,8 @@ if(BUILD_TESTING)
         mibenvironment.cpp mibenvironment.h mibenvironmentextractor.cpp mibenvironmentextractor.h
         mibenvironmentregistry.cpp mibenvironmentregistry.h mibeffectiveplan.h
         graphlabelresolver.cpp graphlabelresolver.h trappresenter.cpp trappresenter.h traprecord.h
+        mibvaluesemantics.cpp mibvaluesemantics.h
+        snmprequestconfig.cpp snmprequestconfig.h snmprequestcontext.cpp snmprequestcontext.h
         mibnode.cpp mibnode.h mibview.cpp mibview.h mibtreemodel.cpp mibtreemodel.h
         mibmodelview.cpp mibmodelview.h mibrecords.h tablenodevalidation.cpp tablenodevalidation.h
         tabletraversal.cpp tabletraversal.h find.ui mibenvironmentconsumer_test.cpp)
@@ -938,6 +942,10 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_request_context_test
+        mibenvironment.cpp
+        mibenvironment.h
+        mibenvironmentregistry.cpp
+        mibenvironmentregistry.h
         snmprequestconfig.cpp
         snmprequestconfig.h
         snmprequestcontext.cpp

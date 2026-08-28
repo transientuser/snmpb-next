@@ -42,6 +42,7 @@
 #include "tabletraversal.h"
 #include "mibenvironmentregistry.h"
 #include "mibselection.h"
+#include "mibvaluesemantics.h"
 
 #define ASYNC_TIMER_MSEC 5
 #define TRAP_TIMER_MSEC 100
@@ -660,7 +661,8 @@ void Agent::BeginRequest(const SnmpRequestConfig &config,
                          SnmpRequestOperation operation)
 {
     activeRequestContext =
-        std::make_unique<SnmpRequestContext>(config, operation);
+        std::make_unique<SnmpRequestContext>(config, operation,
+                                             MibEnvironmentRegistry::active());
 }
 
 void Agent::ConfigTargetFromSettings(const SnmpRequestConfig& config,
@@ -701,117 +703,6 @@ void Agent::TimerExpired(void)
   snmp->get_eventListHolder()->SNMPProcessPendingEvents();
 }
 
-char *Agent::GetPrintableValue(SmiNode *node, Vb *vb)
-{  
-    SmiValue myvalue;
-    SmiType *type = node?smiGetNodeType(node):NULL;
-     
-    if (type && (type->name == NULL) && 
-        (type->basetype != SMI_BASETYPE_ENUM) && 
-        (type->basetype != SMI_BASETYPE_BITS))
-        type = smiGetParentType(type);
-            
-    if (type)
-    {                
-        myvalue.basetype = type->basetype;
-        myvalue.len = 0;
-        switch (myvalue.basetype)
-        {
-        case SMI_BASETYPE_UNSIGNED32:
-            vb->get_value(myvalue.value.unsigned32);
-            if (vb->get_syntax() == sNMP_SYNTAX_TIMETICKS)
-                return (char*)vb->get_printable_value();
-            else
-                return smiRenderValue(&myvalue, type, SMI_RENDER_ALL);
-            break;
-        case SMI_BASETYPE_INTEGER32:
-            vb->get_value(myvalue.value.integer32);
-            return smiRenderValue(&myvalue, type, SMI_RENDER_ALL);
-        case SMI_BASETYPE_ENUM:
-            vb->get_value(myvalue.value.integer32);
-            return smiRenderValue(&myvalue, type, SMI_RENDER_ALL);
-        case SMI_BASETYPE_OBJECTIDENTIFIER:
-        {
-            Oid val;
-            vb->get_value(val);
-
-            int oidlen = val.len();
-            if (oidlen <= 0) return (char*)""; 
-            SmiSubid *ioid = new SmiSubid[oidlen];
-            for (int idx = 0; idx < oidlen; idx++) ioid[idx] = val[idx];
-
-            myvalue.value.oid = ioid;
-            myvalue.len = oidlen;
-            char *ret = smiRenderValue(&myvalue, type, SMI_RENDER_NAME);
-
-            delete [] ioid;
-            return ret;
-        }
-        case SMI_BASETYPE_OCTETSTRING:
-        case SMI_BASETYPE_BITS: /* Always OCTETS case in the switch below */
-        {
-            switch(vb->get_syntax())
-            {
-            case sNMP_SYNTAX_OCTETS:
-            {
-                static unsigned char buf[5000];
-                unsigned long len;
-                vb->get_value(buf, len, 5000);
-                myvalue.len = len;
-                myvalue.value.ptr = &buf[0];
-                myvalue.value.ptr[len] = '\0';
-                return smiRenderValue(&myvalue, type, SMI_RENDER_ALL);
-            }
-            case sNMP_SYNTAX_OPAQUE:
-            case sNMP_SYNTAX_IPADDR:
-                return (char*)vb->get_printable_value();
-            default:
-                break;
-            }
-        }
-        case SMI_BASETYPE_UNSIGNED64:
-        {
-            Counter64 cntr64;
-            if (vb->get_value(cntr64) == SNMP_CLASS_SUCCESS)
-            {
-                myvalue.value.unsigned64 = Counter64::c64_to_ll(cntr64);
-                return smiRenderValue(&myvalue, type, SMI_RENDER_ALL);
-            }
-        }
-        case SMI_BASETYPE_UNKNOWN:
-        default:
-            break;
-        }
-    }
-    
-    // Last resort ...
-    return (char*)vb->get_printable_value();
-}
-
-// This routine get the sminode pointer based on the oid
-// Note that this routine must create a temporary buffer
-// because of 64 bits platform issues where an "unsigned long"
-// might be 8 bytes long ...
-SmiNode* Agent::GetNodeFromOid(Oid &oid)
-{
-    SmiNode *node = NULL;
-    int oidlen = oid.len();
-
-    if (oidlen <= 0)
-        return node; 
-
-    SmiSubid *ioid = new SmiSubid[oidlen];
-
-    for (int idx = 0; idx < oidlen; idx++)
-        ioid[idx] = oid[idx];
-
-    node = smiGetNodeByOID(oidlen, &ioid[0]);
-
-    delete [] ioid;
-
-    return node;
-}
-
 void Agent::AsyncCallbackTrap(int reason, Pdu &pdu, SnmpTarget &target)
 {
     static unsigned int nbr = 1;
@@ -841,21 +732,7 @@ void Agent::AsyncCallbackTrap(int reason, Pdu &pdu, SnmpTarget &target)
     timestamp = ts.get_printable();
   
     pdu.get_notify_id(id);
-    SmiNode *node = GetNodeFromOid(id);
-    if (node)
-    {
-        char *b = smiRenderOID(node->oidlen, node->oid, 
-                               SMI_RENDER_NUMERIC);
-        char *f = (char*)id.get_printable();
-        while ((*b++ == *f++) && (*b != '\0') && (*f != '\0')) ;
-        /* f is now the remaining part */
-      
-        // Print the OID part
-        nottype = node->name;
-        if (*f != '\0') nottype += QString(f);
-    }
-    else
-        nottype = id.get_printable();
+    nottype = RenderMibOid(MibEnvironmentRegistry::active(), id);
       
     switch(pdu.get_type())
     {
@@ -1041,63 +918,15 @@ void Agent::AsyncCallback(int reason, Pdu &pdu,
             {
                 objects++;
 
-node_restart:
-                SmiNode *node = GetNodeFromOid(tmp);
-
-                // Oid not fully resolved, attempting to load mib that will
-                if (!node)
+                const auto resolved=ResolveMibObject(
+                    activeRequestContext?activeRequestContext->environment():MibEnvironmentPtr{},tmp);
+                if (resolved.node)
                 {
-                    QString mod = 
-                        s->MibModuleObj()->LoadBestModule(tmp.get_printable());
-                    if (mod != "")
-                    {
-                        msg += tr("[<font color=red>Loading %1</font>]<br>").arg(mod);
-                        goto node_restart;
-                    }
-                }
-
-                if (node)
-                {
-                    char *b = smiRenderOID(node->oidlen, node->oid, 
-                                           SMI_RENDER_NUMERIC);
-                    char *f = (char*)vb.get_printable_oid();
-                    while ((*b++ == *f++) && (*b != '\0') && (*f != '\0')) ;
-                    /* f is now the remaining part */
-
-                    // Oid not fully resolved, attempting to load mib that will
-                    if (strcmp(f,".0"))
-                    {
-                        QString mod = 
-                            s->MibModuleObj()->LoadBestModule(tmp.get_printable());
-                        if (mod != "")
-                        {
-                            msg += tr("[<font color=red>Loading %1</font>]<br>").arg(mod);
-                            goto node_restart;
-                        }
-                    }
-         
-                    // If the VB type is an OID, make sure the best module 
-                    // resolving it is loaded
-                    SmiType *type = smiGetNodeType(node);
-                    if (type && (type->basetype == SMI_BASETYPE_OBJECTIDENTIFIER))
-                    {
-                        Oid val_oid;
-                        vb.get_value(val_oid);
-                        QString mod = 
-                            s->MibModuleObj()->LoadBestModule(val_oid.get_printable());
-                        if (mod != "")
-                        {
-                            msg += tr("[<font color=red>Loading %1</font>]<br>").arg(mod);
-                            goto node_restart;
-                        }
-                    }
-
                     if (vb_error || (pdu_error && (z+1 == pdu_index)))
                         msg += tr("<font color=red>ERROR on varbind #</font>");
 
                     // Print the OID part
-                    msg += QString("%1: %2").arg(objects).arg(node->name);
-                    if (*f != '\0') msg += QString("%1").arg(f);
+                    msg += QString("%1: %2").arg(objects).arg(RenderMibOid(resolved.environment,tmp));
 
                     if (vb_error || (pdu_error && (z+1 == pdu_index)))
                     {
@@ -1114,11 +943,7 @@ node_restart:
 
                     // Print the value part
                     msg += tr("    <font color=blue>%1</font>")
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-                                   .arg(Qt::escape(GetPrintableValue(node, &vb)));
-#else
-                                   .arg(QString(GetPrintableValue(node, &vb)).toHtmlEscaped());
-#endif
+                               .arg(RenderMibValue(resolved,vb).toHtmlEscaped());
                 }
                 else
                 {
@@ -1270,21 +1095,15 @@ void Agent::AsyncCallbackSet(int reason, Pdu &pdu, SnmpTarget &target)
 
             objects++;
 
-            SmiNode *node = GetNodeFromOid(tmp);
-            if (node)
+            const auto resolved=ResolveMibObject(
+                activeRequestContext?activeRequestContext->environment():MibEnvironmentPtr{},tmp);
+            if (resolved.node)
             {
-                char *b = smiRenderOID(node->oidlen, node->oid, 
-                        SMI_RENDER_NUMERIC);
-                char *f = (char*)vb.get_printable_oid();
-                while ((*b++ == *f++) && (*b != '\0') && (*f != '\0')) ;
-                /* f is now the remaining part */
-
                 if (vb_error || (pdu_error && (z+1 == pdu_index)))
                     msg += tr("<font color=red>ERROR on varbind #</font>");
 
                 // Print the OID part
-                msg += tr("%1: %2").arg(objects).arg(node->name);
-                if (*f != '\0') msg += QString("%1").arg(f);
+                msg += tr("%1: %2").arg(objects).arg(RenderMibOid(resolved.environment,tmp));
 
                 if (vb_error || (pdu_error && (z+1 == pdu_index)))
                 {
@@ -1300,11 +1119,7 @@ void Agent::AsyncCallbackSet(int reason, Pdu &pdu, SnmpTarget &target)
 
                 // Print the value part
                 msg += tr("    <font color=blue>%1</font>")
-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
-                           .arg(Qt::escape(GetPrintableValue(node, &vb)));
-#else
-                           .arg(QString(GetPrintableValue(node, &vb)).toHtmlEscaped());
-#endif
+                           .arg(RenderMibValue(resolved,vb).toHtmlEscaped());
             }
             else
             {
@@ -1681,7 +1496,8 @@ void Agent::TableViewFrom(const QString& oid)
         if (RenderEnvironmentNodeOid(node, &columnOid))
             plan.columns.append({node->name, columnOid});
     }
-    const SnmpRequestContext context(config, SnmpRequestOperation::Walk);
+    const SnmpRequestContext context(config, SnmpRequestOperation::Walk,
+                                     environment);
     s->MainUI()->actionStop->setEnabled(true);
     emit StartWalk(true);
     if (!tableRunner->start(context, plan,
@@ -1710,9 +1526,8 @@ void Agent::PresentTableResult(const SnmpTableResult &result)
             }
             Vb vb = row.cells[i].varbind;
             Oid oid = result.columns[i].oid;
-            SmiNode *node = GetNodeFromOid(oid);
             output += QString("<td>%1</td>").arg(
-                QString(GetPrintableValue(node, &vb)).toHtmlEscaped());
+                RenderMibValue(ResolveMibObject(result.environment,oid),vb).toHtmlEscaped());
         }
         output += QString("</tr>");
     }
@@ -1735,33 +1550,10 @@ void Agent::PresentTableResult(const SnmpTableResult &result)
 
 QString Agent::GetValueString(MibSelection &ms, Vb* vb)
 {
-    // Get the printable value, with an exception for the ENUMs and C64
     if (!ms.GetValue().isEmpty())
     {
-        if (ms.GetNode() && 
-            (smiGetNodeType(ms.GetNode())->basetype == SMI_BASETYPE_ENUM) && 
-            (ms.GetSyntax() == sNMP_SYNTAX_INT32))
-        {
-            return GetPrintableValue(ms.GetNode(), vb);
-        }
-        else
-            if (ms.GetSyntax() == sNMP_SYNTAX_CNTR64)
-            {    
-                SmiValue myvalue;
-                myvalue.basetype = SMI_BASETYPE_UNSIGNED64;
-                myvalue.len = 0;
-                Counter64 cntr64;
-                SmiType mytype;
-                mytype.basetype = SMI_BASETYPE_UNSIGNED64;
-                mytype.format = 0;
-                if (vb->get_value(cntr64) == SNMP_CLASS_SUCCESS)
-                {
-                    myvalue.value.unsigned64 = Counter64::c64_to_ll(cntr64);
-                    return smiRenderValue(&myvalue, &mytype, SMI_RENDER_ALL);
-                }
-            }
-            else
-                return vb->get_printable_value();
+        const Oid oid(ms.GetSemanticOid().toLatin1().constData());
+        return RenderMibValue(ResolveMibObject(ms.GetEnvironment(),oid),*vb);
     }
 
     return "";
@@ -2099,7 +1891,8 @@ int Agent::SelectTableInstance(const QString &oid, QString &outinstance)
     SnmpInstanceResult result;
     connect(&runner, &SnmpInstanceAsyncRunner::completed, &loop,
             [&](const SnmpInstanceResult &value) { result = value; loop.quit(); });
-    runner.start(SnmpRequestContext(config, SnmpRequestOperation::Walk), root,
+    runner.start(SnmpRequestContext(config, SnmpRequestOperation::Walk,
+                                   MibEnvironmentRegistry::active()), root,
                  std::make_unique<SnmpPlusTransport>(config));
     loop.exec();
     runner.wait();
@@ -2137,7 +1930,8 @@ void Agent::GetFromSelectInstance(const QString& oid, int op)
     pendingInstanceOperation = op;
     s->MainUI()->actionStop->setEnabled(true);
     emit StartWalk(true);
-    instanceRunner->start(SnmpRequestContext(config, SnmpRequestOperation::Walk),
+    instanceRunner->start(SnmpRequestContext(config, SnmpRequestOperation::Walk,
+                                             MibEnvironmentRegistry::active()),
                           root, std::make_unique<SnmpPlusTransport>(config));
 }
 

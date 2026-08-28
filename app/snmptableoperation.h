@@ -41,6 +41,7 @@ struct SnmpTableResult
     int requests = 0;
     int transportStatus = 0;
     int snmpErrorStatus = 0;
+    MibEnvironmentPtr environment;
 };
 
 class SnmpCancellationToken
