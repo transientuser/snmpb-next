@@ -324,6 +324,15 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    function(snmpb_configure_qt_test_runtime)
+        if(WIN32)
+            foreach(test_name IN LISTS ARGN)
+                set_property(TEST ${test_name} PROPERTY ENVIRONMENT
+                    "PATH=$<TARGET_FILE_DIR:Qt6::Core>\;$ENV{PATH}")
+            endforeach()
+        endif()
+    endfunction()
+
     add_executable(snmpb_mib_dependency_index_test
         mibcandidatefilter.cpp mibcandidatefilter.h
         miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
@@ -1013,4 +1022,45 @@ if(BUILD_TESTING)
             -P ${PROJECT_SOURCE_DIR}/cmake/RunSnmpbLaunchSmoke.cmake
     )
     set_tests_properties(snmpb.launch-smoke PROPERTIES TIMEOUT 60)
+
+    snmpb_configure_qt_test_runtime(
+        snmpb.mib-dependency-index
+        snmpb.mib-effective-plan
+        snmpb.mib-startup-path
+        snmpb.stability-diagnostics
+        snmpb.connection-request-settings
+        snmpb.product-identity
+        snmpb.graph-v2
+        snmpb.mib-service
+        snmpb.mib-environment
+        snmpb.mib-environment-large
+        snmpb.mib-environment-consumers
+        snmpb.mib-environment-transitions
+        snmpb.mib-environment-consumers-large
+        snmpb.mib-library
+        snmpb.mib-profile
+        snmpb.mib-inventory-widget
+        snmpb.trap-pipeline
+        snmpb.discovery-operation
+        snmpb.snmp-operations
+        snmpb.community-credential
+        snmpb.credential-architecture
+        snmpb.discovery-destination
+        snmpb.preferred-mib
+        snmpb.profile-transfer
+        snmpb.profile-metadata
+        snmpb.agentprofile-service
+        snmpb.agentprofile-operations
+        snmpb.device-tree-repository
+        snmpb.device-tree-model
+        snmpb.device-pane
+        snmpb.table-traversal
+        snmpb.table-node-validation
+        snmpb.synchronous-config
+        snmpb.agent-selection
+        snmpb.request-context
+        snmpb.request-config
+        snmpb.preferences-settings
+        snmpb.agentprofile-repository
+    )
 endif()
