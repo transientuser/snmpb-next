@@ -1,6 +1,8 @@
 #include "mibservice.h"
 
 #include "mibdiagnosticcollector.h"
+#include "mibengine.h"
+#include "mibservice_internal.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -52,16 +54,17 @@ QString baseTypeName(SmiBasetype value)
 }
 }
 
-MibService::MibService(SmiErrorHandler *restoreHandler, int restoreErrorLevel)
-    : restoreErrorHandler(restoreHandler), restoredErrorLevel(restoreErrorLevel) {}
+MibService::MibService() = default;
 
 void MibService::setSearchPaths(const QStringList &paths)
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("set-search-paths"));
     smiSetPath(paths.join(QDir::listSeparator()).toLocal8Bit().constData());
 }
 
 QStringList MibService::searchPaths() const
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("get-search-paths"));
     std::unique_ptr<char, decltype(&std::free)> path{smiGetPath(), std::free};
     return path ? QString::fromLocal8Bit(path.get()).split(QDir::listSeparator(), Qt::KeepEmptyParts)
                 : QStringList();
@@ -69,6 +72,7 @@ QStringList MibService::searchPaths() const
 
 MibLoadResult MibService::loadModules(const QStringList &modules, int errorLevel)
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("load-modules"));
     MibLoadResult result;
     result.operationId = nextOperationId++;
     result.requestedModules = modules;
@@ -80,7 +84,7 @@ MibLoadResult MibService::loadModules(const QStringList &modules, int errorLevel
         MibDiagnosticCollector collector(result.operationId, requested);
         collector.install(errorLevel);
         char *canonical = smiLoadModule(requested.toLocal8Bit().constData());
-        collector.finish(restoreErrorHandler, restoredErrorLevel);
+        collector.finish(nullptr, 0);
         result.diagnostics.append(collector.diagnostics());
         if (canonical)
             result.loadedModules.append(QString::fromLocal8Bit(canonical));
@@ -100,11 +104,12 @@ MibLoadResult MibService::loadPreloads(const QStringList &preloads, int errorLev
 
 QList<MibModuleRecord> MibService::modulesFromFile(const QString &path) const
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("modules-from-file"));
     QList<MibModuleRecord> result;
     const QString canonicalPath = QFileInfo(path).canonicalFilePath();
     if (canonicalPath.isEmpty()) return result;
     for (SmiModule *module = smiGetFirstModule(); module; module = smiGetNextModule(module)) {
-        const MibModuleRecord record = snapshotModule(module);
+        const MibModuleRecord record = SnapshotMibModule(module);
         if (QFileInfo(record.path).canonicalFilePath().compare(
                 canonicalPath, Qt::CaseInsensitive) == 0)
             result.append(record);
@@ -112,7 +117,7 @@ QList<MibModuleRecord> MibService::modulesFromFile(const QString &path) const
     return result;
 }
 
-QString MibService::languageName(SmiLanguage language)
+static QString languageName(SmiLanguage language)
 {
     switch (language) {
     case SMI_LANGUAGE_SMIV1: return QStringLiteral("SMIv1");
@@ -123,14 +128,15 @@ QString MibService::languageName(SmiLanguage language)
     }
 }
 
-QString MibService::oidText(SmiNode *node)
+static QString oidText(SmiNode *node)
 {
     const char *text = node ? smiRenderOID(node->oidlen, node->oid, SMI_RENDER_NUMERIC) : nullptr;
     return safe(text);
 }
 
-MibModuleRecord MibService::snapshotModule(SmiModule *module)
+MibModuleRecord SnapshotMibModule(SmiModule *module)
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("snapshot-module"));
     MibModuleRecord record;
     if (!module)
         return record;
@@ -165,17 +171,19 @@ MibModuleRecord MibService::snapshotModule(SmiModule *module)
 
 QList<MibModuleRecord> MibService::moduleInventory() const
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("module-inventory"));
     QList<MibModuleRecord> result;
     for (SmiModule *module = smiGetFirstModule(); module; module = smiGetNextModule(module))
-        result.append(snapshotModule(module));
+        result.append(SnapshotMibModule(module));
     std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
         return a.name < b.name;
     });
     return result;
 }
 
-MibTreeNodeRecord MibService::snapshotNode(SmiNode *node)
+MibTreeNodeRecord SnapshotMibNode(SmiNode *node)
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("snapshot-node"));
     MibTreeNodeRecord record;
     if (!node)
         return record;
@@ -206,12 +214,12 @@ MibTreeNodeRecord MibService::snapshotNode(SmiNode *node)
     return record;
 }
 
-void MibService::appendTree(SmiNode *node, const QSet<QString> &included,
-                            MibTreeNodeRecord *parent)
+static void appendTree(SmiNode *node, const QSet<QString> &included,
+                       MibTreeNodeRecord *parent)
 {
     if (!node || !parent)
         return;
-    MibTreeNodeRecord current = snapshotNode(node);
+    MibTreeNodeRecord current = SnapshotMibNode(node);
     const bool directlyIncluded = included.isEmpty() || included.contains(current.moduleName);
     for (SmiNode *child = smiGetFirstChildNode(node); child;
          child = smiGetNextChildNode(child))
@@ -222,6 +230,7 @@ void MibService::appendTree(SmiNode *node, const QSet<QString> &included,
 
 MibTreeNodeRecord MibService::treeSnapshot(const QStringList &includedModules) const
 {
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("tree-snapshot"));
     MibTreeNodeRecord root;
     root.oid = QStringLiteral("1");
     root.name = QStringLiteral("MIB Tree");

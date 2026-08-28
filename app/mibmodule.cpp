@@ -38,12 +38,14 @@
 #include "preferences.h"
 #include "preferredmibresolver.h"
 #include "mibservice.h"
+#include "mibservice_internal.h"
+#include "mibengine.h"
 #include "mibprofile.h"
 #include "mibcandidatefilter.h"
 
-LoadedMibModule::LoadedMibModule(SmiModule* mod)
+LoadedMibModule::LoadedMibModule(MibModuleRecord moduleRecord)
+    : record(std::move(moduleRecord))
 {
-    record = MibService::snapshotModule(mod);
     name = record.name;
     path = record.path;
 }
@@ -205,6 +207,12 @@ void MibModule::RebuildTotalList()
     RebuildCandidateList();
 }
 
+MibModule::~MibModule()
+{
+    CurrentModuleObject=nullptr;
+    MibEngine::instance().shutdown();
+}
+
 #if 0 // Historical compile-all implementation retained only as migration reference.
 void MibModule::RebuildTotalListLegacyCompileAll()
 {
@@ -252,7 +260,7 @@ void MibModule::RebuildTotalListLegacyCompileAll()
 
                 if (smiModule)
                 {
-                    const MibService service(NormalErrorHdlr, 3);
+                    const MibService service;
                     for (const MibModuleRecord &record :
                          service.modulesFromFile(d.absoluteFilePath(fn))) {
                         if (!KnownModuleNames.contains(record.name))
@@ -298,6 +306,7 @@ void MibModule::RebuildTotalListLegacyCompileAll()
 
 void MibModule::RebuildCandidateList()
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("candidate-list"));
     std::unique_ptr<char, decltype(&std::free)> rawPath{smiGetPath(), std::free};
     const QStringList paths = rawPath ? QString::fromLocal8Bit(rawPath.get()).split(
         SMI_PATH_SEPARATOR, Qt::SkipEmptyParts) : QStringList{};
@@ -324,6 +333,7 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
     const QString &profileId, const QStringList &explicitModules,
     bool includeStandardBase, QString *error)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("dependency-check"));
     QElapsedTimer totalTimer;
     totalTimer.start();
     const MibDependencyScanResult scan = RefreshDependencyIndex(error);
@@ -361,7 +371,7 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
         }
         ErrorWhileLoading = false;
         char *canonicalName = smiLoadModule(QDir::toNativeSeparators(path).toLocal8Bit().constData());
-        const QList<MibModuleRecord> fromFile = MibService(NormalErrorHdlr, 3).modulesFromFile(path);
+        const QList<MibModuleRecord> fromFile = MibService().modulesFromFile(path);
         for (const MibModuleRecord &record : fromFile) attempt.loadedModuleNames.append(record.name);
         attempt.success = canonicalName && attempt.loadedModuleNames.contains(expected) && !ErrorWhileLoading;
         if (!attempt.success) attempt.diagnostic = ErrorWhileLoading
@@ -410,6 +420,7 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
 
 MibDependencyScanResult MibModule::RefreshDependencyIndex(QString *error)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("dependency-refresh"));
     ReadMibPaths(); std::unique_ptr<char, decltype(&std::free)> rawPath{smiGetPath(), std::free};
     const QStringList paths = rawPath ? QString::fromLocal8Bit(rawPath.get()).split(
         SMI_PATH_SEPARATOR, Qt::SkipEmptyParts) : QStringList{};
@@ -443,16 +454,18 @@ QStringList MibModule::LoadedModuleNames() const
 
 MibModuleRecord MibModule::ModuleMetadata(const QString &moduleName, const QString &localPath)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("module-metadata"));
     SmiModule *module = smiGetModule(moduleName.toLocal8Bit().constData());
     if (!module && !localPath.isEmpty()) {
         char *loaded = smiLoadModule(QFileInfo(localPath).fileName().toLocal8Bit().constData());
         module = loaded ? smiGetModule(loaded) : nullptr;
     }
-    return MibService::snapshotModule(module);
+    return SnapshotMibModule(module);
 }
 
 QStringList MibModule::LoadPreferredModules(const QStringList &modules)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("load-preferred"));
     PreferredMibResolution resolution;
     QStringList loadedNow; QSet<QString> loading;
     std::function<bool(const QString &)> loadIdentity;
@@ -498,6 +511,7 @@ MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) 
 
 QStringList MibModule::LoadEffectivePlan(const MibEffectivePlan &plan)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("load-effective-plan"));
     const auto load = [this](const QString &path, const QString &identity) {
             MibDependencyLoadAttempt attempt;
             SmiModule *loaded = smiGetModule(identity.toLocal8Bit().constData());
@@ -621,6 +635,7 @@ bool lessThanLoadedMibModule(const LoadedMibModule &lm1,
 
 void MibModule::RebuildLoadedList()
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("loaded-list"));
     Loaded.clear();
     s->MainUI()->LoadedModules->clear();
 
@@ -628,7 +643,7 @@ void MibModule::RebuildLoadedList()
          mod;
          mod = smiGetNextModule(mod) )
     {
-        LoadedMibModule lmodule(mod);
+        LoadedMibModule lmodule(SnapshotMibModule(mod));
         Loaded.append(lmodule);
 
         QString required = Wanted.contains(lmodule.name) ? tr("yes") : tr("no");
@@ -738,6 +753,7 @@ void MibModule::RemoveModule()
 
 void MibModule::ReadMibPaths()
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("read-search-paths"));
     // read in MIB path from config
     QStringList paths;
     QSettings settings;
@@ -788,6 +804,7 @@ void MibModule::PersistWanted() const
 
 bool MibModule::ReconstructRuntime(const QStringList &requests, QString *error)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("legacy-reconstruction"));
     hasActiveProfilePlan = false;
     currentEnvironment.reset();
     MibEnvironmentRegistry::publish({});
@@ -832,6 +849,7 @@ bool MibModule::ReconstructRuntime(const QStringList &requests, QString *error)
 
 bool MibModule::ReconstructRuntime(const MibEffectivePlan &plan, QString *error)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("plan-reconstruction"));
     QElapsedTimer totalTimer; totalTimer.start();
     RegenerateSmiConf();
     InitLib(1);
@@ -892,6 +910,7 @@ bool MibModule::ApplyProfileRuntime(const MibEffectivePlan &plan, QString *error
 bool MibModule::ValidateModuleFile(const QString &path, QString *error,
                                    MibValidationLevel level)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("module-validation"));
     DiagnosticLogger::log("MIB", QStringLiteral("Downloaded MIB validation begin file=%1")
                           .arg(path));
     const int savedFlags = smiGetFlags();
@@ -918,6 +937,7 @@ bool MibModule::ValidateModuleFile(const QString &path, QString *error,
 
 void MibModule::Refresh()
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("refresh"));
     std::unique_ptr<char, decltype(&std::free)> old_smipath{ smiGetPath(), std::free };
     ReadMibPaths();
     std::unique_ptr<char, decltype(&std::free)> new_smipath{ smiGetPath(), std::free };
@@ -949,19 +969,18 @@ void MibModule::RescanPath()
 
 void MibModule::InitLib(int restart)
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("parser-lifecycle"));
     if (restart)
     {
         std::unique_ptr<char, decltype(&std::free)>
             smipath{ smiGetPath(), std::free };
-        smiExit();
-        smiInit(NULL);
-        smiSetPath(smipath.get());
+        MibEngine::instance().initialize(QString::fromLocal8Bit(smipath.get()),true);
         smiSetErrorHandler(NormalErrorHdlr);
         smiSetErrorLevel(0);
     }
     else
     {
-        smiInit(NULL);
+        MibEngine::instance().initialize();
         smiSetFlags(smiGetFlags() | SMI_FLAG_ERRORS);
         smiSetErrorHandler(NormalErrorHdlr);
         smiSetErrorLevel(0);
@@ -972,6 +991,7 @@ void MibModule::InitLib(int restart)
 
 void MibModule::RegenerateSmiConf()
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("parser-configuration"));
     QFile smiconf(s->GetSmiConfigFile());
     if (!smiconf.open(QIODevice::WriteOnly | QIODevice::Text))
     {

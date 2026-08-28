@@ -61,7 +61,7 @@
 #include "preferences.h"
 
 // These are needed to get the libraries version strings for the about box
-#include "smi.h"
+#include "mibengine.h"
 #include "tomcrypt.h"
 #if SNMPB_ENABLE_QWT
 #include "qwt.h"
@@ -841,7 +841,7 @@ void Snmpb::AboutBox(bool)
         "SNMP++ %1; LibTomCrypt %2; libsmi %3; Qt %4")
         .arg(SNMP_PP_VERSION_STRING)
         .arg(SCRYPT)
-        .arg(SMI_VERSION_STRING)
+        .arg(MibEngine::instance().libraryVersion())
         .arg(qVersion());
 #if SNMPB_ENABLE_QWT
     dependencies += QStringLiteral("; Qwt %1").arg(QWT_VERSION_STR);

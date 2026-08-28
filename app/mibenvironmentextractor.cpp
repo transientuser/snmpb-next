@@ -1,4 +1,5 @@
 #include "mibenvironmentextractor.h"
+#include "mibengine.h"
 #include "mibparsernodesafety.h"
 
 #include "smi.h"
@@ -192,6 +193,7 @@ QString canonicalPath(const QString &path)
 MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
                                                     const QStringList &failedIdentities) const
 {
+    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("environment-extraction"));
     QElapsedTimer timer; timer.start();
     std::shared_ptr<MibEnvironment> environment(new MibEnvironment);
     environment->planSha256 = plan.sha256;

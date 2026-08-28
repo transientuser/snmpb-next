@@ -30,6 +30,7 @@
 #include <qfileinfo.h>
 #include <qpainter.h>
 #include "mibeditor.h"
+#include "mibengine.h"
 #include "mibmodule.h"
 #include "miblibrary.h"
 
@@ -456,46 +457,24 @@ void MibEditor::ErrorHandler(char *path, int line, int severity,
     diagnosticModel->setDiagnostics(diagnostics);
 }
 
-MibEditor *CurrentEditorObject = NULL;
-static void ErrorHdlr(char *path, int line, int severity, 
-                      char *msg, char *tag)
-{
-    CurrentEditorObject->ErrorHandler(path, line, severity, msg, tag);
-}
-
 void MibEditor::VerifyMIB(void)
 {
-    int flags =  smiGetFlags();
-    int saved_flags = flags;
-    flags |= SMI_FLAG_ERRORS;
-    flags |= SMI_FLAG_NODESCR;
     const auto level = static_cast<MibValidationLevel>(validationLevel->currentData().toInt());
-    if (MibValidationRecursive(level)) flags |= SMI_FLAG_RECURSIVE;
-    else flags &= ~SMI_FLAG_RECURSIVE;
-    smiSetFlags(flags);
-
     diagnostics.clear();
     diagnosticModel->setDiagnostics(diagnostics);
-    CurrentEditorObject = this;
-    smiSetErrorHandler(ErrorHdlr);
-    smiSetErrorLevel(MibValidationErrorLevel(level));
-
     num_error = 0;
     num_warning = 0;
     num_info = 0;
 
     s->MainUI()->MIBLogL->setText(tr("Verification diagnostics — running..."));
 
-    const QString validationDirectory = QFileInfo(LoadedFile).absolutePath();
-    QString stagingError;
-    if (!MibValidationStaging::validate(
-            s->MainUI()->MIBFile->toPlainText().toUtf8(), validationDirectory,
-            [](const QString &path) {
-                return smiLoadModule(QDir::toNativeSeparators(path).toLocal8Bit().constData()) != nullptr;
-            }, &stagingError) && !stagingError.isEmpty()) {
-        ErrorHandler(nullptr, 0, 2, stagingError.toLocal8Bit().data(),
-                     const_cast<char *>("validation-staging"));
-    }
+    const auto result=MibEngine::instance().validateSource(
+        s->MainUI()->MIBFile->toPlainText().toUtf8(),QFileInfo(LoadedFile).absolutePath(),
+        MibValidationErrorLevel(level),MibValidationRecursive(level));
+    diagnostics=result.diagnostics;
+    for(const auto &diagnostic:std::as_const(diagnostics)){
+        if(diagnostic.severity<=3)++num_error;else if(diagnostic.severity<=5)++num_warning;else ++num_info;}
+    diagnosticModel->setDiagnostics(diagnostics);
 
     //: %1, %2, %3 are placeholders for pluralized num. of errors, warnings, infos
     QString stop_msg = tr("Verification complete. %1, %2, %3")
@@ -504,8 +483,6 @@ void MibEditor::VerifyMIB(void)
                           .arg(tr("%n infos", "", num_info))
                           ;
     s->MainUI()->MIBLogL->setText(stop_msg);
-
-    smiSetFlags(saved_flags);
 
     // Reload everything
     s->MibModuleObj()->Refresh();

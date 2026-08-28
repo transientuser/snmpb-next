@@ -22,7 +22,6 @@
 
 #include "snmpb.h"
 #include "mibview.h"
-#include "smi.h"
 #include "mibrecords.h"
 #include "miblibrary.h"
 #include "mibdependencyindex.h"
@@ -35,7 +34,7 @@
 class LoadedMibModule
 {
 public:
-    LoadedMibModule(SmiModule* mod);
+    explicit LoadedMibModule(MibModuleRecord moduleRecord);
     
     void PrintProperties(QString& text);   
     QString GetMibLanguage() const;
@@ -53,6 +52,7 @@ public:
     enum AutomaticLoadingPolicy {MIBLOAD_ALL, MIBLOAD_DEFAULT, MIBLOAD_NONE};
 
     MibModule(Snmpb *snmpb);
+    ~MibModule() override;
     void SendLogError(const QString& text){ErrorWhileLoading=true; emit LogError(text);}
     QString LoadBestModule(QString oid);
     void SetLoadingPolicy(enum AutomaticLoadingPolicy p) {Policy = p;}

@@ -1,4 +1,5 @@
 #include "mibservice.h"
+#include "mibservice_internal.h"
 #include "mibdiagnosticmodel.h"
 #include "mibtreemodel.h"
 #include "mibcandidatefilter.h"
@@ -136,7 +137,7 @@ int main(int argc, char **argv)
         {"ACCOUNTING-CONTROL-MIB", "BRIDGE-MIB"}, 9);
     check(metadataLoads.status == MibLoadStatus::Success,
           "representative metadata modules load");
-    const MibModuleRecord accounting = MibService::snapshotModule(
+    const MibModuleRecord accounting = SnapshotMibModule(
         smiGetModule("ACCOUNTING-CONTROL-MIB"));
     check(accounting.name == "ACCOUNTING-CONTROL-MIB" &&
           accounting.rootOid == "1.3.6.1.2.1.60",
@@ -149,7 +150,7 @@ int main(int argc, char **argv)
     check(accounting.lastRevision.toUTC() ==
           QDateTime(QDate(1998, 9, 28), QTime(10, 0), Qt::UTC) &&
           !accounting.revisions.isEmpty(), "latest revision date snapshot");
-    const MibModuleRecord bridge = MibService::snapshotModule(smiGetModule("BRIDGE-MIB"));
+    const MibModuleRecord bridge = SnapshotMibModule(smiGetModule("BRIDGE-MIB"));
     check(bridge.name == "BRIDGE-MIB" && bridge.reference.isEmpty(),
           "missing optional module reference is represented safely");
     MibLoadResult bad = service.loadModules({malformedPath}, 9);

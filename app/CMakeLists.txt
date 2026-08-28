@@ -42,6 +42,8 @@ set(SNMPB_APP_SOURCES
     mibenvironment.cpp
     mibenvironmentextractor.cpp
     mibenvironmentregistry.cpp
+    mibengine.cpp
+    mibenginevalidation.cpp
     mibvaluesemantics.cpp
     mibprofile.cpp
     mibdownloadtransport.cpp
@@ -133,6 +135,8 @@ set(SNMPB_APP_HEADERS
     mibenvironment.h
     mibenvironmentextractor.h
     mibenvironmentregistry.h
+    mibengine.h
+    mibservice_internal.h
     mibvaluesemantics.h
     mibprofile.h
     mibdownloadtransport.h
@@ -326,6 +330,11 @@ install(FILES ${SNMPB_BUNDLED_PIB_FILES}
 )
 
 if(BUILD_TESTING)
+    add_executable(snmpb_mib_engine_test mibengine.cpp mibengine.h mibengine_test.cpp)
+    target_compile_definitions(snmpb_mib_engine_test PRIVATE SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(snmpb_mib_engine_test PRIVATE Qt6::Core)
+    add_test(NAME snmpb.mib-engine COMMAND $<TARGET_FILE:snmpb_mib_engine_test>)
+
     function(snmpb_configure_qt_test_runtime)
         if(WIN32)
             foreach(test_name IN LISTS ARGN)
@@ -427,6 +436,7 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_graph_v2_test
+        mibengine.cpp mibengine.h
         agentprofilerepository.cpp agentprofilerepository.h
         credentialrecords.cpp credentialrecords.h
         graphmodel.cpp graphmodel.h graphrepository.cpp graphrepository.h
@@ -463,6 +473,7 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_mib_service_test
+        mibengine.cpp mibengine.h
         mibdiagnosticcollector.cpp mibdiagnosticcollector.h
         mibdiagnosticmodel.cpp mibdiagnosticmodel.h
         mibcandidatefilter.cpp mibcandidatefilter.h
@@ -488,6 +499,7 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_mib_environment_test
+        mibengine.cpp mibengine.h
         mibenvironment.cpp mibenvironment.h
         mibenvironmentextractor.cpp mibenvironmentextractor.h
         mibenvironmentregistry.cpp mibenvironmentregistry.h
@@ -501,6 +513,7 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:snmpb_mib_environment_test> --large)
 
     add_executable(snmpb_mib_environment_consumer_test
+        mibengine.cpp mibengine.h
         mibenvironment.cpp mibenvironment.h mibenvironmentextractor.cpp mibenvironmentextractor.h
         mibenvironmentregistry.cpp mibenvironmentregistry.h mibeffectiveplan.h
         graphlabelresolver.cpp graphlabelresolver.h trappresenter.cpp trappresenter.h traprecord.h
@@ -532,6 +545,7 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_mib_library_test
+        mibengine.cpp mibengine.h mibenginevalidation.cpp
         mibdownloadtransport.cpp mibdownloadtransport.h
         mibdiagnosticcollector.cpp mibdiagnosticcollector.h mibrecords.h
         mibcandidatefilter.cpp mibcandidatefilter.h
@@ -588,6 +602,7 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_trap_pipeline_test
+        mibengine.cpp mibengine.h
         trapdecoder.cpp trapdecoder.h
         traphistorystore.cpp traphistorystore.h traprecord.h
         trappresenter.cpp trappresenter.h
@@ -1032,6 +1047,7 @@ if(BUILD_TESTING)
     set_tests_properties(snmpb.launch-smoke PROPERTIES TIMEOUT 60)
 
     snmpb_configure_qt_test_runtime(
+        snmpb.mib-engine
         snmpb.mib-dependency-index
         snmpb.mib-effective-plan
         snmpb.mib-startup-path

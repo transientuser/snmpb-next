@@ -2,6 +2,7 @@
 #include "mibcollection.h"
 #include "mibdownloadtransport.h"
 #include "mibdiagnosticcollector.h"
+#include "mibengine.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -205,6 +206,14 @@ END
     smiSetFlags(normalFlags);
     smiSetPath((temporary.path() + QDir::listSeparator() +
         QStringLiteral(SNMPB_SOURCE_DIR "/libsmi/mibs/ietf")).toLocal8Bit().constData());
+    const auto engineBad=MibEngine::instance().validateSource(
+        "ENGINE-BAD-MIB DEFINITIONS ::= BEGIN\nIMPORTS OBJECT-TYPE FROM SNMPv2-SMI;\nbroken OBJECT-TYPE t\nEND\n",
+        temporary.path(),MibValidationErrorLevel(MibValidationLevel::FullReview),true);
+    const auto engineGood=MibEngine::instance().validateSource(
+        mib("ENGINE-GOOD-MIB"),temporary.path(),MibValidationErrorLevel(MibValidationLevel::ErrorsAndWarnings),false);
+    ok &= check(!engineBad.diagnostics.isEmpty() && engineGood.success,
+                "engine editor validation isolates diagnostics and recovers after malformed input");
+    ok &= check(smiGetFlags()==normalFlags,"engine editor validation restores parser flags");
     auto explicitDefect = [&](const QString &filename, const QByteArray &bytes) {
         const QString path = temporary.filePath(filename);
         QFile fixture(path);
@@ -427,6 +436,8 @@ END
     ok &= check(!MibCollection::setConfiguredRoot(rootSettings, invalidRoot, {baseline}, &rejected) &&
                 MibCollection::configuredRoot(rootSettings) == QDir::cleanPath(validRoot),
                 "invalid root change preserves prior valid configuration");
+    std::cout << "Engine editor validation malformed-ms=" << engineBad.elapsedMilliseconds
+              << " valid-ms=" << engineGood.elapsedMilliseconds << std::endl;
     smiExit();
     return ok ? 0 : 1;
 }
