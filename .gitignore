@@ -17,3 +17,4 @@ libsmi/config.h
 **/*.pro.user
 build-*
 build/
+/manual-validation/

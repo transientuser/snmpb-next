@@ -97,6 +97,16 @@ Never silently remove or undo work merely to obtain a clean state.
 Keep commits focused around tested milestones, but the user performs commits
 unless explicitly instructed otherwise.
 
+## Change-Scope Guardrails
+
+If a task would modify more than 50 files, STOP before making the changes and
+report why.
+
+Never modify or track generated deployment output under `manual-validation/`
+unless explicitly authorized.
+
+If any single operation expands scope by more than 25 unexpected files, STOP.
+
 ---
 
 # Autonomous Development Loop
