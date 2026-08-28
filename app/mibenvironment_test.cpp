@@ -56,6 +56,10 @@ int main(int argc, char **argv)
     ok &= check(!MibParserNodeHasReadableOid(&malformedNode) &&
                 MibParserNodeOidParts(&malformedNode).isEmpty(),
                 "malformed parser node OID storage is rejected without dereference");
+    malformedNode.oid = reinterpret_cast<SmiSubid *>(std::uintptr_t{1});
+    ok &= check(!MibParserNodeHasReadableOid(&malformedNode) &&
+                MibParserNodeOidParts(&malformedNode).isEmpty(),
+                "SPPI numeric pseudo-object OID sentinel is rejected without dereference");
     const QString root = QStringLiteral(SNMPB_SOURCE_DIR);
     QTemporaryDir vendorDirectory;
     ok &= check(vendorDirectory.isValid(), "vendor fixture directory");

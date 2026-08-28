@@ -331,7 +331,8 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
             }
             for (SmiElement *element = smiGetFirstElement(node); element;
                  element = smiGetNextElement(element)) {
-                SmiNode *object = smiGetElementNode(element); if (!object) continue;
+                SmiNode *object = smiGetElementNode(element);
+                if (!MibParserNodeHasReadableOid(object)) continue;
                 if (record.kind == MibEnvironmentNodeKind::Notification)
                     record.notificationObjectOids.append(oidText(object));
                 else {
