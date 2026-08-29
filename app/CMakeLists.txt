@@ -42,6 +42,8 @@ set(SNMPB_APP_SOURCES
     mibenvironment.cpp
     mibenvironmentextractor.cpp
     mibenvironmentregistry.cpp
+    mibenvironmentcache.cpp
+    mibenvironmentmanager.cpp
     mibengine.cpp
     mibenginevalidation.cpp
     mibvaluesemantics.cpp
@@ -135,6 +137,8 @@ set(SNMPB_APP_HEADERS
     mibenvironment.h
     mibenvironmentextractor.h
     mibenvironmentregistry.h
+    mibenvironmentcache.h
+    mibenvironmentmanager.h
     mibengine.h
     mibservice_internal.h
     mibvaluesemantics.h
@@ -334,6 +338,16 @@ if(BUILD_TESTING)
     target_compile_definitions(snmpb_mib_engine_test PRIVATE SNMPB_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_link_libraries(snmpb_mib_engine_test PRIVATE Qt6::Core)
     add_test(NAME snmpb.mib-engine COMMAND $<TARGET_FILE:snmpb_mib_engine_test>)
+
+    add_executable(snmpb_mib_environment_manager_test
+        mibengine.cpp mibengine.h mibenvironment.cpp mibenvironment.h
+        mibenvironmentregistry.cpp mibenvironmentregistry.h
+        mibenvironmentcache.cpp mibenvironmentcache.h
+        mibenvironmentmanager.cpp mibenvironmentmanager.h
+        mibenvironmentmanager_test.cpp)
+    target_link_libraries(snmpb_mib_environment_manager_test PRIVATE Qt6::Core)
+    set_target_properties(snmpb_mib_environment_manager_test PROPERTIES AUTOMOC ON)
+    add_test(NAME snmpb.mib-environment-manager COMMAND $<TARGET_FILE:snmpb_mib_environment_manager_test>)
 
     function(snmpb_configure_qt_test_runtime)
         if(WIN32)
@@ -1048,6 +1062,7 @@ if(BUILD_TESTING)
 
     snmpb_configure_qt_test_runtime(
         snmpb.mib-engine
+        snmpb.mib-environment-manager
         snmpb.mib-dependency-index
         snmpb.mib-effective-plan
         snmpb.mib-startup-path

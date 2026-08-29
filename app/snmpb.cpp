@@ -356,9 +356,22 @@ void Snmpb::BindToGUI(QMainWindow* mw)
                 DiagnosticLogger::log("MIB", tr("Unable to apply MIB profile: %1").arg(error));
             return;
         }
-        if (id == MibProfileDefinitions::allId()) w.MIBTree->showAllModules();
-        else w.MIBTree->setVisibleModules(plan.effectiveModules);
-        w.MIBTree->Populate();
+    });
+    connect(modules,&MibModule::profileRuntimeBuildStarted,mw,[this,mw](const QString &name){
+        mw->statusBar()->showMessage(tr("Building MIB environment… %1").arg(name));
+    });
+    connect(modules,&MibModule::profileRuntimeReady,mw,
+        [this,mw](const QString &id,const MibEffectivePlan &plan,MibEnvironmentPtr,
+               const QStringList &,bool cacheHit,bool partial){
+            if(id==MibProfileDefinitions::allId())w.MIBTree->showAllModules();
+            else w.MIBTree->setVisibleModules(plan.effectiveModules);
+            w.MIBTree->Populate();
+            mw->statusBar()->showMessage(cacheHit?tr("MIB environment ready (cached)"):
+                partial?tr("MIB environment ready with findings"):tr("MIB environment ready"),5000);
+        });
+    connect(modules,&MibModule::profileRuntimeFailed,mw,[this,mw](const QString &,const QString &error){
+        mw->statusBar()->showMessage(tr("MIB environment build failed; previous environment remains active"),7000);
+        DiagnosticLogger::log("MIB",tr("Unable to apply MIB profile: %1").arg(error));
     });
     phaseTimer.restart(); mibLibrary->selectProfile(browserProfile->currentData().toString());
     initializingMibProfile = false;

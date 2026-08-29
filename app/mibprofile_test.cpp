@@ -49,6 +49,7 @@ int main(int argc, char **argv)
     MibProfileRecord changed = *service.find(id);
     changed.explicitModules = {"VENDOR-A", "MISSING-LATER"};
     changed.includeStandardBase = true;
+    changed.providerPins.insert("VENDOR-A", {"C:/MIBs/vendor-a.mib", QString(64, 'a')});
     ok &= check(service.update(changed, &error), "update members/base");
     ok &= check(service.rename(id, "Vendor renamed", &error), "rename custom");
     const QString duplicate = service.duplicate(id, "Vendor copy", &error);
@@ -61,6 +62,9 @@ int main(int argc, char **argv)
     ok &= check(saved.explicitModules.contains("MISSING-LATER"),
                 "missing identity survives reload");
     ok &= check(saved.includeStandardBase, "standard base survives reload");
+    ok &= check(saved.providerPins.value("VENDOR-A").canonicalPath == "C:/MIBs/vendor-a.mib" &&
+                saved.providerPins.value("VENDOR-A").sha256 == QString(64, 'a'),
+                "provider pin path and authoritative hash survive reload");
     ok &= check(reloaded.remove(duplicate, &error), "delete custom");
 
     MibTreeNodeRecord root; root.name = "root";
@@ -171,7 +175,8 @@ int main(int argc, char **argv)
 
     QFile persisted(path); ok &= check(persisted.open(QIODevice::ReadOnly), "profile file exists");
     const QByteArray json = persisted.readAll();
-    ok &= check(json.contains("\"schemaVersion\": 2") && json.contains(id.toUtf8()) &&
+    ok &= check(json.contains("\"schemaVersion\": 3") && json.contains(id.toUtf8()) &&
+                json.contains("\"providerPins\"") &&
                 !json.contains("SYNOPTICS-ROOT-MIB"),
                 "versioned schema and stable id persisted");
     return ok ? 0 : 1;

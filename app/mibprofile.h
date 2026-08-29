@@ -9,6 +9,11 @@
 
 enum class MibProfileType { All, Standards, Custom, Folder };
 
+struct MibProviderPin {
+    QString canonicalPath;
+    QString sha256;
+};
+
 struct MibProfileRecord {
     QString id;
     QString name;
@@ -16,6 +21,7 @@ struct MibProfileRecord {
     QStringList explicitModules;
     bool includeStandardBase = false;
     QString directory;
+    QMap<QString, MibProviderPin> providerPins;
 };
 
 class MibProfileDefinitions

@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QSet>
 #include <iostream>
 
 namespace {
@@ -18,7 +19,51 @@ QByteArray mib(const QString &identity, const QStringList &imports = {}) {
 
 int main(int argc, char **argv)
 {
-    QCoreApplication application(argc, argv); bool ok = true; QTemporaryDir temp;
+    QCoreApplication application(argc, argv);
+    if (application.arguments().value(1) == QStringLiteral("--corpus")) {
+        MibDependencyIndex corpus(application.arguments().value(2));
+        QString error;
+        if (!corpus.load(&error)) { std::cerr << error.toStdString() << '\n'; return 2; }
+        int single = 0, identical = 0, conflicting = 0;
+        QSet<QString> conflictingIdentities;
+        for (const QString &identity : corpus.moduleNames()) {
+            const auto providers = corpus.providersFor(identity);
+            if (providers.size() <= 1) { ++single; continue; }
+            QSet<QString> hashes; for (const auto &provider : providers) hashes.insert(provider.sha256);
+            if (hashes.size() == 1 && !hashes.contains(QString())) ++identical;
+            else { ++conflicting; conflictingIdentities.insert(identity); }
+        }
+        QList<MibProfileRecord> profiles = MibProfileDefinitions::builtIns();
+        profiles.append(MibProfileRepository(application.arguments().value(3)).load(&error));
+        int resolvedConflicts = 0, largest = 0, largestPasses = 0;
+        qint64 slowestMsecs = 0; QString largestName;
+        QSet<QString> unresolved;
+        for (const auto &profile : profiles) {
+            QElapsedTimer timer; timer.start();
+            const auto plan = MibEffectivePlanResolver().resolve(profile, corpus);
+            const qint64 elapsed = timer.elapsed();
+            if (plan.effectiveModules.size() > largest) {
+                largest = plan.effectiveModules.size(); largestName = profile.name;
+                largestPasses = plan.convergencePasses;
+            }
+            slowestMsecs = std::max(slowestMsecs, elapsed);
+            for (const QString &identity : conflictingIdentities) {
+                const auto *member = plan.member(identity);
+                if (!member) continue;
+                if (member->provider.canonicalPath.isEmpty()) unresolved.insert(identity);
+                else ++resolvedConflicts;
+            }
+        }
+        std::cout << "corpus_identities=" << corpus.moduleNames().size() << " single=" << single
+                  << " identical_duplicates=" << identical << " differing_conflicts=" << conflicting
+                  << " plan_resolved_conflict_instances=" << resolvedConflicts
+                  << " genuinely_unresolved_identities=" << unresolved.size() << '\n'
+                  << "profiles=" << profiles.size() << " largest_profile=\"" << largestName.toStdString()
+                  << "\" largest_modules=" << largest << " convergence_passes=" << largestPasses
+                  << " slowest_plan_ms=" << slowestMsecs << '\n';
+        return 0;
+    }
+    bool ok = true; QTemporaryDir temp;
     const QString standards = QDir(temp.path()).filePath("Standards/IETF");
     const QString productA = QDir(temp.path()).filePath("Vendor/Product A");
     const QString productB = QDir(temp.path()).filePath("Vendor/Product B");
@@ -78,6 +123,40 @@ int main(int argc, char **argv)
                 "changing selected provider and provider-specific imports changes plan hash");
     ok &= check(customPlan.explicitModules == QStringList{"ROOT-MIB"},
                 "computed standards base does not mutate custom explicit membership");
+    const MibIndexedProvider productRoot = first.member("ROOT-MIB")->provider;
+    MibProfileRecord pinned = custom;
+    pinned.providerPins.insert("ROOT-MIB", {productRoot.canonicalPath, productRoot.sha256});
+    const auto pinnedPlan = MibEffectivePlanResolver().resolve(pinned, index);
+    ok &= check(pinnedPlan.member("ROOT-MIB") &&
+                pinnedPlan.member("ROOT-MIB")->provider.canonicalPath == productRoot.canonicalPath &&
+                pinnedPlan.member("ROOT-MIB")->providerReason == MibPlanProviderReason::ExplicitPin &&
+                pinnedPlan.dependencyModules.contains("PRODUCT-ONLY-MIB") &&
+                !pinnedPlan.dependencyModules.contains("DEPENDENCY-MIB"),
+                "explicit pin has highest precedence and drives provider-specific closure");
+    MibProfileRecord invalidPin = custom;
+    invalidPin.providerPins.insert("ROOT-MIB", {productRoot.canonicalPath, QString(64, '0')});
+    const auto invalidPinPlan = MibEffectivePlanResolver().resolve(invalidPin, index);
+    ok &= check(!invalidPinPlan.isComplete() && invalidPinPlan.pinFailureModules == QStringList{"ROOT-MIB"} &&
+                invalidPinPlan.member("ROOT-MIB") && invalidPinPlan.member("ROOT-MIB")->provider.canonicalPath.isEmpty() &&
+                invalidPinPlan.member("ROOT-MIB")->providerReason == MibPlanProviderReason::InvalidPin,
+                "invalid explicit pin is a structured hard finding without fallback");
+    MibProfileRecord differentInvalidPin = invalidPin;
+    differentInvalidPin.providerPins["ROOT-MIB"].sha256 = QString(64, '1');
+    ok &= check(MibEffectivePlanResolver().resolve(differentInvalidPin, index).sha256 != invalidPinPlan.sha256,
+                "invalid explicit pin identity participates in the plan hash");
+    MibProfileRecord missingPin = custom;
+    missingPin.explicitModules = {"NO-SUCH-MIB"};
+    missingPin.providerPins.insert("NO-SUCH-MIB", {QDir(temp.path()).filePath("removed.mib"), QString(64, '2')});
+    const auto missingPinPlan = MibEffectivePlanResolver().resolve(missingPin, index);
+    ok &= check(missingPinPlan.pinFailureModules == QStringList{"NO-SUCH-MIB"} &&
+                !missingPinPlan.missingModules.contains("NO-SUCH-MIB"),
+                "pin to a removed provider is reported as a pin failure");
+    MibProfileRecord boundary = automatic;
+    boundary.directory = QDir(temp.path()).filePath("Vendor/Product");
+    const auto boundaryPlan = MibEffectivePlanResolver().resolve(boundary, index);
+    ok &= check(boundaryPlan.member("ROOT-MIB") &&
+                boundaryPlan.member("ROOT-MIB")->providerReason != MibPlanProviderReason::AutomaticProfileFolder,
+                "automatic affinity uses a true path boundary");
     MibProfileRecord reordered = automatic; std::reverse(reordered.explicitModules.begin(), reordered.explicitModules.end());
     const auto reorderedPlan = MibEffectivePlanResolver().resolve(reordered, index);
     ok &= check(first.sha256 == reorderedPlan.sha256 && first.initialLoadOrder == reorderedPlan.initialLoadOrder, "insertion order independence");
@@ -107,6 +186,22 @@ int main(int argc, char **argv)
     QElapsedTimer timer; timer.start(); const auto largePlan = MibEffectivePlanResolver().resolve(largeProfile, largeIndex); const qint64 elapsed = timer.elapsed();
     ok &= check(largePlan.explicitModules.size() == 250 && largePlan.effectiveModules.size() == 250 && largePlan.initialLoadOrder.size() == 250 && !largePlan.sha256.isEmpty(), "large profile completeness");
     ok &= check(elapsed < 5000, "large profile performance");
-    std::cout << "large-plan explicit=" << largePlan.explicitModules.size() << " effective=" << largePlan.effectiveModules.size() << " elapsed_ms=" << elapsed << '\n';
+    ok &= check(largePlan.converged && largePlan.convergencePasses == 1,
+                "large explicit profile converges in one bounded pass");
+
+    QTemporaryDir deepTemp; const QString deepRoot = QDir(deepTemp.path()).filePath("Unassigned"); QDir().mkpath(deepRoot);
+    for (int i = 0; i < 10; ++i) {
+        const QString identity = QStringLiteral("DEEP-%1-MIB").arg(i);
+        const QStringList imports = i < 9 ? QStringList{QStringLiteral("DEEP-%1-MIB").arg(i + 1)} : QStringList{};
+        writeFile(QDir(deepRoot).filePath(QStringLiteral("deep-%1.mib").arg(i)), mib(identity, imports));
+    }
+    MibDependencyIndex deepIndex(QDir(deepTemp.path()).filePath("index.json")); deepIndex.update({deepRoot});
+    MibProfileRecord deep; deep.id = "deep"; deep.explicitModules = {"DEEP-0-MIB"};
+    const auto deepPlan = MibEffectivePlanResolver().resolve(deep, deepIndex);
+    ok &= check(!deepPlan.converged && deepPlan.convergencePasses == MibEffectivePlan::MaximumConvergencePasses &&
+                deepPlan.nonConvergentModules == QStringList{"DEEP-8-MIB"} && !deepPlan.isComplete(),
+                "provider/dependency fixed point stops deterministically at pass eight");
+    std::cout << "large-plan explicit=" << largePlan.explicitModules.size() << " effective=" << largePlan.effectiveModules.size()
+              << " passes=" << largePlan.convergencePasses << " elapsed_ms=" << elapsed << '\n';
     return ok ? 0 : 1;
 }

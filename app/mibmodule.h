@@ -27,6 +27,7 @@
 #include "mibdependencyindex.h"
 #include "mibeffectiveplan.h"
 #include "mibenvironment.h"
+#include "mibenvironmentmanager.h"
 
 #define SMI_PATH_SEPARATOR ';'
 
@@ -66,6 +67,7 @@ public:
     QStringList LoadedModuleNames() const;
     QStringList LoadPreferredModules(const QStringList &modules);
     bool ApplyProfileRuntime(const MibEffectivePlan &plan, QString *error = nullptr);
+    void RestoreRuntimeAfterEditorValidation();
     MibEffectivePlan BuildEffectivePlan(const MibProfileRecord &profile) const;
     MibEnvironmentPtr CurrentEnvironment() const { return currentEnvironment; }
     bool ValidateModuleFile(const QString &path, QString *error = nullptr,
@@ -92,10 +94,15 @@ signals:
     void LogError(const QString& text);
     void StopAgentTimer();
     void inventoryChanged();
+    void profileRuntimeBuildStarted(const QString &profileName);
+    void profileRuntimeReady(const QString &profileId, const MibEffectivePlan &plan,
+        MibEnvironmentPtr environment, QStringList loadedModules, bool cacheHit, bool partial);
+    void profileRuntimeFailed(const QString &profileId, const QString &error);
 
 private:
     bool ReconstructRuntime(const QStringList &requests, QString *error = nullptr);
     bool ReconstructRuntime(const MibEffectivePlan &plan, QString *error = nullptr);
+    MibEnvironmentBuildResult BuildEnvironment(const MibEffectivePlan &plan);
     QStringList LoadEffectivePlan(const MibEffectivePlan &plan);
     void PersistWanted() const;
     void InitLib(int restart);
@@ -120,6 +127,9 @@ private:
     MibEffectivePlan activeProfilePlan;
     bool hasActiveProfilePlan = false;
     MibEnvironmentPtr currentEnvironment;
+    std::unique_ptr<MibEnvironmentManager> environmentManager;
+    QHash<QString, MibEffectivePlan> requestedPlans;
+    MibEffectivePlan latestRequestedPlan;
 };
 
 #endif /* MIBMODULE_H */

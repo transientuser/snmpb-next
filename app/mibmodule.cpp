@@ -150,6 +150,22 @@ MibModule::MibModule(Snmpb *snmpb)
              SIGNAL( clicked() ), this, SLOT( RemoveModule() ));
     connect( this, SIGNAL( StopAgentTimer() ), 
              s->AgentObj(), SLOT( StopTimer() ));
+    environmentManager=std::make_unique<MibEnvironmentManager>(
+        [this](const MibEffectivePlan &plan){return BuildEnvironment(plan);},this,
+        MibEnvironmentCache::DefaultByteBudget,QStringLiteral("patched-libsmi-%1/engine-policy-1")
+            .arg(MibEngine::instance().libraryVersion()));
+    connect(environmentManager.get(),&MibEnvironmentManager::buildStarted,this,
+        [this](quint64,const QString &name){emit profileRuntimeBuildStarted(name);});
+    connect(environmentManager.get(),&MibEnvironmentManager::buildCompleted,this,
+        [this](quint64,const QString &profileId,MibEnvironmentPtr environment,
+               QStringList loadedModules,bool cacheHit,bool partial){
+            const auto plan=requestedPlans.value(profileId);
+            currentEnvironment=environment;activeProfilePlan=plan;hasActiveProfilePlan=true;
+            s->MibLoaderObj()->SetEnvironment(environment,loadedModules);
+            emit profileRuntimeReady(profileId,plan,environment,loadedModules,cacheHit,partial);
+        });
+    connect(environmentManager.get(),&MibEnvironmentManager::buildFailed,this,
+        [this](quint64,const QString &profileId,const QString &error){emit profileRuntimeFailed(profileId,error);});
 }
 
 void MibModule::ShowModuleInfo()
@@ -209,6 +225,7 @@ void MibModule::RebuildTotalList()
 
 MibModule::~MibModule()
 {
+    environmentManager.reset();
     CurrentModuleObject=nullptr;
     MibEngine::instance().shutdown();
 }
@@ -804,7 +821,6 @@ void MibModule::PersistWanted() const
 
 bool MibModule::ReconstructRuntime(const QStringList &requests, QString *error)
 {
-    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("legacy-reconstruction"));
     hasActiveProfilePlan = false;
     currentEnvironment.reset();
     MibEnvironmentRegistry::publish({});
@@ -849,7 +865,6 @@ bool MibModule::ReconstructRuntime(const QStringList &requests, QString *error)
 
 bool MibModule::ReconstructRuntime(const MibEffectivePlan &plan, QString *error)
 {
-    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("plan-reconstruction"));
     QElapsedTimer totalTimer; totalTimer.start();
     RegenerateSmiConf();
     InitLib(1);
@@ -889,22 +904,40 @@ bool MibModule::ReconstructRuntime(const MibEffectivePlan &plan, QString *error)
 
 bool MibModule::ApplyProfileRuntime(const MibEffectivePlan &plan, QString *error)
 {
-    const QStringList previousLoaded = LoadedModuleNames();
-    const MibEffectivePlan previousPlan = activeProfilePlan;
-    const bool hadPreviousPlan = hasActiveProfilePlan;
-    if (ReconstructRuntime(plan, error)) {
-        activeProfilePlan = plan;
-        hasActiveProfilePlan = true;
-        return true;
-    }
-    QString rollbackError;
-    const bool restored = hadPreviousPlan
-        ? ReconstructRuntime(previousPlan, &rollbackError)
-        : ReconstructRuntime(previousLoaded, &rollbackError);
-    DiagnosticLogger::log("MIB", restored
-        ? tr("Effective Plan activation failed; previous runtime restored")
-        : tr("Effective Plan activation and rollback failed: %1").arg(rollbackError));
-    return false;
+    if(error)error->clear();
+    if(!environmentManager){if(error)*error=tr("MIB Environment worker is unavailable");return false;}
+    requestedPlans.insert(plan.profileId,plan);latestRequestedPlan=plan;
+    environmentManager->request(plan);
+    return true;
+}
+
+void MibModule::RestoreRuntimeAfterEditorValidation()
+{
+    const MibEffectivePlan restorePlan=hasActiveProfilePlan?activeProfilePlan:latestRequestedPlan;
+    if(environmentManager&&!restorePlan.sha256.isEmpty()){requestedPlans.insert(restorePlan.profileId,restorePlan);
+        environmentManager->request(restorePlan,true);return;}
+    Refresh();
+}
+
+MibEnvironmentBuildResult MibModule::BuildEnvironment(const MibEffectivePlan &plan)
+{
+    auto operation=MibEngine::instance().beginOperation(QStringLiteral("async-plan-build"));
+    MibEnvironmentBuildResult result;
+    InitLib(1);
+    const QStringList unavailable=LoadEffectivePlan(plan);
+    QStringList missing;
+    for(const QString &identity:plan.effectiveModules)
+        if(!smiIsLoaded(identity.toLocal8Bit().constData()))missing.append(identity);
+    missing.append(unavailable);missing.removeDuplicates();
+    result.environment=MibEnvironmentExtractor().extract(plan,missing);
+    for(SmiModule *module=smiGetFirstModule();module;module=smiGetNextModule(module))
+        if(module->name)result.loadedModules.append(QString::fromLocal8Bit(module->name));
+    result.loadedModules.removeDuplicates();result.loadedModules.sort(Qt::CaseSensitive);
+    if(!MibEnvironmentRegistry::isUsableMaterialization(result.environment))
+        result.error=tr("No planned MIB modules could be materialized");
+    else if(!missing.isEmpty())
+        result.error=tr("%n planned module(s) did not load; a usable partial environment was activated",nullptr,missing.size());
+    return result;
 }
 
 bool MibModule::ValidateModuleFile(const QString &path, QString *error,
@@ -937,10 +970,11 @@ bool MibModule::ValidateModuleFile(const QString &path, QString *error,
 
 void MibModule::Refresh()
 {
-    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("refresh"));
-    std::unique_ptr<char, decltype(&std::free)> old_smipath{ smiGetPath(), std::free };
+    std::unique_ptr<char, decltype(&std::free)> old_smipath{nullptr,std::free};
+    {auto operation=MibEngine::instance().beginOperation(QStringLiteral("refresh-old-path"));old_smipath.reset(smiGetPath());}
     ReadMibPaths();
-    std::unique_ptr<char, decltype(&std::free)> new_smipath{ smiGetPath(), std::free };
+    std::unique_ptr<char, decltype(&std::free)> new_smipath{nullptr,std::free};
+    {auto operation=MibEngine::instance().beginOperation(QStringLiteral("refresh-new-path"));new_smipath.reset(smiGetPath());}
 
     if (QString(old_smipath.get()) != QString(new_smipath.get())) {
         RebuildCandidateList();
@@ -969,18 +1003,20 @@ void MibModule::RescanPath()
 
 void MibModule::InitLib(int restart)
 {
-    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("parser-lifecycle"));
     if (restart)
     {
-        std::unique_ptr<char, decltype(&std::free)>
-            smipath{ smiGetPath(), std::free };
+        std::unique_ptr<char, decltype(&std::free)> smipath{nullptr,std::free};
+        {auto operation=MibEngine::instance().beginOperation(QStringLiteral("parser-path-before-restart"));
+         smipath.reset(smiGetPath());}
         MibEngine::instance().initialize(QString::fromLocal8Bit(smipath.get()),true);
+        auto operation=MibEngine::instance().beginOperation(QStringLiteral("parser-lifecycle-configuration"));
         smiSetErrorHandler(NormalErrorHdlr);
         smiSetErrorLevel(0);
     }
     else
     {
         MibEngine::instance().initialize();
+        auto operation=MibEngine::instance().beginOperation(QStringLiteral("parser-lifecycle-configuration"));
         smiSetFlags(smiGetFlags() | SMI_FLAG_ERRORS);
         smiSetErrorHandler(NormalErrorHdlr);
         smiSetErrorLevel(0);

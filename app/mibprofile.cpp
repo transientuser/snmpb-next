@@ -33,6 +33,28 @@ QStringList stringsFromJson(const QJsonArray &values)
         if (value.isString() && !value.toString().isEmpty()) result.append(value.toString());
     return uniqueSorted(result);
 }
+
+QMap<QString, MibProviderPin> pinsFromJson(const QJsonObject &values)
+{
+    QMap<QString, MibProviderPin> result;
+    for (auto it = values.begin(); it != values.end(); ++it) {
+        const QJsonObject pin = it.value().toObject();
+        const QString path = pin.value(QStringLiteral("path")).toString();
+        const QString hash = pin.value(QStringLiteral("sha256")).toString();
+        if (!it.key().isEmpty() && !path.isEmpty() && !hash.isEmpty())
+            result.insert(it.key(), {path, hash});
+    }
+    return result;
+}
+
+QJsonObject pinsToJson(const QMap<QString, MibProviderPin> &pins)
+{
+    QJsonObject result;
+    for (auto it = pins.begin(); it != pins.end(); ++it)
+        result.insert(it.key(), QJsonObject{{QStringLiteral("path"), it->canonicalPath},
+                                            {QStringLiteral("sha256"), it->sha256}});
+    return result;
+}
 }
 
 QString MibProfileDefinitions::allId() { return QStringLiteral("builtin.all"); }
@@ -78,7 +100,7 @@ QList<MibProfileRecord> MibProfileRepository::load(QString *error) const
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject() ||
-        !QSet<int>{1, 2}.contains(document.object().value(QStringLiteral("schemaVersion")).toInt())) {
+        !QSet<int>{1, 2, 3}.contains(document.object().value(QStringLiteral("schemaVersion")).toInt())) {
         if (error) *error = QObject::tr("Unsupported or invalid MIB profile file");
         return {};
     }
@@ -93,6 +115,7 @@ QList<MibProfileRecord> MibProfileRepository::load(QString *error) const
         profile.explicitModules = stringsFromJson(object.value(QStringLiteral("modules")).toArray());
         profile.includeStandardBase = object.value(QStringLiteral("includeStandardBase")).toBool();
         profile.directory = object.value(QStringLiteral("directory")).toString();
+        profile.providerPins = pinsFromJson(object.value(QStringLiteral("providerPins")).toObject());
         if (!profile.id.isEmpty() && !profile.name.isEmpty() &&
             profile.id != MibProfileDefinitions::allId() &&
             profile.id != MibProfileDefinitions::standardsId()) result.append(profile);
@@ -114,10 +137,12 @@ bool MibProfileRepository::save(const QList<MibProfileRecord> &profiles, QString
             object.insert(QStringLiteral("modules"), stringsToJson(uniqueSorted(profile.explicitModules)));
         else object.insert(QStringLiteral("directory"), profile.directory);
         object.insert(QStringLiteral("includeStandardBase"), profile.includeStandardBase);
+        if (!profile.providerPins.isEmpty())
+            object.insert(QStringLiteral("providerPins"), pinsToJson(profile.providerPins));
         items.append(object);
     }
     QJsonObject root;
-    root.insert(QStringLiteral("schemaVersion"), 2);
+    root.insert(QStringLiteral("schemaVersion"), 3);
     root.insert(QStringLiteral("profiles"), items);
     QDir().mkpath(QFileInfo(filePath).absolutePath());
     QSaveFile file(filePath);

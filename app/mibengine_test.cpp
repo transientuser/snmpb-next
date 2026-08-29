@@ -17,6 +17,9 @@ int main(int argc,char **argv)
     std::thread first([&]{auto operation=engine.beginOperation("first");entered=true;while(!attempted.load())std::this_thread::yield();});
     std::thread second([&]{while(!entered.load())std::this_thread::yield();attempted=true;auto operation=engine.beginOperation("second");});
     first.join();second.join();check(engine.maximumConcurrentOperations()==1,"two callers cannot overlap parser operations");
+    std::thread::id workerOne,workerTwo;engine.submit([&]{workerOne=std::this_thread::get_id();});
+    engine.submit([&]{workerTwo=std::this_thread::get_id();});engine.drain();
+    check(workerOne!=std::thread::id{}&&workerOne==workerTwo,"queued parser work has one dedicated engine thread owner");
     QFile publicHeader(QStringLiteral(SNMPB_SOURCE_DIR)+"/app/mibengine.h");check(publicHeader.open(QIODevice::ReadOnly),"engine header readable");
     const QByteArray api=publicHeader.readAll();check(!api.contains("smi.h")&&!api.contains("SmiNode")&&!api.contains("SmiType")&&!api.contains("SmiModule"),"public engine API exposes no parser pointers");
     const QSet<QString> allowed={"mibenginevalidation.cpp","mibenvironmentextractor.cpp","mibmodule.cpp","mibservice.cpp","mibservice_internal.h","mibdiagnosticcollector.cpp","mibdiagnosticcollector.h","mibparsernodesafety.h"};

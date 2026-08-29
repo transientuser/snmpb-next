@@ -50,11 +50,33 @@ validated at the ownership boundary: a malformed parser node whose declared
 OID length has no backing OID storage is recorded and omitted rather than
 dereferenced.
 
-`MibSelection` and Agent response/value rendering remain direct Phase-4 libsmi
-consumers. MibModule/MibService loading, diagnostics, and editor validation
-remain Phase-5 parser operations. The dedicated engine thread, asynchronous
-construction, memory LRU, persisted cache, provider-pin UI, and legacy preload
-migration are not implemented.
+Phase 4 consumers retain `shared_ptr<const MibEnvironment>` at request dispatch.
+Phase 5 parser operations remain serialized by the single `MibEngine` boundary.
+
+Phase 6 is complete: normal Profile selection computes its Effective Plan on the
+GUI thread and queues materialization/extraction to the dedicated MibEngine
+worker. The previously published Environment remains active until the current
+generation completes successfully. Stale generations cannot publish; pending
+requests coalesce to the latest selection. Completed immutable Environments are
+held in a 128 MiB in-memory byte-bounded LRU whose identity includes the Plan,
+selected provider hashes, Plan policy/schema, Environment schema/builder, and
+patched-libsmi engine policy. Cache hits bypass parser reconstruction. The cache
+is not persisted. Provider-pin UI and legacy preload migration remain future
+work; no synthetic legacy Plan is created.
+
+Phase 7 is complete subject to its deterministic validation gates. Provider
+selection remains a pure, per-Plan decision made before parser materialization.
+The precedence is: a valid explicit path-and-raw-SHA-256 pin; product-subtree
+affinity for an Automatic Profile's explicit member only; the Library's stable
+Standards, Unassigned, then product-location precedence; otherwise an unresolved
+differing-content conflict. Custom Profiles never receive folder affinity.
+Identical raw-hash providers are benign alternatives. The selected physical
+provider's imports drive a dependency/provider fixed point bounded at eight
+passes; cycles may converge normally, while a pass-limit breach is a structured
+incomplete-Plan finding. The converged provider, raw hash, imports, alternatives,
+selection reason, requested pin (including an invalid pin), and convergence state
+participate in the schema-2/policy-2 Plan identity. Profile storage schema 3 can
+retain provider pins, although broad pin-editing UI remains future work.
 
 ## Environment schema overview
 

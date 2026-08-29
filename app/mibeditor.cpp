@@ -484,8 +484,9 @@ void MibEditor::VerifyMIB(void)
                           ;
     s->MainUI()->MIBLogL->setText(stop_msg);
 
-    // Reload everything
-    s->MibModuleObj()->Refresh();
+    // Validation temporarily uses the one parser context. Restore its current
+    // runtime asynchronously while the published immutable Environment remains usable.
+    s->MibModuleObj()->RestoreRuntimeAfterEditorValidation();
 }
 
 void MibEditor::ExtractMIBfromRFC(void)

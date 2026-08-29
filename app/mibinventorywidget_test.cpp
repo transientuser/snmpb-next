@@ -183,17 +183,18 @@ int main(int argc, char **argv)
     ok &= check(applicationSourceText.contains("ApplyProfileRuntime(plan, &error)") &&
                 applicationSourceText.contains("effectivePlan = [this]") &&
                 applicationSourceText.contains("setVisibleModules(plan.effectiveModules)") &&
-                moduleSourceText.contains("s->MibLoaderObj()->SetEnvironment(extracted, runtimeModules)") &&
+                moduleSourceText.contains("environmentManager->request(plan)") &&
+                moduleSourceText.contains("s->MibLoaderObj()->SetEnvironment(environment,loadedModules)") &&
                 !moduleSourceText.contains("ApplyProfileRuntime(const QStringList &modules, QString *error)\n{\n    PersistWanted"),
-                "profile selection reconstructs the exact tree runtime without persisting legacy preloads");
+                "profile selection asynchronously constructs the exact tree runtime without persisting legacy preloads");
     ok &= check(!profileSourceFileText.contains("MibProfileResolver::resolve") &&
                 !effectivePlanSourceText.contains("smiLoadModule") &&
                 !effectivePlanSourceText.contains("Wanted") &&
                 !effectivePlanSourceText.contains("mibpreloads") &&
                 moduleSourceText.contains("MibBoundedDependencyLoader().load(plan, load)") &&
-                moduleSourceText.contains("ReconstructRuntime(previousPlan, &rollbackError)") &&
-                moduleSourceText.contains("ReconstructRuntime(previousLoaded, &rollbackError)"),
-                "one pure Effective Plan resolver owns Profile membership and runtime retains bounded retry");
+                moduleSourceText.contains("MibEnvironmentExtractor().extract(plan,missing)") &&
+                moduleSourceText.contains("RestoreRuntimeAfterEditorValidation"),
+                "one pure Effective Plan resolver owns Profile membership and async runtime retains bounded loading");
     auto *table = widget.findChild<QTableWidget *>("MibLibraryTable");
     ok &= check(table && table->columnCount() == 4, "Inventory has checkbox plus three data columns");
     if (!table || table->rowCount() < 4) {

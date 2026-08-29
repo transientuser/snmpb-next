@@ -4,20 +4,30 @@
 #include "smi.h"
 #include <QElapsedTimer>
 #include <QDir>
+#include <condition_variable>
+#include <mutex>
 
 QString MibEngine::libraryVersion() const { return QStringLiteral(SMI_VERSION_STRING); }
 void MibEngine::initialize(const QString &searchPath,bool restart)
 {
+    if(!isWorkerThread()){std::mutex mutex;std::condition_variable done;bool complete=false;
+        submit([&,searchPath,restart]{initialize(searchPath,restart);std::lock_guard lock(mutex);complete=true;done.notify_one();});
+        std::unique_lock lock(mutex);done.wait(lock,[&]{return complete;});return;}
     auto operation=beginOperation(QStringLiteral("initialize"));
     if(restart) smiExit();
     smiInit(nullptr);
     if(!searchPath.isEmpty())smiSetPath(searchPath.toLocal8Bit().constData());
 }
-void MibEngine::shutdown(){auto operation=beginOperation(QStringLiteral("shutdown"));smiExit();}
+void MibEngine::shutdown(){if(!isWorkerThread()){std::mutex mutex;std::condition_variable done;bool complete=false;
+    submit([&]{shutdown();std::lock_guard lock(mutex);complete=true;done.notify_one();});std::unique_lock lock(mutex);done.wait(lock,[&]{return complete;});return;}
+    auto operation=beginOperation(QStringLiteral("shutdown"));smiExit();}
 
 MibEngineValidationResult MibEngine::validateSource(const QByteArray &content,
     const QString &directory,int errorLevel,bool recursive)
 {
+    if(!isWorkerThread()){MibEngineValidationResult marshalled;std::mutex mutex;std::condition_variable done;bool complete=false;
+        submit([&,content,directory,errorLevel,recursive]{marshalled=validateSource(content,directory,errorLevel,recursive);
+            std::lock_guard lock(mutex);complete=true;done.notify_one();});std::unique_lock lock(mutex);done.wait(lock,[&]{return complete;});return marshalled;}
     auto operation=beginOperation(QStringLiteral("editor-validation"));
     QElapsedTimer timer;timer.start();MibEngineValidationResult result;
     const int savedFlags=smiGetFlags();int flags=savedFlags|SMI_FLAG_ERRORS|SMI_FLAG_NODESCR;

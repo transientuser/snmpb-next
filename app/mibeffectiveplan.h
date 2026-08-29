@@ -7,24 +7,26 @@
 #include <QList>
 #include <QStringList>
 
-enum class MibPlanMembershipReason { Explicit, Dependency, Missing, Ambiguous };
+enum class MibPlanMembershipReason { Explicit, Dependency, Missing, Ambiguous, PinFailure };
 enum class MibPlanProviderReason {
-    None, SingleProvider, EquivalentProviders, AutomaticProfileFolder,
-    GlobalPrecedence, Ambiguous
+    None, ExplicitPin, SingleProvider, EquivalentProviders, AutomaticProfileFolder,
+    GlobalPrecedence, Ambiguous, InvalidPin
 };
 
 struct MibEffectivePlanMember {
     QString identity;
     MibPlanMembershipReason membershipReason = MibPlanMembershipReason::Dependency;
     MibPlanProviderReason providerReason = MibPlanProviderReason::None;
+    MibProviderPin requestedPin;
     MibIndexedProvider provider;
     QList<MibIndexedProvider> alternatives;
     QStringList imports;
 };
 
 struct MibEffectivePlan {
-    static constexpr int SchemaVersion = 1;
-    static constexpr int PolicyVersion = 1;
+    static constexpr int SchemaVersion = 2;
+    static constexpr int PolicyVersion = 2;
+    static constexpr int MaximumConvergencePasses = 8;
 
     QString profileId;
     QString profileName;
@@ -36,12 +38,17 @@ struct MibEffectivePlan {
     QStringList dependencyModules;
     QStringList missingModules;
     QStringList ambiguousModules;
+    QStringList pinFailureModules;
+    QStringList nonConvergentModules;
     QStringList cycles;
     QStringList initialLoadOrder;
+    int convergencePasses = 0;
+    bool converged = true;
     QString sha256;
 
     const MibEffectivePlanMember *member(const QString &identity) const;
-    bool isComplete() const { return missingModules.isEmpty() && ambiguousModules.isEmpty(); }
+    bool isComplete() const { return converged && missingModules.isEmpty() &&
+        ambiguousModules.isEmpty() && pinFailureModules.isEmpty(); }
 };
 
 class MibEffectivePlanResolver

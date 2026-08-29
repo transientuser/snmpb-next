@@ -49,6 +49,16 @@ bool providerLess(const MibIndexedProvider &a, const MibIndexedProvider &b)
     return folded == 0 ? a.canonicalPath < b.canonicalPath : folded < 0;
 }
 
+
+bool samePath(const QString &a, const QString &b)
+{
+#ifdef Q_OS_WIN
+    return QString::compare(canonicalPath(a), canonicalPath(b), Qt::CaseInsensitive) == 0;
+#else
+    return canonicalPath(a) == canonicalPath(b);
+#endif
+}
+
 QJsonArray strings(const QStringList &values)
 {
     QJsonArray result; for (const QString &value : values) result.append(value); return result;
@@ -80,8 +90,11 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
     if ((profile.type == MibProfileType::Custom || profile.type == MibProfileType::Folder) &&
         profile.includeStandardBase)
         pending = sortedUnique(pending + MibProfileDefinitions::standardsModules());
-    while (!pending.isEmpty()) {
-        const QString identity = pending.takeFirst();
+    while (!pending.isEmpty() && plan.convergencePasses < MibEffectivePlan::MaximumConvergencePasses) {
+        ++plan.convergencePasses;
+        const QStringList pass = sortedUnique(pending);
+        pending.clear();
+        for (const QString &identity : pass) {
         if (resolved.contains(identity)) continue;
         MibEffectivePlanMember item;
         item.identity = identity;
@@ -90,12 +103,32 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
         QList<MibIndexedProvider> choices = library.providersFor(identity);
         std::sort(choices.begin(), choices.end(), providerLess);
         item.alternatives = choices;
+        const auto pin = profile.providerPins.constFind(identity);
+        if (pin != profile.providerPins.cend()) item.requestedPin = *pin;
         if (choices.isEmpty()) {
-            item.membershipReason = MibPlanMembershipReason::Missing;
-            plan.missingModules.append(identity);
+            if (pin != profile.providerPins.cend()) {
+                item.membershipReason = MibPlanMembershipReason::PinFailure;
+                item.providerReason = MibPlanProviderReason::InvalidPin;
+                plan.pinFailureModules.append(identity);
+            } else {
+                item.membershipReason = MibPlanMembershipReason::Missing;
+                plan.missingModules.append(identity);
+            }
         } else {
             QList<MibIndexedProvider> eligible = choices;
-            if (profile.type == MibProfileType::Folder && explicitSet.contains(identity)) {
+            if (pin != profile.providerPins.cend()) {
+                eligible.clear();
+                for (const auto &choice : choices)
+                    if (samePath(choice.canonicalPath, pin->canonicalPath) &&
+                        choice.sha256 == pin->sha256) eligible.append(choice);
+                if (eligible.size() == 1) {
+                    item.providerReason = MibPlanProviderReason::ExplicitPin;
+                } else {
+                    item.membershipReason = MibPlanMembershipReason::PinFailure;
+                    item.providerReason = MibPlanProviderReason::InvalidPin;
+                    plan.pinFailureModules.append(identity);
+                }
+            } else if (profile.type == MibProfileType::Folder && explicitSet.contains(identity)) {
                 QList<MibIndexedProvider> local;
                 for (const auto &choice : choices)
                     if (isWithin(choice.canonicalPath, profile.directory)) local.append(choice);
@@ -104,7 +137,9 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
                     item.providerReason = MibPlanProviderReason::AutomaticProfileFolder;
                 }
             }
-            if (item.providerReason != MibPlanProviderReason::AutomaticProfileFolder) {
+            if (item.providerReason != MibPlanProviderReason::ExplicitPin &&
+                item.providerReason != MibPlanProviderReason::AutomaticProfileFolder &&
+                item.providerReason != MibPlanProviderReason::InvalidPin) {
                 const int best = eligible.first().searchPathPrecedence;
                 QList<MibIndexedProvider> preferred;
                 for (const auto &choice : eligible)
@@ -115,7 +150,10 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
             }
             QSet<QString> hashes;
             for (const auto &choice : eligible) hashes.insert(choice.sha256);
-            if (eligible.size() > 1 && (hashes.size() != 1 || hashes.contains(QString()))) {
+            if (item.providerReason == MibPlanProviderReason::InvalidPin) {
+                // An explicit but stale/wrong pin is a hard plan finding. Do not
+                // silently substitute a different conflicting provider.
+            } else if (eligible.size() > 1 && (hashes.size() != 1 || hashes.contains(QString()))) {
                 item.membershipReason = MibPlanMembershipReason::Ambiguous;
                 item.providerReason = MibPlanProviderReason::Ambiguous;
                 plan.ambiguousModules.append(identity);
@@ -125,10 +163,20 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
                 item.provider = eligible.first();
                 item.imports = sortedUnique(item.provider.imports);
                 pending.append(item.imports);
-                pending = sortedUnique(pending);
             }
         }
         resolved.insert(identity, item);
+        }
+        pending = sortedUnique(pending);
+        for (auto it = pending.begin(); it != pending.end(); ) {
+            if (resolved.contains(*it)) it = pending.erase(it);
+            else ++it;
+        }
+    }
+    pending = sortedUnique(pending);
+    if (!pending.isEmpty()) {
+        plan.converged = false;
+        plan.nonConvergentModules = pending;
     }
 
     plan.members = resolved.values();
@@ -144,6 +192,7 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
     plan.dependencyModules = sortedUnique(plan.dependencyModules);
     plan.missingModules = sortedUnique(plan.missingModules);
     plan.ambiguousModules = sortedUnique(plan.ambiguousModules);
+    plan.pinFailureModules = sortedUnique(plan.pinFailureModules);
 
     QSet<QString> visited, active;
     std::function<void(const QString &, QStringList)> visit = [&](const QString &identity, QStringList stack) {
@@ -180,12 +229,17 @@ QByteArray MibEffectivePlanResolver::canonicalBytes(const MibEffectivePlan &plan
     root.insert(QStringLiteral("profileType"), static_cast<int>(plan.profileType));
     root.insert(QStringLiteral("libraryGeneration"), QString::number(plan.libraryGeneration));
     root.insert(QStringLiteral("explicit"), strings(plan.explicitModules));
+    root.insert(QStringLiteral("converged"), plan.converged);
+    root.insert(QStringLiteral("convergencePasses"), plan.convergencePasses);
+    root.insert(QStringLiteral("nonConvergent"), strings(plan.nonConvergentModules));
     QJsonArray members;
     for (const auto &item : plan.members) {
         QJsonObject value;
         value.insert(QStringLiteral("identity"), item.identity);
         value.insert(QStringLiteral("membership"), static_cast<int>(item.membershipReason));
         value.insert(QStringLiteral("providerReason"), static_cast<int>(item.providerReason));
+        value.insert(QStringLiteral("pinPath"), QDir::fromNativeSeparators(item.requestedPin.canonicalPath));
+        value.insert(QStringLiteral("pinHash"), item.requestedPin.sha256);
         value.insert(QStringLiteral("path"), QDir::fromNativeSeparators(item.provider.canonicalPath));
         value.insert(QStringLiteral("hash"), item.provider.sha256);
         value.insert(QStringLiteral("origin"), item.provider.origin);
@@ -236,6 +290,10 @@ MibDependencyCheckResult MibBoundedDependencyLoader::load(
         result.failures.append({identity, MibDependencyFailureKind::MissingProvider, QObject::tr("No indexed provider")});
     for (const QString &identity : std::as_const(plan.ambiguousModules))
         result.failures.append({identity, MibDependencyFailureKind::AmbiguousProvider, QObject::tr("Provider conflict")});
+    for (const QString &identity : std::as_const(plan.pinFailureModules))
+        result.failures.append({identity, MibDependencyFailureKind::AmbiguousProvider, QObject::tr("Explicit provider pin is invalid")});
+    for (const QString &identity : std::as_const(plan.nonConvergentModules))
+        result.failures.append({identity, MibDependencyFailureKind::DependencyUnresolved, QObject::tr("Provider/dependency planning did not converge")});
     for (const QString &identity : std::as_const(pending))
         result.failures.append({identity, MibDependencyFailureKind::ParserSemanticFailure, QObject::tr("Planned provider did not materialize")});
     result.elapsedMsecs = timer.elapsed(); return result;

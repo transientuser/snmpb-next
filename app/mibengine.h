@@ -6,6 +6,7 @@
 #include <QString>
 #include <atomic>
 #include <memory>
+#include <functional>
 
 struct MibEngineValidationResult
 {
@@ -42,6 +43,9 @@ public:
     QString libraryVersion() const;
     void initialize(const QString &searchPath = {}, bool restart = false);
     void shutdown();
+    void submit(std::function<void()> operation);
+    bool isWorkerThread() const;
+    void drain();
 
 private:
     MibEngine();

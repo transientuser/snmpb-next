@@ -911,6 +911,19 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
     const MibProfileRecord *profile = profiles.find(profileCombo->currentData().toString());
     if (!profile) return;
     const MibEffectivePlan effective = providedPlan ? *providedPlan : planFor(*profile);
+    const auto providerReasonText = [this](MibPlanProviderReason reason) {
+        switch (reason) {
+        case MibPlanProviderReason::ExplicitPin: return tr("explicit provider pin");
+        case MibPlanProviderReason::AutomaticProfileFolder: return tr("Automatic profile product affinity");
+        case MibPlanProviderReason::GlobalPrecedence: return tr("global provider precedence");
+        case MibPlanProviderReason::EquivalentProviders: return tr("identical duplicate providers");
+        case MibPlanProviderReason::SingleProvider: return tr("only provider");
+        case MibPlanProviderReason::Ambiguous: return tr("unresolved provider conflict");
+        case MibPlanProviderReason::InvalidPin: return tr("invalid provider pin");
+        case MibPlanProviderReason::None: return tr("no provider decision");
+        }
+        return QString();
+    };
     QStringList selectedAvailable, selectedMembers;
     for (QListWidgetItem *item : availableList->selectedItems()) selectedAvailable.append(item->text());
     for (QListWidgetItem *item : memberList->selectedItems()) selectedMembers.append(item->text());
@@ -932,6 +945,19 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
         QListWidgetItem *item = memberList->item(row);
         item->setHidden(!item->text().contains(memberSearch->text(), Qt::CaseInsensitive));
         item->setSelected(selectedMembers.contains(item->text()));
+        if (const MibEffectivePlanMember *member = effective.member(item->text())) {
+            QStringList providers;
+            for (const MibIndexedProvider &alternative : member->alternatives)
+                providers.append(tr("%1 [%2]").arg(alternative.canonicalPath,
+                    alternative.sha256.left(12)));
+            const QString selected = member->provider.canonicalPath.isEmpty()
+                ? tr("No provider selected")
+                : tr("Selected: %1 [%2]").arg(member->provider.canonicalPath,
+                    member->provider.sha256.left(12));
+            item->setToolTip(selected + tr("\nReason: %1").arg(providerReasonText(member->providerReason)) +
+                (providers.isEmpty() ? QString() :
+                tr("\nProviders:\n%1").arg(providers.join('\n'))));
+        }
     }
     availableList->verticalScrollBar()->setValue(availableScroll);
     memberList->verticalScrollBar()->setValue(memberScroll);
@@ -940,14 +966,20 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
         if (requirement.membershipReason == MibPlanMembershipReason::Explicit) continue;
         const bool missing = requirement.membershipReason == MibPlanMembershipReason::Missing;
         const bool ambiguous = requirement.membershipReason == MibPlanMembershipReason::Ambiguous;
-        const QString state = missing ? tr("Missing") : ambiguous ? tr("Ambiguous") : tr("Available");
-        const QString reason = ambiguous ? tr("Provider conflict") : tr("Imported dependency");
+        const bool pinFailure = requirement.membershipReason == MibPlanMembershipReason::PinFailure;
+        const QString state = pinFailure ? tr("Invalid pin") : missing ? tr("Missing") : ambiguous ? tr("Ambiguous") : tr("Available");
+        const QString reason = pinFailure ? tr("Pinned provider is missing or changed") :
+            ambiguous ? tr("Provider conflict") : tr("Imported dependency");
         auto *item = new QListWidgetItem(tr("%1 — %2 — %3")
             .arg(requirement.identity, state, reason), requiredList);
         item->setData(Qt::UserRole, requirement.identity);
         item->setData(Qt::UserRole + 1, missing);
-        item->setToolTip(requirement.provider.canonicalPath);
-        if (missing || ambiguous) {
+        QStringList providerDetails;
+        for (const MibIndexedProvider &provider : requirement.alternatives)
+            providerDetails.append(tr("%1 [%2]").arg(provider.canonicalPath, provider.sha256.left(12)));
+        item->setToolTip(tr("Reason: %1\n%2").arg(providerReasonText(requirement.providerReason),
+            providerDetails.join('\n')));
+        if (missing || ambiguous || pinFailure) {
             item->setForeground(palette().brush(QPalette::Disabled, QPalette::Text));
         }
     }
@@ -957,6 +989,10 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
         .arg(effective.explicitModules.size()).arg(effective.dependencyModules.size())
         .arg(effective.effectiveModules.size()).arg(effective.missingModules.size())
         .arg(effective.ambiguousModules.size());
+    if (!effective.pinFailureModules.isEmpty())
+        profileSummary += tr(" · %1 invalid pins").arg(effective.pinFailureModules.size());
+    if (!effective.converged)
+        profileSummary += tr(" · provider planning did not converge");
     if (librarySummary.stale) profileSummary += tr("\nMIB Library needs checking");
     dependencyCheckSummary->setText(profileSummary);
 }

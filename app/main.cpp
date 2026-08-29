@@ -33,6 +33,7 @@
 #include "agentprofile.h"
 #include "mibeditor.h"
 #include "mibview.h"
+#include "mibmodule.h"
 #include "preferences.h"
 #include "snmpbapp.h"
 #include "productidentity.h"
@@ -138,7 +139,7 @@ int main( int argc, char ** argv )
 
     if (launch_smoke_test)
     {
-        QTimer::singleShot(0, &app, [&]() {
+        const auto runSmoke = [&]() {
             bool passed = true;
             QFile smoke_log(QDir(smoke_config_dir).filePath("launch-smoke.log"));
             if (!smoke_log.open(QIODevice::WriteOnly | QIODevice::Text))
@@ -213,7 +214,13 @@ int main( int argc, char ** argv )
             mw.close();
             smoke_log.close();
             app.exit(passed ? 0 : 1);
-        });
+        };
+        if (snmpb.MibModuleObj()->CurrentEnvironment())
+            QTimer::singleShot(0, &app, runSmoke);
+        else
+            QObject::connect(snmpb.MibModuleObj(), &MibModule::profileRuntimeReady, &app,
+                [runSmoke](const QString &,const MibEffectivePlan &,MibEnvironmentPtr,
+                           const QStringList &,bool,bool){runSmoke();},Qt::SingleShotConnection);
     }
 
     DiagnosticLogger::log("Startup", "event-loop entry");
