@@ -337,3 +337,35 @@ bool MibProfileService::refreshAutomaticProfiles(const QString &mibRoot, QString
     if (!persist(error)) { folderProfiles = previous; return false; }
     return true;
 }
+
+MibProfileModuleAdditionResult MibAddModulesToEditableProfile(
+    MibProfileService &service, const QString &profileId, const QStringList &moduleIdentities)
+{
+    MibProfileModuleAdditionResult result;
+    const MibProfileRecord *current = service.find(profileId);
+    if (!current) return result;
+    if (current->type != MibProfileType::Custom) {
+        result.status = MibProfileModuleAdditionStatus::ReadOnly;
+        return result;
+    }
+
+    MibProfileRecord updated = *current;
+    for (const QString &value : moduleIdentities) {
+        const QString identity = value.trimmed();
+        if (identity.isEmpty() || updated.explicitModules.contains(identity)) continue;
+        updated.explicitModules.append(identity);
+        result.addedModules.append(identity);
+    }
+    result.addedModules = uniqueSorted(result.addedModules);
+    if (result.addedModules.isEmpty()) {
+        result.status = MibProfileModuleAdditionStatus::Unchanged;
+        return result;
+    }
+    if (!service.update(updated, &result.error)) {
+        result.status = MibProfileModuleAdditionStatus::PersistenceFailed;
+        result.addedModules.clear();
+        return result;
+    }
+    result.status = MibProfileModuleAdditionStatus::Updated;
+    return result;
+}

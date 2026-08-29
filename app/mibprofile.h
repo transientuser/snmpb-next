@@ -70,4 +70,21 @@ private:
     QList<MibProfileRecord> folderProfiles;
 };
 
+enum class MibProfileModuleAdditionStatus {
+    Updated,
+    Unchanged,
+    Missing,
+    ReadOnly,
+    PersistenceFailed
+};
+
+struct MibProfileModuleAdditionResult {
+    MibProfileModuleAdditionStatus status = MibProfileModuleAdditionStatus::Missing;
+    QStringList addedModules;
+    QString error;
+};
+
+MibProfileModuleAdditionResult MibAddModulesToEditableProfile(
+    MibProfileService &service, const QString &profileId, const QStringList &moduleIdentities);
+
 #endif

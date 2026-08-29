@@ -235,7 +235,31 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     mibLibraryCallbacks.downloadsCompleted = [this](const QStringList &requested, bool load) {
         modules->RescanPath(); QString indexError; modules->RefreshDependencyIndex(&indexError);
         if (!indexError.isEmpty()) DiagnosticLogger::log("MIB", indexError);
-        if (load) modules->LoadPreferredModules(requested);
+        if (!load) return;
+
+        const QString activeProfileId = QSettings().value(
+            "mib-library/current-profile", MibProfileDefinitions::allId()).toString();
+        QStringList identities;
+        const MibRuntimeRequestNormalization normalized =
+            MibNormalizeRuntimeRequests(requested, *modules->DependencyIndex());
+        for (const QString &identity : normalized.identities)
+            if (!modules->DependencyIndex()->providersFor(identity).isEmpty())
+                identities.append(identity);
+        identities.removeDuplicates();
+
+        const MibProfileModuleAdditionResult result = MibAddModulesToEditableProfile(
+            *mibLibrary->profileService(), activeProfileId, identities);
+        if (result.status == MibProfileModuleAdditionStatus::Updated ||
+            result.status == MibProfileModuleAdditionStatus::Unchanged) {
+            DiagnosticLogger::log("MIB", tr("Downloaded MIB identities applied to Custom Profile '%1': %2")
+                .arg(activeProfileId, result.addedModules.join(QStringLiteral(", "))));
+            mibLibrary->selectProfile(activeProfileId);
+        } else if (result.status == MibProfileModuleAdditionStatus::PersistenceFailed) {
+            DiagnosticLogger::log("MIB", tr("Downloaded MIBs were added to the Library, but the active Custom Profile could not be saved: %1")
+                .arg(result.error));
+        } else {
+            DiagnosticLogger::log("MIB", tr("Downloaded MIBs were added to the Library; select an editable Custom Profile to activate them"));
+        }
     };
     mibLibraryCallbacks.metadata = [this](const QString &module, const QString &path) {
         return modules->ModuleMetadata(module, path);
@@ -545,8 +569,10 @@ void Snmpb::BindToGUI(QMainWindow* mw)
             });
     connect(devicePane, &DevicePane::loadPreferredMibsRequested, this,
             [this](const QString &profileId) {
-        modules->LoadPreferredModules(
-            profileMetadataService->metadataForProfile(profileId).preferredMibs);
+        const int retainedCount = profileMetadataService->metadataForProfile(
+            profileId).preferredMibs.size();
+        DiagnosticLogger::log("MIB", tr("Connection preferred-MIB data is retained for compatibility but is not an activation authority (profile=%1 entries=%2). Select a MIB Profile to change MIB semantics.")
+            .arg(profileId).arg(retainedCount));
     });
     connect(devicePane, &DevicePane::manageUsmCredentialsRequested, this, [this]() {
         if (upm) upm->ExecuteNewCredential();

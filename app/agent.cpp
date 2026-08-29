@@ -1025,7 +1025,6 @@ cleanup:
     s->MainUI()->Query->append(msg);
     // Dont stop the timer, but put it back to the lower-rate trap timer value
     timer.start(TRAP_TIMER_MSEC);
-    s->MibModuleObj()->SetLoadingPolicy(MibModule::MIBLOAD_DEFAULT);
     emit StartWalk(false);
     s->MainUI()->actionStop->setEnabled(false);
     activeRequestContext.reset();
@@ -1892,7 +1891,7 @@ int Agent::SelectTableInstance(const QString &oid, QString &outinstance)
     connect(&runner, &SnmpInstanceAsyncRunner::completed, &loop,
             [&](const SnmpInstanceResult &value) { result = value; loop.quit(); });
     runner.start(SnmpRequestContext(config, SnmpRequestOperation::Walk,
-                                   MibEnvironmentRegistry::active()), root,
+                                   environment), root,
                  std::make_unique<SnmpPlusTransport>(config));
     loop.exec();
     runner.wait();
@@ -1931,7 +1930,7 @@ void Agent::GetFromSelectInstance(const QString& oid, int op)
     s->MainUI()->actionStop->setEnabled(true);
     emit StartWalk(true);
     instanceRunner->start(SnmpRequestContext(config, SnmpRequestOperation::Walk,
-                                             MibEnvironmentRegistry::active()),
+                                             environment),
                           root, std::make_unique<SnmpPlusTransport>(config));
 }
 

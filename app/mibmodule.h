@@ -50,20 +50,16 @@ class MibModule: public QObject
     Q_OBJECT
     
 public:
-    enum AutomaticLoadingPolicy {MIBLOAD_ALL, MIBLOAD_DEFAULT, MIBLOAD_NONE};
 
     MibModule(Snmpb *snmpb);
     ~MibModule() override;
     void SendLogError(const QString& text){ErrorWhileLoading=true; emit LogError(text);}
-    QString LoadBestModule(QString oid);
-    void SetLoadingPolicy(enum AutomaticLoadingPolicy p) {Policy = p;}
 
     void RegenerateSmiConf();
     void ReadMibPaths();
     QStringList AvailableModuleNames() const;
     QList<MibModuleRecord> AvailableModuleRecords() const { return AvailableRecords; }
     QStringList LoadedModuleNames() const;
-    QStringList LoadPreferredModules(const QStringList &modules);
     bool ApplyProfileRuntime(const MibEffectivePlan &plan, QString *error = nullptr);
     void RestoreRuntimeAfterEditorValidation();
     MibEffectivePlan BuildEffectivePlan(const MibProfileRecord &profile) const;
@@ -98,7 +94,6 @@ signals:
     void profileRuntimeFailed(const QString &profileId, const QString &error);
 
 private:
-    bool ReconstructRuntime(const MibEffectivePlan &plan, QString *error = nullptr);
     MibEnvironmentBuildResult BuildEnvironment(const MibEffectivePlan &plan);
     QStringList LoadEffectivePlan(const MibEffectivePlan &plan);
     void InitLib(int restart);
@@ -115,7 +110,6 @@ private:
     QList<QStringList> Total;
     QStringList KnownModuleNames;
     QList<MibModuleRecord> AvailableRecords;
-    enum AutomaticLoadingPolicy Policy;
     bool ErrorWhileLoading;
     MibDependencyIndex dependencyIndex;
     bool dependencyIndexStale = false;

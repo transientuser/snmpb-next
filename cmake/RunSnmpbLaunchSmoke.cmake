@@ -16,6 +16,16 @@ file(WRITE "${settings_dir}/SnmpB.ini"
 "size=2\n"
 )
 
+if(WIN32)
+    get_filename_component(executable_dir "${SNMPB_EXECUTABLE}" DIRECTORY)
+    get_filename_component(deployment_root "${executable_dir}" DIRECTORY)
+    set(offscreen_plugin "${deployment_root}/plugins/platforms/qoffscreen.dll")
+    if(EXISTS "${executable_dir}/qt.conf" AND NOT EXISTS "${offscreen_plugin}")
+        message(FATAL_ERROR
+            "Installed launch smoke requires the deployed Qt offscreen platform plugin: ${offscreen_plugin}")
+    endif()
+endif()
+
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
         --unset=SMIPATH

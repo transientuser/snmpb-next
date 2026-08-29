@@ -663,11 +663,6 @@ MibViewLoader::MibViewLoader ()
     treeModel = new MibTreeModel(this);
 }
 
-void MibViewLoader::Load(QStringList &modules)
-{
-    SetEnvironment({}, modules);
-}
-
 void MibViewLoader::SetEnvironment(MibEnvironmentPtr value, const QStringList &modules)
 {
     environment = std::move(value); loadedModuleNames = modules;
@@ -696,16 +691,6 @@ void MibViewLoader::SetEnvironment(MibEnvironmentPtr value, const QStringList &m
         if (iso) treeSnapshot.children.append(project(*iso));
     }
     treeModel->setSnapshot(treeSnapshot);
-}
-
-void MibViewLoader::EnsureLoaded(const QStringList &modules)
-{
-    QStringList combined;
-    combined = loadedModuleNames;
-    bool changed = false;
-    for (const QString &module : modules)
-        if (!combined.contains(module)) { combined.append(module); changed = true; }
-    if (changed) Load(combined);
 }
 
 void MibViewLoader::RegisterView(BasicMibView* view)

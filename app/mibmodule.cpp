@@ -36,7 +36,6 @@
 #include "diagnosticlogger.h"
 #include "agent.h"
 #include "preferences.h"
-#include "preferredmibresolver.h"
 #include "mibservice.h"
 #include "mibservice_internal.h"
 #include "mibengine.h"
@@ -101,7 +100,6 @@ static MibModule *CurrentModuleObject = NULL;
 
 MibModule::MibModule(Snmpb *snmpb)
     : s(snmpb)
-    , Policy(MIBLOAD_DEFAULT)
 {
     QElapsedTimer phase; phase.start();
     DiagnosticLogger::log("MIB", tr("dependency index path=\"%1\"").arg(
@@ -428,9 +426,7 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
         .arg(check.effectiveModules.size()).arg(check.unresolved.size()).arg(check.elapsedMsecs));
     DiagnosticLogger::log("MIB", tr("Dependency check phases profile=%1 inspection-ms=%2 semantic-ms=%3 total-ms=%4 cache=updated")
         .arg(profileId).arg(scan.elapsedMsecs).arg(semanticTimer.elapsed()).arg(totalTimer.elapsed()));
-    if (!libraryWide && !result.loaded.isEmpty()) {
-        s->MibLoaderObj()->EnsureLoaded(result.loaded); RebuildLoadedList(); RebuildUnloadedList();
-    }
+    Q_UNUSED(libraryWide);
     emit inventoryChanged();
     return check;
 }
@@ -480,47 +476,6 @@ MibModuleRecord MibModule::ModuleMetadata(const QString &moduleName, const QStri
     return SnapshotMibModule(module);
 }
 
-QStringList MibModule::LoadPreferredModules(const QStringList &modules)
-{
-    auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("load-preferred"));
-    PreferredMibResolution resolution;
-    QStringList loadedNow; QSet<QString> loading;
-    std::function<bool(const QString &)> loadIdentity;
-    loadIdentity = [this, &loading, &loadIdentity, &loadedNow](const QString &identity) {
-        if (smiIsLoaded(identity.toLocal8Bit().constData())) { if (!loadedNow.contains(identity)) loadedNow.append(identity); return true; }
-        if (loading.contains(identity)) return false; loading.insert(identity);
-        const auto provider = dependencyIndex.provider(identity);
-        QString actualIdentity;
-        if (provider.status == MibProviderStatus::Found) {
-            for (const QString &dependency : dependencyIndex.imports(identity)) loadIdentity(dependency);
-            ErrorWhileLoading = false;
-            char *actual = smiLoadModule(QDir::toNativeSeparators(provider.path).toLocal8Bit().constData());
-            if (actual) actualIdentity = QString::fromLocal8Bit(actual);
-        } else {
-            ErrorWhileLoading = false; char *actual = smiLoadModule(identity.toLocal8Bit().constData());
-            if (actual) actualIdentity = QString::fromLocal8Bit(actual);
-        }
-        const bool success = !ErrorWhileLoading && !actualIdentity.isEmpty() &&
-            (provider.status != MibProviderStatus::Found || smiIsLoaded(identity.toLocal8Bit().constData()));
-        loading.remove(identity); if (success && !loadedNow.contains(actualIdentity)) loadedNow.append(actualIdentity); return success;
-    };
-    for (const QString &module : modules) {
-        if (smiIsLoaded(module.toLocal8Bit().constData())) resolution.alreadyLoaded.append(module);
-        else if (!loadIdentity(module)) resolution.unavailable.append(module);
-        else resolution.toLoad.append(module);
-    }
-    if (!loadedNow.isEmpty())
-    {
-        s->MibLoaderObj()->EnsureLoaded(loadedNow);
-        RebuildLoadedList();
-        RebuildUnloadedList();
-        s->TabSelected();
-    }
-    for (const QString &name : resolution.unavailable)
-        emit LogError(tr("Preferred MIB module '%1' is unavailable").arg(name));
-    return resolution.unavailable;
-}
-
 MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) const
 {
     return MibEffectivePlanResolver().resolve(profile, dependencyIndex);
@@ -560,82 +515,6 @@ QStringList MibModule::LoadEffectivePlan(const MibEffectivePlan &plan)
     for (const QString &identity : std::as_const(unavailable))
         emit LogError(tr("Effective Plan MIB module '%1' is unavailable").arg(identity));
     return unavailable;
-}
-
-// Attempts to identify and load a mib module that resolves a specific oid
-//
-// Returns the mib module's filename if there is a match, otherwise
-// returns an empty string
-QString MibModule::LoadBestModule(QString oid)
-{
-    // If automatic loading is disabled, return
-    if ((s->PreferencesObj()->GetAutomaticLoading() == 3) || 
-        (Policy == MIBLOAD_NONE))
-        return "";
-
-    QString best_file = "";
-    QString best_oid = "";
-
-    // Loop though all mibs
-    for (auto& mib: Total)
-    {
-        // Loop through all possible root oids for each mib
-        for (auto& root_oid: mib)
-        {
-            // If we have a possible match better than the best so far ...
-            if (root_oid != "" && oid.startsWith(root_oid) &&
-                root_oid.size() > best_oid.size())
-            {
-                // ...and it is not loaded ...
-                if (Unloaded.contains(mib[0]))
-                {
-                    // ... note it as best match so far and continue.
-                    best_file = mib[0];
-                    best_oid = root_oid;
-                }
-                break;
-            }
-        }
-    }
-
-    // We have a match, try to load it
-    if (best_file != "")
-    {
-        // If automatic loading prompt is enabled and load policy is not set to all
-        if ((s->PreferencesObj()->GetAutomaticLoading() == 2) &&
-            (Policy != MIBLOAD_ALL))
-        {
-            emit StopAgentTimer();
-            int ret = QMessageBox::question (
-                        s->MainUI()->MIBTree,
-                        tr("MIB Navigator automatic MIB loading"),
-                        tr("Unknown OID %1\nAttempt to load MIB module where this OID is defined?").arg(oid),
-                        QMessageBox::Yes | QMessageBox::No | 
-                        QMessageBox::YesToAll | QMessageBox::NoToAll,
-                        QMessageBox::Yes
-                      );
-
-            switch (ret)
-            {
-                case QMessageBox::NoToAll:
-                    Policy = MIBLOAD_NONE;
-                    // fallthrough
-                case QMessageBox::No:
-                    return "";
-                case QMessageBox::YesToAll:
-                    Policy = MIBLOAD_ALL;
-                    break;
-                case QMessageBox::Yes:
-                default:
-                    break;
-            }
-        }
-
-        // Load the module
-        DiagnosticLogger::log("MIB", tr("Legacy automatic preload ignored after Profile migration candidate=%1").arg(best_file));
-    }
-
-    return best_file;
 }
 
 bool lessThanLoadedMibModule(const LoadedMibModule &lm1,
@@ -727,45 +606,6 @@ void MibModule::ReadMibPaths()
         if (!paths.contains(path)) paths.append(path);
 
     smiSetPath(paths.join(SMI_PATH_SEPARATOR).toLocal8Bit().data());
-}
-
-bool MibModule::ReconstructRuntime(const MibEffectivePlan &plan, QString *error)
-{
-    QElapsedTimer totalTimer; totalTimer.start();
-    RegenerateSmiConf();
-    InitLib(1);
-    Loaded.clear();
-    const QStringList unavailable = LoadEffectivePlan(plan);
-    RebuildLoadedList();
-    RebuildUnloadedList();
-    QStringList runtimeModules = LoadedModuleNames();
-    QStringList missing;
-    for (const QString &identity : plan.effectiveModules)
-        if (!smiIsLoaded(identity.toLocal8Bit().constData())) missing.append(identity);
-    missing.append(unavailable);
-    missing.removeDuplicates();
-    MibEnvironmentPtr extracted = MibEnvironmentExtractor().extract(plan, missing);
-    const MibEnvironmentTelemetry telemetry = extracted->telemetry();
-    DiagnosticLogger::log("MIB", tr("Environment extraction ms=%1 plan=%2 status=%3 modules=%4 nodes=%5 types=%6 utf16-chars=%7 approximate-bytes=%8 findings=%9")
-        .arg(telemetry.extractionMilliseconds).arg(plan.sha256)
-        .arg(extracted->status() == MibEnvironmentStatus::Complete ? QStringLiteral("complete") : QStringLiteral("partial"))
-        .arg(telemetry.moduleCount).arg(telemetry.nodeCount).arg(telemetry.typeCount)
-        .arg(telemetry.ownedUtf16Characters).arg(telemetry.approximateOwnedBytes)
-        .arg(extracted->findings().size()));
-    DiagnosticLogger::log("MIB", tr("Effective Plan runtime reconstruction total-ms=%1 plan=%2 requested=%3 loaded=%4 missing=%5")
-        .arg(totalTimer.elapsed()).arg(plan.sha256).arg(plan.effectiveModules.size())
-        .arg(runtimeModules.size()).arg(missing.size()));
-    if (!MibEnvironmentRegistry::isUsableMaterialization(extracted)) {
-        if (error) *error = tr("No planned MIB modules could be materialized");
-        return false;
-    }
-    s->MibLoaderObj()->SetEnvironment(extracted, runtimeModules);
-    currentEnvironment = extracted;
-    MibEnvironmentRegistry::publishMaterialization(std::move(extracted));
-    if (!missing.isEmpty() && error)
-        *error = tr("%n planned module(s) did not load; the usable partial environment was activated",
-                    nullptr, missing.size());
-    return true;
 }
 
 bool MibModule::ApplyProfileRuntime(const MibEffectivePlan &plan, QString *error)

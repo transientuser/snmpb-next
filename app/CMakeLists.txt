@@ -68,7 +68,6 @@ set(SNMPB_APP_SOURCES
     profilemetadatarepository.cpp
     profilemetadataservice.cpp
     profiletransfer.cpp
-    preferredmibresolver.cpp
     snmprequestconfig.cpp
     snmprequestconfigadapter.cpp
     snmprequestcontext.cpp
@@ -165,7 +164,6 @@ set(SNMPB_APP_HEADERS
     profilemetadatarepository.h
     profilemetadataservice.h
     profiletransfer.h
-    preferredmibresolver.h
     snmprequestconfig.h
     snmprequestconfigadapter.h
     snmprequestcontext.h
@@ -318,6 +316,14 @@ if(WIN32 OR APPLE)
         NO_UNSUPPORTED_PLATFORM_ERROR
     )
     install(SCRIPT ${SNMPB_QT_DEPLOY_SCRIPT})
+endif()
+
+if(WIN32 AND TARGET Qt6::QOffscreenIntegrationPlugin)
+    # The installed launch smoke deliberately runs without a desktop. Qt's
+    # deployment scanner omits this non-default platform plugin unless it is
+    # requested explicitly.
+    install(FILES $<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>
+        DESTINATION plugins/platforms)
 endif()
 
 if(WIN32)

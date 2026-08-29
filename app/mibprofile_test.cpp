@@ -51,6 +51,30 @@ int main(int argc, char **argv)
     changed.includeStandardBase = true;
     changed.providerPins.insert("VENDOR-A", {"C:/MIBs/vendor-a.mib", QString(64, 'a')});
     ok &= check(service.update(changed, &error), "update members/base");
+
+    const auto downloaded = MibAddModulesToEditableProfile(
+        service, id, {" DOWNLOADED-IDENTITY ", "VENDOR-A", "DOWNLOADED-IDENTITY"});
+    ok &= check(downloaded.status == MibProfileModuleAdditionStatus::Updated &&
+                downloaded.addedModules == QStringList{"DOWNLOADED-IDENTITY"} &&
+                service.find(id)->explicitModules.contains("DOWNLOADED-IDENTITY"),
+                "download intent adds normalized identity only to active custom profile");
+    MibProfileService downloadReloaded{MibProfileRepository(path)};
+    ok &= check(downloadReloaded.find(id) &&
+                downloadReloaded.find(id)->explicitModules.contains("DOWNLOADED-IDENTITY"),
+                "downloaded identity persists before profile activation");
+    ok &= check(MibAddModulesToEditableProfile(
+                    service, MibProfileDefinitions::allId(), {"HIDDEN-MUTATION"}).status ==
+                    MibProfileModuleAdditionStatus::ReadOnly &&
+                !service.find(MibProfileDefinitions::allId())->explicitModules.contains("HIDDEN-MUTATION"),
+                "All MIBs rejects download mutation");
+    ok &= check(MibAddModulesToEditableProfile(
+                    service, MibProfileDefinitions::standardsId(), {"HIDDEN-MUTATION"}).status ==
+                    MibProfileModuleAdditionStatus::ReadOnly,
+                "Standards profile rejects download mutation");
+    ok &= check(MibAddModulesToEditableProfile(
+                    service, "missing-profile", {"HIDDEN-MUTATION"}).status ==
+                    MibProfileModuleAdditionStatus::Missing,
+                "no active profile cannot create semantic intent");
     ok &= check(service.rename(id, "Vendor renamed", &error), "rename custom");
     const QString duplicate = service.duplicate(id, "Vendor copy", &error);
     ok &= check(!duplicate.isEmpty() && duplicate != id, "duplicate stable identity");
@@ -168,6 +192,10 @@ int main(int argc, char **argv)
     ok &= check(stable && stable->id == stableId && stable->type == MibProfileType::Folder &&
                 !reloaded.update(*stable, &error),
                 "folder profile keeps stable ID and is read-only");
+    ok &= check(MibAddModulesToEditableProfile(reloaded, stableId, {"HIDDEN-MUTATION"}).status ==
+                    MibProfileModuleAdditionStatus::ReadOnly &&
+                !reloaded.find(stableId)->explicitModules.contains("HIDDEN-MUTATION"),
+                "automatic profile rejects load-after-download mutation");
     QFile::remove(folderMib.fileName());
     reloaded.refreshAutomaticProfiles(foldersRoot, &error);
     ok &= check(reloaded.find(stableId) && reloaded.find(stableId)->explicitModules.isEmpty(),

@@ -151,9 +151,7 @@ class MibViewLoader: public QObject
 
 public:
     MibViewLoader();
-    void Load (QStringList &);
     void SetEnvironment(MibEnvironmentPtr environment, const QStringList &modules);
-    void EnsureLoaded(const QStringList &modules);
     const MibTreeNodeRecord &TreeSnapshot() const { return treeSnapshot; }
     MibTreeModel *TreeModel() const { return treeModel; }
     void Populate(MibNode *root);

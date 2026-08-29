@@ -146,17 +146,23 @@ int main(int argc, char **argv)
     QFile moduleSource(QStringLiteral(SNMPB_SOURCE_DIR "/app/mibmodule.cpp"));
     QFile profileSourceFile(QStringLiteral(SNMPB_SOURCE_DIR "/app/mibprofile.cpp"));
     QFile effectivePlanSource(QStringLiteral(SNMPB_SOURCE_DIR "/app/mibeffectiveplan.cpp"));
+    QFile viewSource(QStringLiteral(SNMPB_SOURCE_DIR "/app/mibview.cpp"));
+    QFile applicationBuild(QStringLiteral(SNMPB_SOURCE_DIR "/app/CMakeLists.txt"));
     ok &= check(mainWindowUi.open(QIODevice::ReadOnly) &&
                 applicationSource.open(QIODevice::ReadOnly) &&
                 moduleSource.open(QIODevice::ReadOnly) &&
                 profileSourceFile.open(QIODevice::ReadOnly) &&
-                effectivePlanSource.open(QIODevice::ReadOnly),
+                effectivePlanSource.open(QIODevice::ReadOnly) &&
+                viewSource.open(QIODevice::ReadOnly) &&
+                applicationBuild.open(QIODevice::ReadOnly),
                 "navigation sources are readable");
     const QByteArray mainWindowUiText = mainWindowUi.readAll();
     const QByteArray applicationSourceText = applicationSource.readAll();
     const QByteArray moduleSourceText = moduleSource.readAll();
     const QByteArray profileSourceFileText = profileSourceFile.readAll();
     const QByteArray effectivePlanSourceText = effectivePlanSource.readAll();
+    const QByteArray viewSourceText = viewSource.readAll();
+    const QByteArray applicationBuildText = applicationBuild.readAll();
     ok &= check(applicationSourceText.contains("removeTab(legacyModulesTab)") &&
                 applicationSourceText.contains("insertTab(1, mibLibrary, tr(\"MIBs\"))"),
                 "top-level navigation exposes one consolidated MIBs workspace");
@@ -167,13 +173,32 @@ int main(int argc, char **argv)
                 !moduleSourceText.contains("Wanted") &&
                 !moduleSourceText.contains("mibpreloads"),
                 "legacy preload state is absent from normal MibModule runtime authority");
+    ok &= check(!moduleSourceText.contains("ReconstructRuntime"),
+                "no synchronous duplicate Environment publication path remains");
+    ok &= check(!moduleSourceText.contains("LoadBestModule") &&
+                !moduleSourceText.contains("MIBLOAD_DEFAULT"),
+                "dead legacy automatic preload authority is absent");
+    ok &= check(!applicationSourceText.contains("LoadPreferredModules") &&
+                !moduleSourceText.contains("LoadPreferredModules") &&
+                !moduleSourceText.contains("PreferredMibResolver") &&
+                !viewSourceText.contains("EnsureLoaded") &&
+                !viewSourceText.contains("SetEnvironment({}, modules)") &&
+                !applicationBuildText.contains("    preferredmibresolver.cpp\n") &&
+                !applicationBuildText.contains("    preferredmibresolver.h\n"),
+                "preferred-module resolver and synthetic Tree Environment are absent from production");
+    ok &= check(applicationSourceText.contains("MibAddModulesToEditableProfile") &&
+                applicationSourceText.contains("MibNormalizeRuntimeRequests") &&
+                applicationSourceText.contains("mibLibrary->selectProfile(activeProfileId)") &&
+                applicationSourceText.contains("retained for compatibility but is not an activation authority"),
+                "download and Connection entry points cannot bypass Profile intent");
     ok &= check(applicationSourceText.contains("modules->CheckProfileDependencies(QStringLiteral(\"mib-library\")") &&
                 applicationSourceText.contains("modules->DependencyIndex()->moduleNames()"),
                 "MIB Library owns the library-wide Check Dependencies action");
     ok &= check(moduleSourceText.contains("Legacy module editor ignored; use a Custom Profile") &&
                 !moduleSourceText.contains("PersistWanted"),
                 "retired Available/Loaded arrows cannot recreate shadow legacy authority");
-    ok &= check(moduleSourceText.contains("smiIsLoaded(module.toLocal8Bit().constData())") &&
+    ok &= check(moduleSourceText.contains("for (SmiModule *mod = smiGetFirstModule()") &&
+                moduleSourceText.contains("LoadedMibModule lmodule(SnapshotMibModule(mod))") &&
                 moduleSourceText.contains("declarations.contains(Loaded[j].name)"),
                 "Loaded and Available projections use actual libsmi identities rather than stale requested state");
     ok &= check(applicationSourceText.contains("ApplyProfileRuntime(plan, &error)") &&
