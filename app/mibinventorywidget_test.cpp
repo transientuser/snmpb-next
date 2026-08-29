@@ -164,19 +164,15 @@ int main(int argc, char **argv)
                 !applicationSourceText.contains("currentTab == mibLibrary) {\n        SetEditorMenus(false);\n        MainUI()->actionMultipleVarbinds->setEnabled(false);\n        mibLibrary->refresh();"),
                 "top-level MIBs activation does not call Library refresh");
     ok &= check(!moduleSourceText.contains("legacyPlan") &&
-                !moduleSourceText.contains("legacy-preloads") &&
-                moduleSourceText.contains("s->MibLoaderObj()->Load(runtimeModules)") &&
-                moduleSourceText.contains("MibEnvironmentRegistry::publish({})"),
-                "legacy Wanted startup clears Environment without inventing an Effective Plan");
+                !moduleSourceText.contains("Wanted") &&
+                !moduleSourceText.contains("mibpreloads"),
+                "legacy preload state is absent from normal MibModule runtime authority");
     ok &= check(applicationSourceText.contains("modules->CheckProfileDependencies(QStringLiteral(\"mib-library\")") &&
                 applicationSourceText.contains("modules->DependencyIndex()->moduleNames()"),
                 "MIB Library owns the library-wide Check Dependencies action");
-    ok &= check(moduleSourceText.contains("MibNormalizeRuntimeRequests(candidates, dependencyIndex)") &&
-                moduleSourceText.contains("Wanted.removeAll(item->text(0))") &&
-                moduleSourceText.contains("ReconstructRuntime(Wanted, &error)") &&
-                moduleSourceText.contains("ReconstructRuntime(previousLoaded, &rollbackError)") &&
-                moduleSourceText.contains("PersistWanted();"),
-                "Available/Loaded arrows normalize, verify, persist on success, and roll back reconstruction failures");
+    ok &= check(moduleSourceText.contains("Legacy module editor ignored; use a Custom Profile") &&
+                !moduleSourceText.contains("PersistWanted"),
+                "retired Available/Loaded arrows cannot recreate shadow legacy authority");
     ok &= check(moduleSourceText.contains("smiIsLoaded(module.toLocal8Bit().constData())") &&
                 moduleSourceText.contains("declarations.contains(Loaded[j].name)"),
                 "Loaded and Available projections use actual libsmi identities rather than stale requested state");

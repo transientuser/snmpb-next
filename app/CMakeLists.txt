@@ -37,6 +37,7 @@ set(SNMPB_APP_SOURCES
     mibeditor.cpp
     mibhighlighter.cpp
     miblibrary.cpp
+    miblegacymigration.cpp
     mibdependencyindex.cpp
     mibeffectiveplan.cpp
     mibenvironment.cpp
@@ -132,6 +133,7 @@ set(SNMPB_APP_HEADERS
     mibeditor.h
     mibhighlighter.h
     miblibrary.h
+    miblegacymigration.h
     mibdependencyindex.h
     mibeffectiveplan.h
     mibenvironment.h
@@ -385,6 +387,16 @@ if(BUILD_TESTING)
     else()
         add_test(NAME snmpb.mib-effective-plan COMMAND $<TARGET_FILE:snmpb_mib_effective_plan_test>)
     endif()
+
+    add_executable(snmpb_mib_legacy_migration_test
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
+        mibdependencyindex.cpp mibdependencyindex.h
+        mibprofile.cpp mibprofile.h
+        miblegacymigration.cpp miblegacymigration.h miblegacymigration_test.cpp)
+    target_link_libraries(snmpb_mib_legacy_migration_test PRIVATE Qt6::Core)
+    add_test(NAME snmpb.mib-legacy-migration COMMAND $<TARGET_FILE:snmpb_mib_legacy_migration_test>)
+    snmpb_configure_qt_test_runtime(snmpb.mib-legacy-migration)
 
     add_executable(snmpb_mib_dependency_acceptance
         mibcandidatefilter.cpp mibcandidatefilter.h

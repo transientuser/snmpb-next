@@ -127,10 +127,10 @@ MibModule::MibModule(Snmpb *snmpb)
     phase.restart(); ReadMibPaths(); RebuildCandidateList();
     DiagnosticLogger::log("Startup", tr("MIB candidate enumeration complete elapsed_ms=%1 candidates=%2 stale=%3")
         .arg(phase.elapsed()).arg(Total.size()).arg(dependencyIndexStale ? QStringLiteral("yes") : QStringLiteral("no")));
-    phase.restart(); ReadMibPreloads(); RegenerateSmiConf(); LoadPreferredModules(Wanted);
+    phase.restart(); RegenerateSmiConf();
     RebuildLoadedList(); RebuildUnloadedList();
     DiagnosticLogger::log("Startup", tr("requested MIB load complete elapsed_ms=%1 requested=%2 loaded=%3")
-        .arg(phase.elapsed()).arg(Wanted.size()).arg(Loaded.size()));
+        .arg(phase.elapsed()).arg(0).arg(Loaded.size()));
 
     // Connect some signals
     connect( s->MainUI()->UnloadedModules, 
@@ -632,13 +632,7 @@ QString MibModule::LoadBestModule(QString oid)
         }
 
         // Load the module
-        const QStringList identities = MibDeclaredIdentitiesForCandidate(best_file, dependencyIndex);
-        for (const QString &identity : identities.isEmpty() ? QStringList{best_file} : identities)
-            if (!Wanted.contains(identity)) Wanted.append(identity);
-        s->PreferencesObj()->Save();
-        Refresh();
-
-        s->TabSelected();
+        DiagnosticLogger::log("MIB", tr("Legacy automatic preload ignored after Profile migration candidate=%1").arg(best_file));
     }
 
     return best_file;
@@ -663,7 +657,8 @@ void MibModule::RebuildLoadedList()
         LoadedMibModule lmodule(SnapshotMibModule(mod));
         Loaded.append(lmodule);
 
-        QString required = Wanted.contains(lmodule.name) ? tr("yes") : tr("no");
+        QString required = hasActiveProfilePlan && activeProfilePlan.explicitModules.contains(lmodule.name)
+            ? tr("yes") : tr("no");
 
         QStringList columns;
         columns << lmodule.name.toUtf8().data()
@@ -706,66 +701,12 @@ void MibModule::RebuildUnloadedList()
 
 void MibModule::AddModule()
 {
-    QList<QTreeWidgetItem *> item_list = 
-                             s->MainUI()->UnloadedModules->selectedItems();
-
-    QStringList candidates;
-    for (QTreeWidgetItem *item : item_list) candidates.append(item->text(0));
-    const MibRuntimeRequestNormalization additions =
-        MibNormalizeRuntimeRequests(candidates, dependencyIndex);
-    const QStringList previousWanted = Wanted;
-    const QStringList previousLoaded = LoadedModuleNames();
-    for (const QString &identity : additions.identities)
-        if (!Wanted.contains(identity)) Wanted.append(identity);
-
-    if (!item_list.empty())
-    {
-        DiagnosticLogger::log("MIB", tr("runtime request add candidates=%1 identities=%2 explicit-total=%3")
-            .arg(candidates.size()).arg(additions.identities.size()).arg(Wanted.size()));
-        QString error;
-        if (ReconstructRuntime(Wanted, &error)) {
-            PersistWanted();
-            s->TabSelected();
-        } else {
-            Wanted = previousWanted;
-            QString rollbackError;
-            ReconstructRuntime(previousLoaded, &rollbackError);
-            RebuildLoadedList(); RebuildUnloadedList();
-            const QString message = tr("Unable to load the selected MIB module(s): %1").arg(error);
-            emit LogError(message);
-            QMessageBox::warning(s->MainUI()->ModulesTab, tr("MIB loading failed"), message);
-        }
-    }
+    DiagnosticLogger::log("MIB", QStringLiteral("Legacy module editor ignored; use a Custom Profile"));
 }
 
 void MibModule::RemoveModule()
 {
-    QList<QTreeWidgetItem *> item_list = 
-                             s->MainUI()->LoadedModules->selectedItems();
-
-    const QStringList previousWanted = Wanted;
-    const QStringList previousLoaded = LoadedModuleNames();
-    for (QTreeWidgetItem *item : item_list)
-        Wanted.removeAll(item->text(0));
-
-    if (!item_list.empty())
-    {
-        DiagnosticLogger::log("MIB", tr("runtime request remove identities=%1 explicit-total=%2")
-            .arg(item_list.size()).arg(Wanted.size()));
-        QString error;
-        if (ReconstructRuntime(Wanted, &error)) {
-            PersistWanted();
-            s->TabSelected();
-        } else {
-            Wanted = previousWanted;
-            QString rollbackError;
-            ReconstructRuntime(previousLoaded, &rollbackError);
-            RebuildLoadedList(); RebuildUnloadedList();
-            const QString message = tr("Unable to remove the selected MIB module(s): %1").arg(error);
-            emit LogError(message);
-            QMessageBox::warning(s->MainUI()->ModulesTab, tr("MIB loading failed"), message);
-        }
-    }
+    DiagnosticLogger::log("MIB", QStringLiteral("Legacy module editor ignored; use a Custom Profile"));
 }
 
 void MibModule::ReadMibPaths()
@@ -786,81 +727,6 @@ void MibModule::ReadMibPaths()
         if (!paths.contains(path)) paths.append(path);
 
     smiSetPath(paths.join(SMI_PATH_SEPARATOR).toLocal8Bit().data());
-}
-
-void MibModule::ReadMibPreloads()
-{
-    // read in MIB preload list from preferences
-    Wanted.clear();
-    QSettings settings;
-    int size = settings.beginReadArray("mibpreloads");
-    QStringList persisted;
-    for (int i = 0; i < size; ++i) {
-        settings.setArrayIndex(i);
-        persisted << settings.value("mib").toString();
-    }
-    settings.endArray();
-    const MibRuntimeRequestNormalization normalized =
-        MibNormalizeRuntimeRequests(persisted, dependencyIndex);
-    Wanted = normalized.identities;
-    DiagnosticLogger::log("MIB", tr("runtime requests persisted=%1 identities=%2 legacy-filenames=%3 identity-inputs=%4 unresolved=%5 duplicates=%6")
-        .arg(normalized.inputCount).arg(Wanted.size()).arg(normalized.legacyFilenameCount)
-        .arg(normalized.identityCount).arg(normalized.unresolvedCount).arg(normalized.duplicateCount));
-}
-
-void MibModule::PersistWanted() const
-{
-    QSettings settings;
-    settings.beginWriteArray("mibpreloads");
-    for (int i = 0; i < Wanted.size(); ++i) {
-        settings.setArrayIndex(i);
-        settings.setValue("mib", Wanted[i]);
-    }
-    settings.endArray();
-}
-
-bool MibModule::ReconstructRuntime(const QStringList &requests, QString *error)
-{
-    hasActiveProfilePlan = false;
-    currentEnvironment.reset();
-    MibEnvironmentRegistry::publish({});
-    QElapsedTimer totalTimer; totalTimer.start();
-    QElapsedTimer phaseTimer; phaseTimer.start();
-    RegenerateSmiConf();
-    const qint64 configurationMs = phaseTimer.restart();
-    InitLib(1);
-    const qint64 parserResetMs = phaseTimer.restart();
-    Loaded.clear();
-    const QStringList unavailable = LoadPreferredModules(requests);
-    const qint64 moduleLoadMs = phaseTimer.restart();
-    RebuildLoadedList();
-    RebuildUnloadedList();
-    const qint64 legacyProjectionMs = phaseTimer.restart();
-    QStringList runtimeModules = LoadedModuleNames();
-    // Legacy parser state is not an Environment. Clear migrated semantic
-    // projections even when one or more Wanted modules fail to load.
-    s->MibLoaderObj()->Load(runtimeModules);
-    const qint64 treeModelMs = phaseTimer.restart();
-    QStringList missing;
-    for (const QString &identity : requests)
-        if (!smiIsLoaded(identity.toLocal8Bit().constData())) missing.append(identity);
-    missing.removeDuplicates();
-    if (!unavailable.isEmpty() || !missing.isEmpty()) {
-        DiagnosticLogger::log("MIB", tr("Runtime reconstruction total-ms=%1 configuration-ms=%2 parser-reset-ms=%3 module-load-ms=%4 legacy-projection-ms=%5 tree-model-ms=%6 verification-ms=%7 requested=%8 loaded=%9 missing=%10")
-            .arg(totalTimer.elapsed()).arg(configurationMs).arg(parserResetMs)
-            .arg(moduleLoadMs).arg(legacyProjectionMs).arg(treeModelMs)
-            .arg(phaseTimer.elapsed()).arg(requests.size()).arg(runtimeModules.size())
-            .arg(missing.size()));
-        if (error) *error = tr("%n requested module(s) did not load", nullptr, missing.size());
-        return false;
-    }
-    // Wanted/mibpreloads remain legacy authority until Phase 8. They must not
-    // manufacture a competing Environment without a governing Effective Plan.
-    DiagnosticLogger::log("MIB", tr("Runtime reconstruction total-ms=%1 configuration-ms=%2 parser-reset-ms=%3 module-load-ms=%4 legacy-projection-ms=%5 tree-model-ms=%6 verification-ms=%7 requested=%8 loaded=%9 missing=0")
-        .arg(totalTimer.elapsed()).arg(configurationMs).arg(parserResetMs)
-        .arg(moduleLoadMs).arg(legacyProjectionMs).arg(treeModelMs)
-        .arg(phaseTimer.elapsed()).arg(requests.size()).arg(runtimeModules.size()));
-    return true;
 }
 
 bool MibModule::ReconstructRuntime(const MibEffectivePlan &plan, QString *error)
@@ -980,12 +846,7 @@ void MibModule::Refresh()
         RebuildCandidateList();
     }
 
-    ReadMibPreloads();
-
-    QString reconstructionError;
-    ReconstructRuntime(Wanted, &reconstructionError);
-    if (!reconstructionError.isEmpty())
-        emit LogError(tr("Runtime MIB reconstruction incomplete: %1").arg(reconstructionError));
+    if (hasActiveProfilePlan) ApplyProfileRuntime(activeProfilePlan);
     s->MainUI()->LoadedModules->resizeColumnToContents(0);
     s->MainUI()->UnloadedModules->resizeColumnToContents(0);
     s->MainUI()->LoadedModules->sortByColumn(0, Qt::AscendingOrder);
@@ -1044,7 +905,4 @@ void MibModule::RegenerateSmiConf()
     QStringList mibpaths = QString(smipath.get()).split(SMI_PATH_SEPARATOR);
     out << "path " << mibpaths.join(SMI_PATH_SEPARATOR) << Qt::endl;
 
-    // write out mib preload list
-    for (int i = 0; i < Wanted.size(); ++i)
-        out << "load " << Wanted[i] << Qt::endl;
 }

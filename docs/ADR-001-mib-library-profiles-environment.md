@@ -78,6 +78,21 @@ selection reason, requested pin (including an invalid pin), and convergence stat
 participate in the schema-2/policy-2 Plan identity. Profile storage schema 3 can
 retain provider pins, although broad pin-editing UI remains future work.
 
+Phase 8 retires legacy `Wanted`/`mibpreloads` as live authority. On startup a
+version-1 migration reads the preserved historical QSettings array exactly once,
+normalizes filenames and identities through the Library provider index, and
+persists a Custom Profile named `Imported Legacy MIBs` with stable ID
+`migration.legacy-mibpreloads.v1`. Missing entries remain explicit intent.
+Profile persistence is verified before the durable migration marker is written;
+the stable ID makes a marker-write retry idempotent. Empty legacy state creates
+no Profile or marker. A valid saved Profile selection is retained; otherwise a
+newly imported Profile becomes the initial selection, while later deletion falls
+back through the normal built-in `All MIBs` policy and does not resurrect it.
+Legacy keys are retained for downgrade evidence but normal Preferences, module
+editing, refresh, parser configuration, and automatic OID loading no longer
+write or reconstruct runtime from them. Environment construction continues only
+through Profile -> Effective Plan -> asynchronous MibEngine -> Environment.
+
 ## Environment schema overview
 
 - Identity: Plan SHA-256, schema/builder versions (currently schema 2 / builder

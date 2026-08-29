@@ -60,8 +60,6 @@ public:
 
     void RegenerateSmiConf();
     void ReadMibPaths();
-    void ReadMibPreloads();
-    QStringList GetWantedModules() { return Wanted; }
     QStringList AvailableModuleNames() const;
     QList<MibModuleRecord> AvailableModuleRecords() const { return AvailableRecords; }
     QStringList LoadedModuleNames() const;
@@ -100,11 +98,9 @@ signals:
     void profileRuntimeFailed(const QString &profileId, const QString &error);
 
 private:
-    bool ReconstructRuntime(const QStringList &requests, QString *error = nullptr);
     bool ReconstructRuntime(const MibEffectivePlan &plan, QString *error = nullptr);
     MibEnvironmentBuildResult BuildEnvironment(const MibEffectivePlan &plan);
     QStringList LoadEffectivePlan(const MibEffectivePlan &plan);
-    void PersistWanted() const;
     void InitLib(int restart);
     void RebuildTotalList();
     void RebuildCandidateList();
@@ -117,7 +113,6 @@ private:
     QStringList Unloaded;
     QList<LoadedMibModule> Loaded;
     QList<QStringList> Total;
-    QStringList Wanted;
     QStringList KnownModuleNames;
     QList<MibModuleRecord> AvailableRecords;
     enum AutomaticLoadingPolicy Policy;

@@ -180,11 +180,6 @@ void Preferences::Init(void)
 
     MibPathRefresh();
 
-    // reset to default MIB preload list if needed
-    if (settings.value("mibpreloads/size", 0) == 0) {
-        MibPreloadsReset();
-    }
-
     p->PreferencesTree->setCurrentItem(p->PreferencesTree->topLevelItem(0));
 }
 
@@ -217,7 +212,7 @@ void Preferences::Save()
 {
     QSettings settings;
 
-    PreferencesSettings values;
+    PreferencesSettings values = PreferencesSettings::load(settings);
     values.trapPort4 = trapport4;
     values.trapPort6 = trapport6;
     values.enableIpv4 = enableipv4;
@@ -240,9 +235,7 @@ void Preferences::Save()
     for (int i = 0; i < l.size(); i++)
         values.mibPaths << l[i]->text();
 
-    // Save MIB preload list
-    values.mibPreloads = s->MibModuleObj()->GetWantedModules();
-    values.save(settings);
+    values.save(settings, true);
 
     // Refresh the MIB lists
     s->MibModuleObj()->Refresh();
@@ -367,23 +360,6 @@ QStringList Preferences::DefaultMibPaths() const
     }
 
     return paths;
-}
-
-void Preferences::MibPreloadsReset()
-{
-    // "Reset to default" for Wanted MIB list
-    QStringList preloaddefaults = QString(default_mib_config).split('\n');
-    preloaddefaults.removeAll("");
-
-    QSettings settings;
-    settings.beginWriteArray("mibpreloads");
-    for (int i = 0; i < preloaddefaults.size(); ++i) {
-        settings.setArrayIndex(i);
-        settings.setValue("mib", preloaddefaults[i]);
-    }
-    settings.endArray();
-
-    s->MibModuleObj()->Refresh();
 }
 
 void Preferences::SetHorizontalSplit(bool checked)

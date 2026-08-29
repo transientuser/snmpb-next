@@ -163,8 +163,9 @@ int main( int argc, char ** argv )
             QDockWidget *devicesDock = mw.findChild<QDockWidget *>("DevicesDock");
             check(devicesDock && devicesDock->widget(),
                   "Devices dock created and integrated");
-            check(snmpb.MainUI()->LoadedModules->topLevelItemCount() > 0,
-                  "bundled MIB modules loaded");
+            check(snmpb.MibModuleObj()->CurrentEnvironment() &&
+                  !snmpb.MibModuleObj()->CurrentEnvironment()->modules().isEmpty(),
+                  "Profile Environment materialized bundled MIB modules");
             check(snmpb.MainUI()->MIBTree->model()->rowCount() > 0,
                   "MIB tree populated");
 

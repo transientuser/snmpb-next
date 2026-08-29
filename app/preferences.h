@@ -73,7 +73,6 @@ protected slots:
     void MibPathDelete();
     void MibPathReset();
     void MibPathRefresh();
-    void MibPreloadsReset();
 
 private:
     Snmpb *s;

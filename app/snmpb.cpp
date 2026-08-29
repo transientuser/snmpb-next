@@ -47,6 +47,7 @@
 #include "diagnosticlogger.h"
 #include "miblibrarywidget.h"
 #include "mibprofile.h"
+#include "miblegacymigration.h"
 
 #include "agentprofile.h"
 #include "agentprofileservice.h"
@@ -184,6 +185,24 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     QElapsedTimer mibStartupTimer; mibStartupTimer.start();
     modules = new MibModule(this);
     DiagnosticLogger::log("Startup", QStringLiteral("MIB initialization complete elapsed_ms=%1").arg(mibStartupTimer.elapsed()));
+    {
+        QSettings legacySettings;
+        MibProfileService migrationProfiles(MibProfileRepository(
+            QDir(MibCollection::legacyManagedRoot()).filePath("profiles-v1.json")));
+        const QString savedProfile = legacySettings.value("mib-library/current-profile").toString();
+        const bool savedProfileWasValid = !savedProfile.isEmpty() &&
+            migrationProfiles.find(savedProfile) != nullptr;
+        QElapsedTimer migrationTimer; migrationTimer.start();
+        const MibLegacyMigrationResult migration = MibLegacyMigration::migrate(
+            legacySettings, migrationProfiles, *modules->DependencyIndex());
+        if (migration.migrated && !savedProfileWasValid)
+            legacySettings.setValue("mib-library/current-profile", migration.profileId);
+        DiagnosticLogger::log("MIB", tr("legacy preload migration version=%1 already=%2 needed=%3 migrated=%4 inputs=%5 resolved=%6 duplicates=%7 unresolved=%8 profile=%9 elapsed_ms=%10%11")
+            .arg(MibLegacyMigration::Version).arg(migration.alreadyComplete).arg(migration.needed)
+            .arg(migration.migrated).arg(migration.inputCount).arg(migration.resolvedCount)
+            .arg(migration.duplicateCount).arg(migration.unresolvedCount).arg(migration.profileId)
+            .arg(migrationTimer.elapsed()).arg(migration.error.isEmpty() ? QString() : tr(" error=\"%1\"").arg(migration.error)));
+    }
     profileService = new AgentProfileService(GetAgentsConfigFile(), this);
     DiagnosticLogger::log("Connections", QStringLiteral("profiles loaded count=%1")
                           .arg(profileService->profiles().size()));

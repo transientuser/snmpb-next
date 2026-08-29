@@ -256,6 +256,25 @@ bool MibProfileService::update(const MibProfileRecord &value, QString *error)
     return false;
 }
 
+bool MibProfileService::importCustomProfile(const QString &stableId, const QString &name,
+                                             const QStringList &modules, QString *error)
+{
+    if (stableId.isEmpty() || isBuiltIn(stableId)) return false;
+    for (MibProfileRecord &profile : customProfiles) if (profile.id == stableId) {
+        const MibProfileRecord old = profile;
+        profile.name = name; profile.type = MibProfileType::Custom;
+        profile.explicitModules = uniqueSorted(modules);
+        if (!persist(error)) { profile = old; return false; }
+        return true;
+    }
+    MibProfileRecord profile;
+    profile.id = stableId; profile.name = name; profile.type = MibProfileType::Custom;
+    profile.explicitModules = uniqueSorted(modules);
+    customProfiles.append(profile);
+    if (!persist(error)) { customProfiles.removeLast(); return false; }
+    return true;
+}
+
 bool MibProfileService::refreshAutomaticProfiles(const QString &mibRoot, QString *error)
 {
     QMap<QString, MibProfileRecord> existing;

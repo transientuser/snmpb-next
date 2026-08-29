@@ -59,6 +59,8 @@ public:
     bool rename(const QString &id, const QString &name, QString *error = nullptr);
     bool remove(const QString &id, QString *error = nullptr);
     bool update(const MibProfileRecord &profile, QString *error = nullptr);
+    bool importCustomProfile(const QString &stableId, const QString &name,
+                             const QStringList &modules, QString *error = nullptr);
     bool refreshAutomaticProfiles(const QString &mibRoot, QString *error = nullptr);
 private:
     static bool isBuiltIn(const QString &id);
