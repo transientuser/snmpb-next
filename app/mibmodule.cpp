@@ -66,95 +66,6 @@ bool sameRuntimePath(const QString &a, const QString &b)
 #endif
 }
 
-MibRuntimeCollectionReference collectionForProvider(const QString &libraryRoot,
-                                                     const QString &providerPath)
-{
-    const QDir root(libraryRoot);
-    const QString relative = QDir::fromNativeSeparators(root.relativeFilePath(providerPath));
-    if (relative == QStringLiteral("..") || relative.startsWith(QStringLiteral("../"))) return {};
-    const QStringList parts = relative.split('/', Qt::SkipEmptyParts);
-    if (parts.size() < 2) return {};
-    if (parts.first().compare(QStringLiteral("Standards"), Qt::CaseInsensitive) == 0)
-        return {QStringLiteral("standards"), MibRuntimeCollectionRole::Standards,
-                QDir(libraryRoot).filePath(QStringLiteral("Standards")), false};
-    if (parts.first().compare(QStringLiteral("Unassigned"), Qt::CaseInsensitive) == 0)
-        return {QStringLiteral("unassigned"), MibRuntimeCollectionRole::General,
-                QDir(libraryRoot).filePath(QStringLiteral("Unassigned")), false};
-    const QString relativeCollection = parts.size() >= 3
-        ? parts.at(0) + u'/' + parts.at(1) : parts.at(0);
-    return {QStringLiteral("product:%1").arg(relativeCollection),
-            MibRuntimeCollectionRole::Product,
-            QDir(libraryRoot).filePath(relativeCollection), false};
-}
-
-void appendCollection(QList<MibRuntimeCollectionReference> *collections,
-                      MibRuntimeCollectionReference collection)
-{
-    if (collection.id.isEmpty() || collection.canonicalRoot.isEmpty()) return;
-    collection.canonicalRoot = canonicalRuntimePath(collection.canonicalRoot);
-    if (std::none_of(collections->cbegin(), collections->cend(),
-        [&collection](const auto &existing) {
-            return existing.id == collection.id ||
-                sameRuntimePath(existing.canonicalRoot, collection.canonicalRoot);
-        })) collections->append(std::move(collection));
-}
-
-QList<MibRuntimeCollectionReference> runtimeCollectionsFor(
-    const MibProfileRecord &profile, const MibDependencyIndex &index,
-    const QString &libraryRoot)
-{
-    const MibRuntimeCollectionReference standards{QStringLiteral("standards"),
-        MibRuntimeCollectionRole::Standards,
-        QDir(libraryRoot).filePath(QStringLiteral("Standards")), false};
-    const MibRuntimeCollectionReference unassigned{QStringLiteral("unassigned"),
-        MibRuntimeCollectionRole::General,
-        QDir(libraryRoot).filePath(QStringLiteral("Unassigned")), false};
-    QList<MibRuntimeCollectionReference> result;
-    if (profile.type == MibProfileType::Standards) {
-        appendCollection(&result, standards);
-        return result;
-    }
-    if (profile.type == MibProfileType::Folder) {
-        appendCollection(&result, {profile.id + QStringLiteral("/product"),
-            MibRuntimeCollectionRole::Product, profile.directory, false});
-        if (profile.includeStandardBase) appendCollection(&result, standards);
-        return result;
-    }
-
-    if (!profile.members.isEmpty()) {
-        for (const auto &member : profile.members)
-            appendCollection(&result, collectionForProvider(libraryRoot, member.canonicalPath));
-        return result;
-    }
-
-    QList<MibRuntimeCollectionReference> products;
-    bool needsStandards = false;
-    bool needsUnassigned = false;
-    const QStringList roots = profile.type == MibProfileType::All
-        ? index.moduleNames() : profile.explicitModules;
-    for (const QString &identity : roots) {
-        for (const auto &provider : index.providersFor(identity)) {
-            const auto collection = collectionForProvider(libraryRoot, provider.canonicalPath);
-            if (collection.role == MibRuntimeCollectionRole::Standards) needsStandards = true;
-            else if (collection.id == QStringLiteral("unassigned")) needsUnassigned = true;
-            else appendCollection(&products, collection);
-        }
-    }
-    std::sort(products.begin(), products.end(), [](const auto &a, const auto &b) {
-        return QString::compare(a.id, b.id, Qt::CaseInsensitive) < 0;
-    });
-    if (profile.type == MibProfileType::All) {
-        if (needsStandards) appendCollection(&result, standards);
-        if (needsUnassigned) appendCollection(&result, unassigned);
-        for (const auto &product : std::as_const(products)) appendCollection(&result, product);
-    } else {
-        for (const auto &product : std::as_const(products)) appendCollection(&result, product);
-        if (needsUnassigned) appendCollection(&result, unassigned);
-        if (needsStandards || profile.includeStandardBase) appendCollection(&result, standards);
-    }
-    return result;
-}
-
 }
 
 LoadedMibModule::LoadedMibModule(MibModuleRecord moduleRecord)
@@ -617,11 +528,8 @@ MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) 
     const bool unmigratedIdentityAuthority = MibProfileRequiresExactMigration(profile);
     if (unmigratedIdentityAuthority)
         plan.authorityError = tr("Profile still uses legacy module-identity authority and must be migrated to exact files");
-    QSettings settings;
-    const QString libraryRoot = MibCollection::configuredRoot(settings);
-    const auto collections = runtimeCollectionsFor(profile, dependencyIndex, libraryRoot);
     plan.runtimeConfiguration = MibProfileRuntimeConfigurationBuilder().build(
-        profile, dependencyIndex, collections);
+        profile, dependencyIndex, {});
     plan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(
         plan.runtimeConfiguration, dependencyIndex);
     plan.hasRuntimePaths = true;
