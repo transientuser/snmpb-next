@@ -88,7 +88,9 @@ public:
     bool importCustomProfile(const QString &stableId, const QString &name,
                              const QStringList &modules, QString *error = nullptr);
     bool migrateLegacyProfiles(const MibDependencyIndex &index, QString *error = nullptr);
-    bool refreshAutomaticProfiles(const QString &mibRoot, QString *error = nullptr);
+    // Compatibility conversion only: snapshots persisted legacy folder Profiles
+    // once. It never refreshes current Profile membership.
+    bool migrateLegacyFolderProfiles(QString *error = nullptr);
     bool addFiles(const QString &id, const QStringList &files,
                   MibProfileMemberReason reason = MibProfileMemberReason::Added,
                   QString *error = nullptr);

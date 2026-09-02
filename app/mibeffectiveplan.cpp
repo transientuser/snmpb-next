@@ -29,28 +29,6 @@ QString canonicalPath(const QString &path)
     return QDir::cleanPath(canonical.isEmpty() ? QFileInfo(path).absoluteFilePath() : canonical);
 }
 
-bool isWithin(const QString &path, const QString &directory)
-{
-    if (directory.isEmpty()) return false;
-    const QString candidate = QDir::fromNativeSeparators(canonicalPath(path));
-    QString root = QDir::fromNativeSeparators(canonicalPath(directory));
-    if (!root.endsWith('/')) root += '/';
-#ifdef Q_OS_WIN
-    return candidate.startsWith(root, Qt::CaseInsensitive);
-#else
-    return candidate.startsWith(root, Qt::CaseSensitive);
-#endif
-}
-
-bool providerLess(const MibIndexedProvider &a, const MibIndexedProvider &b)
-{
-    if (a.searchPathPrecedence != b.searchPathPrecedence)
-        return a.searchPathPrecedence < b.searchPathPrecedence;
-    const int folded = QString::compare(a.canonicalPath, b.canonicalPath, Qt::CaseInsensitive);
-    return folded == 0 ? a.canonicalPath < b.canonicalPath : folded < 0;
-}
-
-
 bool samePath(const QString &a, const QString &b)
 {
 #ifdef Q_OS_WIN
@@ -85,85 +63,29 @@ MibProfileRuntimeConfiguration MibProfileRuntimeConfigurationBuilder::build(
 {
     MibProfileRuntimeConfiguration configuration;
     configuration.profileIdValue = profile.id;
-    configuration.profileTypeValue = profile.type;
     configuration.authorizedFilesValue = profile.members;
     std::sort(configuration.authorizedFilesValue.begin(), configuration.authorizedFilesValue.end(),
         [](const auto &a, const auto &b) {
             return QString::compare(a.canonicalPath, b.canonicalPath, Qt::CaseInsensitive) < 0;
         });
-    const bool exactProfile = !profile.members.isEmpty() || !profile.unresolvedLegacyModules.isEmpty();
-    configuration.explicitRootsValue = exactProfile
-        ? MibProfileMemberIdentities(profile.members)
-        : profile.type == MibProfileType::All
-        ? sortedUnique(library.moduleNames())
-        : profile.type == MibProfileType::Standards
-            ? sortedUnique(MibProfileDefinitions::standardsModules())
-            : sortedUnique(profile.explicitModules);
-    configuration.standardsPolicyValue = !exactProfile && (profile.includeStandardBase ||
-            profile.type == MibProfileType::Standards
-        ) ? MibRuntimeStandardsPolicy::Fallback : MibRuntimeStandardsPolicy::Excluded;
+    configuration.explicitRootsValue = MibProfileMemberIdentities(profile.members);
     configuration.libraryGenerationValue = library.generation();
 
-    for (auto &collection : orderedCollections) {
-        collection.id = collection.id.trimmed();
-        collection.canonicalRoot = canonicalPath(collection.canonicalRoot);
-    }
-    if (profile.type == MibProfileType::Folder && !profile.directory.isEmpty()) {
-        const QString productRoot = canonicalPath(profile.directory);
-        auto product = std::find_if(orderedCollections.begin(), orderedCollections.end(),
-            [&productRoot](const auto &collection) {
-                return collection.role == MibRuntimeCollectionRole::Product &&
-                    samePath(collection.canonicalRoot, productRoot);
-            });
-        if (product == orderedCollections.end())
-            orderedCollections.prepend({profile.id + QStringLiteral("/product"),
-                MibRuntimeCollectionRole::Product, productRoot, false});
-    }
-    configuration.orderedCollectionsValue = orderedCollections;
+    Q_UNUSED(orderedCollections)
+    // Collection roots are retained as a source-compatible input only. Exact
+    // Profile members, never directory containment, define runtime authority.
 
     if (!configuration.authorizedFilesValue.isEmpty()) {
         for (const auto &member : std::as_const(configuration.authorizedFilesValue)) {
             const QString providerPath = canonicalPath(member.canonicalPath);
-            const auto collection = std::find_if(configuration.orderedCollectionsValue.cbegin(),
-                configuration.orderedCollectionsValue.cend(), [&providerPath](const auto &candidate) {
-                    return pathWithin(providerPath, candidate.canonicalRoot);
-                });
-            if (collection == configuration.orderedCollectionsValue.cend()) continue;
             for (const QString &identity : member.identities)
                 if (!configuration.rootAliasesValue.contains(identity))
-                    configuration.rootAliasesValue.insert(identity, {identity, collection->id,
+                    configuration.rootAliasesValue.insert(identity, {identity, QString(),
                         providerPath, member.sha256});
         }
-    } else {
-
-    QMap<QString, int> identitiesPerFile;
-    for (const auto &file : library.files())
-        identitiesPerFile.insert(canonicalPath(file.canonicalPath), file.importsByModule.size());
-    for (const QString &identity : configuration.explicitRootsValue) {
-        const auto providers = library.providersFor(identity);
-        for (const auto &collection : configuration.orderedCollectionsValue) {
-            QList<MibIndexedProvider> inCollection;
-            for (const auto &provider : providers)
-                if (pathWithin(provider.canonicalPath, collection.canonicalRoot))
-                    inCollection.append(provider);
-            if (inCollection.isEmpty()) continue;
-            std::sort(inCollection.begin(), inCollection.end(), providerLess);
-            const auto &provider = inCollection.first();
-            const QString filename = QFileInfo(provider.canonicalPath).fileName();
-            const QString stem = QFileInfo(provider.canonicalPath).completeBaseName();
-            const bool nativeName = filename.compare(identity, Qt::CaseInsensitive) == 0 ||
-                stem.compare(identity, Qt::CaseInsensitive) == 0;
-            const QString providerPath = canonicalPath(provider.canonicalPath);
-            if (!nativeName || identitiesPerFile.value(providerPath) > 1)
-                configuration.rootAliasesValue.insert(identity, {identity, collection.id,
-                    providerPath, provider.sha256});
-            break;
-        }
     }
 
-    }
-
-    if (exactProfile) {
+    {
         QMap<QString, QStringList> selectedImports;
         for (const QString &identity : std::as_const(configuration.explicitRootsValue)) {
             const auto alias = configuration.rootAliasesValue.constFind(identity);
@@ -196,9 +118,7 @@ MibProfileRuntimeConfiguration MibProfileRuntimeConfigurationBuilder::build(
 
     QJsonObject revision;
     revision.insert(QStringLiteral("id"), profile.id);
-    revision.insert(QStringLiteral("type"), static_cast<int>(profile.type));
     revision.insert(QStringLiteral("roots"), strings(configuration.explicitRootsValue));
-    revision.insert(QStringLiteral("standards"), static_cast<int>(configuration.standardsPolicyValue));
     configuration.profileRevisionSha256Value = QString::fromLatin1(QCryptographicHash::hash(
         QJsonDocument(revision).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
     configuration.sha256Value = QString::fromLatin1(QCryptographicHash::hash(
@@ -212,19 +132,9 @@ QByteArray MibProfileRuntimeConfigurationBuilder::canonicalBytes(
     QJsonObject root;
     root.insert(QStringLiteral("schema"), MibProfileRuntimeConfiguration::SchemaVersion);
     root.insert(QStringLiteral("profileId"), configuration.profileIdValue);
-    root.insert(QStringLiteral("profileType"), static_cast<int>(configuration.profileTypeValue));
     root.insert(QStringLiteral("profileRevision"), configuration.profileRevisionSha256Value);
     root.insert(QStringLiteral("roots"), strings(configuration.explicitRootsValue));
-    root.insert(QStringLiteral("standards"), static_cast<int>(configuration.standardsPolicyValue));
     root.insert(QStringLiteral("libraryGeneration"), QString::number(configuration.libraryGenerationValue));
-    QJsonArray collections;
-    for (const auto &collection : configuration.orderedCollectionsValue) {
-        collections.append(QJsonObject{{QStringLiteral("id"), collection.id},
-            {QStringLiteral("role"), static_cast<int>(collection.role)},
-            {QStringLiteral("root"), QDir::fromNativeSeparators(collection.canonicalRoot)},
-            {QStringLiteral("pibs"), collection.includesPibs}});
-    }
-    root.insert(QStringLiteral("collections"), collections);
     QJsonArray aliases;
     for (auto it = configuration.rootAliasesValue.cbegin(); it != configuration.rootAliasesValue.cend(); ++it) {
         const auto &alias = it.value();
@@ -256,16 +166,7 @@ MibRuntimePathConfiguration MibRuntimePathConfigurationBuilder::derive(
     const MibDependencyIndex &library) const
 {
     MibRuntimePathConfiguration result;
-    const auto &collections = configuration.orderedCollections();
-    if (configuration.standardsPolicy() == MibRuntimeStandardsPolicy::Fallback &&
-        std::none_of(collections.cbegin(), collections.cend(), [](const auto &collection) {
-            return collection.role == MibRuntimeCollectionRole::Standards;
-        })) {
-        result.diagnosticsValue.append(QObject::tr(
-            "Standards fallback requires an authorized Standards collection"));
-    }
-
-    QSet<QString> collectionIds;
+    Q_UNUSED(library)
     QSet<QString> seenPaths;
     const auto pathKey = [](const QString &path) {
 #ifdef Q_OS_WIN
@@ -274,68 +175,26 @@ MibRuntimePathConfiguration MibRuntimePathConfigurationBuilder::derive(
         return QDir::fromNativeSeparators(path);
 #endif
     };
-    const auto append = [&result, &seenPaths, &pathKey](
-        const QString &path, const MibRuntimeCollectionReference &collection) {
+    const auto append = [&result, &seenPaths, &pathKey](const QString &path) {
         const QString canonical = canonicalPath(path);
         const QString key = pathKey(canonical);
         if (seenPaths.contains(key)) return;
         seenPaths.insert(key);
-        result.entriesValue.append({canonical, collection.id, collection.role,
-                                    collection.includesPibs});
+        result.entriesValue.append({canonical, QString(), MibRuntimeCollectionRole::General, false});
     };
-
-    for (const auto &collection : collections) {
-        if (collection.id.isEmpty() || collection.canonicalRoot.isEmpty()) {
+    for (const auto &member : configuration.authorizedFiles()) {
+        const QFileInfo file(member.canonicalPath);
+        if (!file.exists() || !file.isFile() || !file.isReadable()) {
             result.diagnosticsValue.append(QObject::tr(
-                "Runtime collection identity and root are required"));
+                "Authorized MIB file is not readable: %1").arg(member.canonicalPath));
             continue;
         }
-        if (collectionIds.contains(collection.id)) {
-            result.diagnosticsValue.append(QObject::tr(
-                "Duplicate runtime collection identity: %1").arg(collection.id));
-            continue;
-        }
-        collectionIds.insert(collection.id);
-        if (collection.role == MibRuntimeCollectionRole::Pib && !collection.includesPibs)
-            continue;
-
-        const QString root = canonicalPath(collection.canonicalRoot);
-        const QFileInfo rootInfo(root);
-        if (!rootInfo.isDir() || !rootInfo.isReadable()) {
-            result.diagnosticsValue.append(QObject::tr(
-                "Runtime collection is not a readable directory: %1").arg(root));
-            continue;
-        }
-        append(root, collection);
-        QStringList descendants;
-        for (const auto &file : library.files()) {
-            if (!samePath(file.canonicalPath, root) && !pathWithin(file.canonicalPath, root))
-                continue;
-            const QFileInfo directory(QFileInfo(file.canonicalPath).absolutePath());
-            if (directory.isDir() && directory.isReadable())
-                descendants.append(canonicalPath(directory.absoluteFilePath()));
-        }
-        descendants.removeDuplicates();
-        std::sort(descendants.begin(), descendants.end(), [](const QString &a, const QString &b) {
-            const int folded = QString::compare(QDir::fromNativeSeparators(a),
-                QDir::fromNativeSeparators(b), Qt::CaseInsensitive);
-            return folded == 0 ? a < b : folded < 0;
-        });
-        for (const QString &directory : std::as_const(descendants)) append(directory, collection);
+        append(file.absolutePath());
     }
 
     for (auto it = configuration.rootAliases().cbegin();
          it != configuration.rootAliases().cend(); ++it) {
         const MibRuntimeRootAlias &alias = it.value();
-        const auto collection = std::find_if(collections.cbegin(), collections.cend(),
-            [&alias](const auto &candidate) { return candidate.id == alias.collectionId; });
-        if (collection == collections.cend() ||
-            (!samePath(alias.canonicalPath, collection->canonicalRoot) &&
-             !pathWithin(alias.canonicalPath, collection->canonicalRoot))) {
-            result.diagnosticsValue.append(QObject::tr(
-                "Root alias for %1 is outside its authorized collection").arg(alias.identity));
-            continue;
-        }
         const QString aliasDirectory = canonicalPath(QFileInfo(alias.canonicalPath).absolutePath());
         if (!seenPaths.contains(pathKey(aliasDirectory)))
             result.diagnosticsValue.append(QObject::tr(
@@ -379,6 +238,13 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
     plan.profileType = profile.type;
     plan.libraryGeneration = library.generation();
     const bool exactProfile = !profile.members.isEmpty() || !profile.unresolvedLegacyModules.isEmpty();
+    if (!exactProfile) {
+        plan.authorityError = QObject::tr(
+            "Profile has legacy identity-only membership and must be migrated before use");
+        plan.sha256 = QString::fromLatin1(QCryptographicHash::hash(
+            canonicalBytes(plan), QCryptographicHash::Sha256).toHex());
+        return plan;
+    }
     plan.explicitModules = exactProfile ? MibProfileMemberIdentities(profile.members)
         : profile.type == MibProfileType::All
         ? sortedUnique(library.moduleNames())
@@ -403,82 +269,28 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
         item.membershipReason = explicitSet.contains(identity)
             ? MibPlanMembershipReason::Explicit : MibPlanMembershipReason::Dependency;
         QList<MibIndexedProvider> choices = library.providersFor(identity);
-        std::sort(choices.begin(), choices.end(), providerLess);
-        item.alternatives = choices;
-        if (exactProfile) {
-            QList<MibIndexedProvider> selected;
-            for (const auto &member : profile.members) {
-                if (!member.identities.contains(identity)) continue;
-                for (const auto &choice : choices)
-                    if (samePath(choice.canonicalPath, member.canonicalPath) &&
-                        choice.sha256 == member.sha256) selected.append(choice);
-            }
-            choices = selected;
+        QList<MibIndexedProvider> selected;
+        for (const auto &member : profile.members) {
+            if (!member.identities.contains(identity)) continue;
+            for (const auto &choice : choices)
+                if (samePath(choice.canonicalPath, member.canonicalPath) &&
+                    choice.sha256 == member.sha256) selected.append(choice);
         }
-        const auto pin = profile.providerPins.constFind(identity);
-        if (pin != profile.providerPins.cend()) item.requestedPin = *pin;
+        choices = selected;
         if (choices.isEmpty()) {
-            if (pin != profile.providerPins.cend()) {
-                item.membershipReason = MibPlanMembershipReason::PinFailure;
-                item.providerReason = MibPlanProviderReason::InvalidPin;
-                plan.pinFailureModules.append(identity);
-            } else {
-                item.membershipReason = MibPlanMembershipReason::Missing;
-                plan.missingModules.append(identity);
-            }
+            item.membershipReason = MibPlanMembershipReason::Missing;
+            plan.missingModules.append(identity);
         } else {
-            QList<MibIndexedProvider> eligible = choices;
-            if (exactProfile) item.providerReason = MibPlanProviderReason::ExplicitPin;
-            if (pin != profile.providerPins.cend()) {
-                eligible.clear();
-                for (const auto &choice : choices)
-                    if (samePath(choice.canonicalPath, pin->canonicalPath) &&
-                        choice.sha256 == pin->sha256) eligible.append(choice);
-                if (eligible.size() == 1) {
-                    item.providerReason = MibPlanProviderReason::ExplicitPin;
-                } else {
-                    item.membershipReason = MibPlanMembershipReason::PinFailure;
-                    item.providerReason = MibPlanProviderReason::InvalidPin;
-                    plan.pinFailureModules.append(identity);
-                }
-            } else if (profile.type == MibProfileType::Folder && explicitSet.contains(identity)) {
-                QList<MibIndexedProvider> local;
-                for (const auto &choice : choices)
-                    if (isWithin(choice.canonicalPath, profile.directory)) local.append(choice);
-                if (!local.isEmpty()) {
-                    eligible = local;
-                    item.providerReason = MibPlanProviderReason::AutomaticProfileFolder;
-                }
-            }
-            if (item.providerReason != MibPlanProviderReason::ExplicitPin &&
-                item.providerReason != MibPlanProviderReason::AutomaticProfileFolder &&
-                item.providerReason != MibPlanProviderReason::InvalidPin) {
-                const int best = eligible.first().searchPathPrecedence;
-                QList<MibIndexedProvider> preferred;
-                for (const auto &choice : eligible)
-                    if (choice.searchPathPrecedence == best) preferred.append(choice);
-                eligible = preferred;
-                item.providerReason = choices.size() == 1
-                    ? MibPlanProviderReason::SingleProvider : MibPlanProviderReason::GlobalPrecedence;
-            }
-            QSet<QString> hashes;
-            for (const auto &choice : eligible) hashes.insert(choice.sha256);
-            if (item.providerReason == MibPlanProviderReason::InvalidPin) {
-                // An explicit but stale/wrong pin is a hard plan finding. Do not
-                // silently substitute a different conflicting provider.
-            } else if (eligible.size() > 1 && (hashes.size() != 1 || hashes.contains(QString()))) {
+            item.providerReason = MibPlanProviderReason::ExactProfileMember;
+            if (choices.size() > 1) {
                 item.membershipReason = MibPlanMembershipReason::Ambiguous;
                 item.providerReason = MibPlanProviderReason::Ambiguous;
                 plan.ambiguousModules.append(identity);
             } else {
-                if (eligible.size() > 1 && item.providerReason != MibPlanProviderReason::AutomaticProfileFolder)
-                    item.providerReason = MibPlanProviderReason::EquivalentProviders;
-                item.provider = eligible.first();
+                item.provider = choices.first();
                 item.imports = sortedUnique(item.provider.imports);
-                if (exactProfile) {
-                    for (const QString &dependency : item.imports)
-                        if (!explicitSet.contains(dependency)) plan.missingModules.append(dependency);
-                } else pending.append(item.imports);
+                for (const QString &dependency : item.imports)
+                    if (!explicitSet.contains(dependency)) plan.missingModules.append(dependency);
             }
         }
         resolved.insert(identity, item);

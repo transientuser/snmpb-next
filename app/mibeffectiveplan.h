@@ -33,11 +33,11 @@ public:
     static constexpr int SchemaVersion = 2;
 
     QString profileId() const { return profileIdValue; }
-    MibProfileType profileType() const { return profileTypeValue; }
+    MibProfileType profileType() const { return MibProfileType::Custom; }
     QString profileRevisionSha256() const { return profileRevisionSha256Value; }
-    const QList<MibRuntimeCollectionReference> &orderedCollections() const { return orderedCollectionsValue; }
     const QStringList &explicitRoots() const { return explicitRootsValue; }
-    MibRuntimeStandardsPolicy standardsPolicy() const { return standardsPolicyValue; }
+    const QList<MibRuntimeCollectionReference> &orderedCollections() const { return noCollections; }
+    MibRuntimeStandardsPolicy standardsPolicy() const { return MibRuntimeStandardsPolicy::Excluded; }
     quint64 libraryGeneration() const { return libraryGenerationValue; }
     const QMap<QString, MibRuntimeRootAlias> &rootAliases() const { return rootAliasesValue; }
     const QList<MibProfileMember> &authorizedFiles() const { return authorizedFilesValue; }
@@ -46,14 +46,12 @@ public:
 private:
     friend class MibProfileRuntimeConfigurationBuilder;
     QString profileIdValue;
-    MibProfileType profileTypeValue = MibProfileType::Custom;
     QString profileRevisionSha256Value;
-    QList<MibRuntimeCollectionReference> orderedCollectionsValue;
     QStringList explicitRootsValue;
-    MibRuntimeStandardsPolicy standardsPolicyValue = MibRuntimeStandardsPolicy::Excluded;
     quint64 libraryGenerationValue = 0;
     QMap<QString, MibRuntimeRootAlias> rootAliasesValue;
     QList<MibProfileMember> authorizedFilesValue;
+    QList<MibRuntimeCollectionReference> noCollections;
     QString sha256Value;
 };
 
@@ -103,7 +101,7 @@ public:
 enum class MibPlanMembershipReason { Explicit, Dependency, Missing, Ambiguous, PinFailure };
 enum class MibPlanProviderReason {
     None, ExplicitPin, SingleProvider, EquivalentProviders, AutomaticProfileFolder,
-    GlobalPrecedence, Ambiguous, InvalidPin
+    GlobalPrecedence, Ambiguous, InvalidPin, ExactProfileMember
 };
 
 struct MibEffectivePlanMember {

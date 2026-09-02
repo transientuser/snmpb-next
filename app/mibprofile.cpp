@@ -516,9 +516,8 @@ bool MibProfileService::migrateLegacyProfiles(const MibDependencyIndex &index, Q
     return false;
 }
 
-bool MibProfileService::refreshAutomaticProfiles(const QString &mibRoot, QString *error)
+bool MibProfileService::migrateLegacyFolderProfiles(QString *error)
 {
-    Q_UNUSED(mibRoot)
     if (folderProfiles.isEmpty()) return true;
     const QList<MibProfileRecord> previousCustom = customProfiles;
     const QList<MibProfileRecord> previousFolders = folderProfiles;

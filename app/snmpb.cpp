@@ -324,7 +324,7 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     if (legacyModulesTab >= 0) w.TabW->removeTab(legacyModulesTab);
     const int mibsTab = w.TabW->insertTab(1, mibLibrary, tr("MIBs"));
     w.TabW->setTabToolTip(mibsTab,
-        tr("Browse the MIB library and choose Automatic or Custom profiles."));
+        tr("Browse the MIB library and choose an exact-file Profile."));
     const auto refreshLibraryDependencyStatus = [this, libraryDependencySummary]() {
         const MibLibraryWidget::DependencySummary summary = libraryDependencySummary();
         if (summary.stale) w.MibLibraryDependencyState->setText(tr("Dependencies need checking"));

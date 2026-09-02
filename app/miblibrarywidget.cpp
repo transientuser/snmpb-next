@@ -589,7 +589,7 @@ void MibLibraryWidget::refresh()
     QElapsedTimer totalTimer; totalTimer.start();
     QElapsedTimer phaseTimer; phaseTimer.start();
     ++counters.automaticProfileScans;
-    profiles.refreshAutomaticProfiles(library.rootPath());
+    profiles.migrateLegacyFolderProfiles();
     const qint64 automaticProfilesMs = phaseTimer.restart();
     const QStringList previouslySelected = selectedModules();
     const QSet<QString> selectedBefore(previouslySelected.cbegin(), previouslySelected.cend());
@@ -973,7 +973,7 @@ void MibLibraryWidget::browseLibraryRoot()
     }
     library = MibLibraryService(chosen);
     libraryRootEdit->setText(library.rootPath());
-    profiles.refreshAutomaticProfiles(library.rootPath());
+    profiles.migrateLegacyFolderProfiles();
     if (callbacks.collectionChanged) callbacks.collectionChanged();
     refresh(); refreshProfiles();
     if (!result.conflicts.isEmpty())

@@ -100,6 +100,43 @@ int main(int argc, char **argv)
     writeFile(QDir(productB).filePath("TEST-MIB"), mib("TEST-MIB") + "-- provider B\n");
     MibDependencyIndex index(QDir(temp.path()).filePath("index.json")); index.update({standards, productA, productB});
 
+    // Phase F authority guard: only exact physical members reach runtime
+    // configuration. Collection order, Profile type, directory, and identity-only
+    // fields cannot broaden that authority.
+    MibProfileRecord exact;
+    exact.id = "exact"; exact.name = "Exact"; exact.type = MibProfileType::Folder;
+    exact.directory = productB; exact.includeStandardBase = true;
+    exact.explicitModules = {"CONFLICT-MIB", "DEPENDENCY-MIB"};
+    exact.members = MibProfileMembersFromFiles({
+        QDir(productA).filePath("odd-name.mib"),
+        QDir(productA).filePath("multi.mib")});
+    const MibProfileRuntimeConfigurationBuilder exactBuilder;
+    const auto phaseFRuntime = exactBuilder.build(exact, index, {});
+    const auto phaseFPaths = MibRuntimePathConfigurationBuilder().derive(phaseFRuntime, index);
+    ok &= check(phaseFRuntime.explicitRoots().contains("ROOT-MIB") &&
+                phaseFRuntime.explicitRoots().contains("SECOND-IDENTITY-MIB") &&
+                !phaseFRuntime.explicitRoots().contains("CONFLICT-MIB") &&
+                phaseFRuntime.rootAliases().value("ROOT-MIB").canonicalPath.endsWith("odd-name.mib"),
+                "runtime authority comes only from exact Profile members");
+    ok &= check(phaseFPaths.isValid() && phaseFPaths.orderedPaths() ==
+                    QStringList{canonical(productA)},
+                "runtime paths contain only exact-member parent directories");
+    const auto phaseFPlan = MibEffectivePlanResolver().resolve(exact, index);
+    ok &= check(phaseFPlan.member("ROOT-MIB") &&
+                phaseFPlan.member("ROOT-MIB")->provider.canonicalPath.endsWith("odd-name.mib") &&
+                !phaseFPlan.member("CONFLICT-MIB"),
+                "Effective Plan cannot select outside exact membership");
+    MibProfileRecord legacy = exact; legacy.members.clear(); legacy.unresolvedLegacyModules.clear();
+    const auto rejected = MibEffectivePlanResolver().resolve(legacy, index);
+    ok &= check(!rejected.authorityError.isEmpty() && rejected.members.isEmpty(),
+                "identity-only Profile authority is rejected");
+    MibProfileRecord altered = exact; altered.type = MibProfileType::Custom;
+    altered.directory = standards; altered.includeStandardBase = false;
+    altered.explicitModules = {"ABSENT-MIB"};
+    ok &= check(exactBuilder.build(altered, index, {}).sha256() == phaseFRuntime.sha256(),
+                "legacy type, directory, and identity fields do not affect exact runtime authority");
+    return ok ? 0 : 1;
+
     const MibRuntimeCollectionReference standardsCollection{
         "standards", MibRuntimeCollectionRole::Standards, standards, false};
     const MibRuntimeCollectionReference productCollection{
