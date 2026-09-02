@@ -1,5 +1,6 @@
 #include "mibenvironmentcache.h"
 #include <QCryptographicHash>
+#include <QDir>
 
 QString MibEnvironmentCacheKey::stableId() const
 {
@@ -13,7 +14,9 @@ MibEnvironmentCacheKey MibEnvironmentCacheKey::fromPlan(const MibEffectivePlan &
 {
     MibEnvironmentCacheKey key; key.planSha256 = plan.sha256; key.parserIdentity = parser;
     QByteArray providers;for(const auto &member:plan.members){providers+=member.identity.toUtf8();providers+='\0';
+        providers+=QDir::fromNativeSeparators(member.provider.canonicalPath).toUtf8();providers+='\0';
         providers+=member.provider.sha256.toUtf8();providers+='\n';}
+    providers+=plan.runtimeConfiguration.sha256().toUtf8();
     key.providerSetSha256=QString::fromLatin1(QCryptographicHash::hash(providers,QCryptographicHash::Sha256).toHex());
     return key;
 }

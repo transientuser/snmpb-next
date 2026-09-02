@@ -135,6 +135,7 @@ struct MibEffectivePlan {
     QStringList nonConvergentModules;
     QStringList cycles;
     QStringList initialLoadOrder;
+    QString authorityError;
     int convergencePasses = 0;
     bool converged = true;
     QString sha256;
@@ -143,7 +144,7 @@ struct MibEffectivePlan {
     bool hasRuntimePaths = false;
 
     const MibEffectivePlanMember *member(const QString &identity) const;
-    bool isComplete() const { return converged && missingModules.isEmpty() &&
+    bool isComplete() const { return authorityError.isEmpty() && converged && missingModules.isEmpty() &&
         ambiguousModules.isEmpty() && pinFailureModules.isEmpty(); }
 };
 

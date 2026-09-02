@@ -1,4 +1,6 @@
 #include "mibprofile.h"
+
+#include "mibdependencyindex.h"
 #include "mibcandidatefilter.h"
 
 #include <QDir>
@@ -149,6 +151,12 @@ QStringList MibProfileMemberIdentities(const QList<MibProfileMember> &members)
     return uniqueSorted(result);
 }
 
+bool MibProfileRequiresExactMigration(const MibProfileRecord &profile)
+{
+    return profile.members.isEmpty() && profile.unresolvedLegacyModules.isEmpty() &&
+        (!profile.explicitModules.isEmpty() || profile.includeStandardBase);
+}
+
 QString MibProfileDefinitions::allId() { return QStringLiteral("builtin.all"); }
 QString MibProfileDefinitions::standardsId() { return QStringLiteral("builtin.standards-mib2"); }
 
@@ -209,7 +217,11 @@ QList<MibProfileRecord> MibProfileRepository::load(QString *error) const
         profile.directory = object.value(QStringLiteral("directory")).toString();
         profile.providerPins = pinsFromJson(object.value(QStringLiteral("providerPins")).toObject());
         profile.members = membersFromJson(object.value(QStringLiteral("members")).toArray());
-        if (!profile.members.isEmpty()) profile.explicitModules = MibProfileMemberIdentities(profile.members);
+        profile.unresolvedLegacyModules = stringsFromJson(
+            object.value(QStringLiteral("unresolvedLegacyModules")).toArray());
+        if (!profile.members.isEmpty())
+            profile.explicitModules = uniqueSorted(MibProfileMemberIdentities(profile.members) +
+                                                   profile.unresolvedLegacyModules);
         if (!profile.id.isEmpty() && !profile.name.isEmpty()) result.append(profile);
     }
     return result;
@@ -232,6 +244,9 @@ bool MibProfileRepository::save(const QList<MibProfileRecord> &profiles, QString
         if (!profile.providerPins.isEmpty())
             object.insert(QStringLiteral("providerPins"), pinsToJson(profile.providerPins));
         if (!profile.members.isEmpty()) object.insert(QStringLiteral("members"), membersToJson(profile.members));
+        if (!profile.unresolvedLegacyModules.isEmpty())
+            object.insert(QStringLiteral("unresolvedLegacyModules"),
+                          stringsToJson(uniqueSorted(profile.unresolvedLegacyModules)));
         items.append(object);
     }
     QJsonObject root;
@@ -366,10 +381,17 @@ bool MibProfileService::remove(const QString &id, QString *error)
 bool MibProfileService::update(const MibProfileRecord &value, QString *error)
 {
     if (isBuiltIn(value.id) || value.type != MibProfileType::Custom) return false;
+    if (value.members.isEmpty() && value.unresolvedLegacyModules.isEmpty() &&
+        (!value.explicitModules.isEmpty() || value.includeStandardBase)) {
+        if (error) *error = QObject::tr(
+            "Profiles must use exact physical files; legacy identity membership requires migration");
+        return false;
+    }
     for (MibProfileRecord &profile : customProfiles) if (profile.id == value.id) {
         const MibProfileRecord old = profile; profile = value;
         if (!profile.members.isEmpty())
-            profile.explicitModules = MibProfileMemberIdentities(profile.members);
+            profile.explicitModules = uniqueSorted(MibProfileMemberIdentities(profile.members) +
+                                                   profile.unresolvedLegacyModules);
         profile.explicitModules = uniqueSorted(profile.explicitModules);
         if (!persist(error)) { profile = old; return false; }
         return true;
@@ -384,7 +406,18 @@ bool MibProfileService::importCustomProfile(const QString &stableId, const QStri
     for (MibProfileRecord &profile : customProfiles) if (profile.id == stableId) {
         const MibProfileRecord old = profile;
         profile.name = name; profile.type = MibProfileType::Custom;
-        profile.explicitModules = uniqueSorted(modules);
+        if (profile.members.isEmpty() && profile.unresolvedLegacyModules.isEmpty()) {
+            profile.explicitModules = uniqueSorted(modules);
+        } else {
+            const QStringList exactIdentities = MibProfileMemberIdentities(profile.members);
+            for (const QString &identity : modules)
+                if (!exactIdentities.contains(identity) &&
+                    !profile.unresolvedLegacyModules.contains(identity))
+                    profile.unresolvedLegacyModules.append(identity);
+            profile.unresolvedLegacyModules = uniqueSorted(profile.unresolvedLegacyModules);
+            profile.explicitModules = uniqueSorted(exactIdentities +
+                                                   profile.unresolvedLegacyModules);
+        }
         if (!persist(error)) { profile = old; return false; }
         return true;
     }
@@ -394,6 +427,93 @@ bool MibProfileService::importCustomProfile(const QString &stableId, const QStri
     customProfiles.append(profile);
     if (!persist(error)) { customProfiles.removeLast(); return false; }
     return true;
+}
+
+bool MibProfileService::migrateLegacyProfiles(const MibDependencyIndex &index, QString *error)
+{
+    const QList<MibProfileRecord> previous = customProfiles;
+    bool changed = false;
+    for (MibProfileRecord &profile : customProfiles) {
+        const bool rawLegacy = MibProfileRequiresExactMigration(profile);
+        if (!rawLegacy && profile.unresolvedLegacyModules.isEmpty()) continue;
+        const MibProfileRecord before = profile;
+        QStringList identities = rawLegacy ? profile.explicitModules
+                                           : profile.unresolvedLegacyModules;
+        if (rawLegacy && profile.includeStandardBase)
+            identities.append(MibProfileDefinitions::standardsModules());
+        identities = uniqueSorted(identities);
+        QMap<QString, MibProfileMemberReason> reasons;
+        for (const QString &identity : std::as_const(identities))
+            reasons.insert(identity, MibProfileMemberReason::Added);
+        QList<MibProfileMember> members = profile.members;
+        QStringList unresolved;
+        QSet<QString> processed;
+        QSet<QString> seenPaths;
+        for (const auto &member : std::as_const(members)) {
+#ifdef Q_OS_WIN
+            seenPaths.insert(QDir::fromNativeSeparators(member.canonicalPath).toLower());
+#else
+            seenPaths.insert(QDir::fromNativeSeparators(member.canonicalPath));
+#endif
+        }
+        while (!identities.isEmpty()) {
+            const QString identity = identities.takeFirst();
+            if (processed.contains(identity)) continue;
+            processed.insert(identity);
+            const QList<MibIndexedProvider> providers = index.providersFor(identity);
+            if (providers.size() != 1) {
+                unresolved.append(identity);
+                continue;
+            }
+            for (const QString &dependency : providers.first().imports) {
+                if (!reasons.contains(dependency))
+                    reasons.insert(dependency, MibProfileMemberReason::Dependency);
+                if (!processed.contains(dependency)) identities.append(dependency);
+            }
+            const QString path = providers.first().canonicalPath;
+#ifdef Q_OS_WIN
+            const QString key = QDir::fromNativeSeparators(path).toLower();
+#else
+            const QString key = QDir::fromNativeSeparators(path);
+#endif
+            if (seenPaths.contains(key)) {
+                if (reasons.value(identity) == MibProfileMemberReason::Added)
+                    for (MibProfileMember &member : members) {
+#ifdef Q_OS_WIN
+                        const bool same = QDir::fromNativeSeparators(member.canonicalPath)
+                            .compare(QDir::fromNativeSeparators(path), Qt::CaseInsensitive) == 0;
+#else
+                        const bool same = QDir::fromNativeSeparators(member.canonicalPath) ==
+                            QDir::fromNativeSeparators(path);
+#endif
+                        if (same)
+                            member.reason = MibProfileMemberReason::Added;
+                    }
+                continue;
+            }
+            const QList<MibProfileMember> exact = MibProfileMembersFromFiles(
+                {path}, reasons.value(identity));
+            if (exact.size() != 1 || exact.first().sha256 != providers.first().sha256) {
+                unresolved.append(identity);
+                continue;
+            }
+            seenPaths.insert(key);
+            members.append(exact.first());
+        }
+        profile.members = members;
+        profile.unresolvedLegacyModules = uniqueSorted(unresolved);
+        profile.explicitModules = uniqueSorted(MibProfileMemberIdentities(members) +
+                                               profile.unresolvedLegacyModules);
+        profile.includeStandardBase = false;
+        changed |= profile.members != before.members ||
+            profile.unresolvedLegacyModules != before.unresolvedLegacyModules ||
+            profile.explicitModules != before.explicitModules ||
+            profile.includeStandardBase != before.includeStandardBase;
+    }
+    if (!changed) return true;
+    if (persist(error)) return true;
+    customProfiles = previous;
+    return false;
 }
 
 bool MibProfileService::refreshAutomaticProfiles(const QString &mibRoot, QString *error)
@@ -452,6 +572,11 @@ bool MibProfileService::addFiles(const QString &id, const QStringList &files,
         if (existing == changed.members.cend()) changed.members.append(member);
     }
     changed.explicitModules = MibProfileMemberIdentities(changed.members);
+    for (const auto &member : additions)
+        for (const QString &identity : member.identities)
+            changed.unresolvedLegacyModules.removeAll(identity);
+    changed.explicitModules = uniqueSorted(changed.explicitModules +
+                                           changed.unresolvedLegacyModules);
     return update(changed, error);
 }
 

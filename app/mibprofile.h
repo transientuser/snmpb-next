@@ -7,6 +7,8 @@
 #include <QMap>
 #include <QStringList>
 
+class MibDependencyIndex;
+
 enum class MibProfileType { All, Standards, Custom, Folder };
 
 struct MibProviderPin {
@@ -37,6 +39,7 @@ struct MibProfileRecord {
     QString directory;
     QMap<QString, MibProviderPin> providerPins;
     QList<MibProfileMember> members;
+    QStringList unresolvedLegacyModules;
 };
 
 MibProfileMemberState MibProfileMemberCurrentState(const MibProfileMember &member);
@@ -44,6 +47,7 @@ QList<MibProfileMember> MibProfileMembersFromFiles(
     const QStringList &files, MibProfileMemberReason reason = MibProfileMemberReason::Added,
     QStringList *diagnostics = nullptr);
 QStringList MibProfileMemberIdentities(const QList<MibProfileMember> &members);
+bool MibProfileRequiresExactMigration(const MibProfileRecord &profile);
 
 class MibProfileDefinitions
 {
@@ -83,6 +87,7 @@ public:
     bool update(const MibProfileRecord &profile, QString *error = nullptr);
     bool importCustomProfile(const QString &stableId, const QString &name,
                              const QStringList &modules, QString *error = nullptr);
+    bool migrateLegacyProfiles(const MibDependencyIndex &index, QString *error = nullptr);
     bool refreshAutomaticProfiles(const QString &mibRoot, QString *error = nullptr);
     bool addFiles(const QString &id, const QStringList &files,
                   MibProfileMemberReason reason = MibProfileMemberReason::Added,

@@ -68,6 +68,8 @@ int main( int argc, char ** argv )
     }
 
     SnmpBApplication app( argc, argv );
+    if (launch_smoke_test)
+        app.setProperty("snmpb.isolatedStateRoot", QDir(smoke_config_dir).filePath("state"));
     QCoreApplication::setOrganizationDomain(ProductIdentity::LegacySettingsDomain);
     QCoreApplication::setApplicationName(ProductIdentity::LegacySettingsApplication);
     // Keep applicationName="SnmpB" for QSettings compatibility; only the

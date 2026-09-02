@@ -36,6 +36,7 @@ MibLegacyMigrationResult MibLegacyMigration::migrate(QSettings &settings,
     result.profileId = profileId();
     if (!profiles.importCustomProfile(profileId(), profileName(), normalized.identities, &result.error))
         return result;
+    if (!profiles.migrateLegacyProfiles(index, &result.error)) return result;
     settings.setValue(markerKey(), Version);
     settings.sync();
     if (settings.status() != QSettings::NoError) {

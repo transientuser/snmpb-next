@@ -10,6 +10,7 @@
 #include <QMap>
 #include <QSet>
 #include <algorithm>
+#include <functional>
 
 namespace {
 QStringList sortedUnique(QStringList values)
@@ -90,14 +91,15 @@ MibProfileRuntimeConfiguration MibProfileRuntimeConfigurationBuilder::build(
         [](const auto &a, const auto &b) {
             return QString::compare(a.canonicalPath, b.canonicalPath, Qt::CaseInsensitive) < 0;
         });
-    configuration.explicitRootsValue = !profile.members.isEmpty()
+    const bool exactProfile = !profile.members.isEmpty() || !profile.unresolvedLegacyModules.isEmpty();
+    configuration.explicitRootsValue = exactProfile
         ? MibProfileMemberIdentities(profile.members)
         : profile.type == MibProfileType::All
         ? sortedUnique(library.moduleNames())
         : profile.type == MibProfileType::Standards
             ? sortedUnique(MibProfileDefinitions::standardsModules())
             : sortedUnique(profile.explicitModules);
-    configuration.standardsPolicyValue = profile.members.isEmpty() && (profile.includeStandardBase ||
+    configuration.standardsPolicyValue = !exactProfile && (profile.includeStandardBase ||
             profile.type == MibProfileType::Standards
         ) ? MibRuntimeStandardsPolicy::Fallback : MibRuntimeStandardsPolicy::Excluded;
     configuration.libraryGenerationValue = library.generation();
@@ -158,6 +160,38 @@ MibProfileRuntimeConfiguration MibProfileRuntimeConfigurationBuilder::build(
             break;
         }
     }
+
+    }
+
+    if (exactProfile) {
+        QMap<QString, QStringList> selectedImports;
+        for (const QString &identity : std::as_const(configuration.explicitRootsValue)) {
+            const auto alias = configuration.rootAliasesValue.constFind(identity);
+            if (alias == configuration.rootAliasesValue.cend()) continue;
+            for (const auto &provider : library.providersFor(identity)) {
+                if (samePath(provider.canonicalPath, alias->canonicalPath) &&
+                    provider.sha256 == alias->sha256) {
+                    selectedImports.insert(identity, sortedUnique(provider.imports));
+                    break;
+                }
+            }
+        }
+        const QSet<QString> authorized(configuration.explicitRootsValue.cbegin(),
+                                       configuration.explicitRootsValue.cend());
+        QSet<QString> visited;
+        QSet<QString> active;
+        QStringList dependencyFirst;
+        std::function<void(const QString &)> visit = [&](const QString &identity) {
+            if (visited.contains(identity) || active.contains(identity)) return;
+            active.insert(identity);
+            for (const QString &dependency : selectedImports.value(identity))
+                if (authorized.contains(dependency)) visit(dependency);
+            active.remove(identity);
+            visited.insert(identity);
+            dependencyFirst.append(identity);
+        };
+        for (const QString &identity : std::as_const(configuration.explicitRootsValue)) visit(identity);
+        configuration.explicitRootsValue = dependencyFirst;
     }
 
     QJsonObject revision;
@@ -344,7 +378,7 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
     plan.profileName = profile.name;
     plan.profileType = profile.type;
     plan.libraryGeneration = library.generation();
-    const bool exactProfile = !profile.members.isEmpty();
+    const bool exactProfile = !profile.members.isEmpty() || !profile.unresolvedLegacyModules.isEmpty();
     plan.explicitModules = exactProfile ? MibProfileMemberIdentities(profile.members)
         : profile.type == MibProfileType::All
         ? sortedUnique(library.moduleNames())
@@ -354,6 +388,7 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
     const QSet<QString> explicitSet(plan.explicitModules.cbegin(), plan.explicitModules.cend());
     QMap<QString, MibEffectivePlanMember> resolved;
     QStringList pending = plan.explicitModules;
+    if (exactProfile) plan.missingModules.append(profile.unresolvedLegacyModules);
     if (!exactProfile && (profile.type == MibProfileType::Custom || profile.type == MibProfileType::Folder) &&
         profile.includeStandardBase)
         pending = sortedUnique(pending + MibProfileDefinitions::standardsModules());
@@ -511,6 +546,7 @@ QByteArray MibEffectivePlanResolver::canonicalBytes(const MibEffectivePlan &plan
     root.insert(QStringLiteral("libraryGeneration"), QString::number(plan.libraryGeneration));
     root.insert(QStringLiteral("explicit"), strings(plan.explicitModules));
     root.insert(QStringLiteral("converged"), plan.converged);
+    root.insert(QStringLiteral("authorityError"), plan.authorityError);
     root.insert(QStringLiteral("convergencePasses"), plan.convergencePasses);
     root.insert(QStringLiteral("nonConvergent"), strings(plan.nonConvergentModules));
     QJsonArray members;

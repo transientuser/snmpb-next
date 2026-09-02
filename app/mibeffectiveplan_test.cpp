@@ -4,6 +4,7 @@
 #include "smi.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <utility>
 
 namespace {
 bool check(bool value, const char *message) { if (!value) std::cerr << "FAIL: " << message << '\n'; return value; }
@@ -534,6 +536,85 @@ int main(int argc, char **argv)
                 unauthorizedSiblingEnvironment->constructionDiagnostics().join('\n').contains(
                     "not an exact Profile member"),
                 "a sibling file in an authorized directory is rejected unless it is an exact member");
+
+    const QString collisionDir = QDir(aliasProduct).filePath("collision");
+    QDir().mkpath(collisionDir);
+    const QString providerAFile = QDir(collisionDir).filePath("provider-A.mib");
+    const QString providerBFile = QDir(collisionDir).filePath("provider-B.mib");
+    writeFile(providerAFile, "SAME-DIR-MIB DEFINITIONS ::= BEGIN\n"
+                             "sameRoot OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 99101 }\nEND\n");
+    writeFile(providerBFile, "SAME-DIR-MIB DEFINITIONS ::= BEGIN\n"
+                             "sameRoot OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 99102 }\nEND\n");
+    const QString dependencyRootFile = QDir(collisionDir).filePath("dependency-root.mib");
+    const QString dependencyAFile = QDir(collisionDir).filePath("dependency-A.mib");
+    const QString dependencyBFile = QDir(collisionDir).filePath("dependency-B.mib");
+    writeFile(dependencyRootFile, "DEPENDENT-ROOT-MIB DEFINITIONS ::= BEGIN\n"
+                                  "IMPORTS depRoot FROM EXACT-DEPENDENCY-MIB;\n"
+                                  "dependentRoot OBJECT IDENTIFIER ::= { depRoot 1 }\nEND\n");
+    writeFile(dependencyAFile, "EXACT-DEPENDENCY-MIB DEFINITIONS ::= BEGIN\n"
+                               "depRoot OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 99201 }\nEND\n");
+    writeFile(dependencyBFile, "EXACT-DEPENDENCY-MIB DEFINITIONS ::= BEGIN\n"
+                               "depRoot OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 99202 }\nEND\n");
+    aliasIndex.update({aliasProduct, aliasStandards});
+    const auto materializeExact = [&](const QString &id, const QStringList &files) {
+        MibProfileRecord profile;
+        profile.id = id; profile.name = id; profile.type = MibProfileType::Custom;
+        profile.members = MibProfileMembersFromFiles(files);
+        profile.explicitModules = MibProfileMemberIdentities(profile.members);
+        MibEffectivePlan plan = MibEffectivePlanResolver().resolve(profile, aliasIndex);
+        plan.runtimeConfiguration = runtimeBuilder.build(
+            profile, aliasIndex, {aliasProductCollection, aliasStandardsCollection});
+        plan.runtimePaths = pathBuilder.derive(plan.runtimeConfiguration, aliasIndex);
+        plan.hasRuntimePaths = true;
+        plan.sha256 = QString::fromLatin1(QCryptographicHash::hash(
+            MibEffectivePlanResolver::canonicalBytes(plan), QCryptographicHash::Sha256).toHex());
+        MibRuntimeParser::reset(plan.runtimePaths);
+        const auto loads = MibRuntimeParser::loadExplicitRoots(
+            plan.runtimeConfiguration, plan.runtimePaths);
+        QStringList unavailable = loads.failedIdentities();
+        unavailable.append(plan.missingModules);
+        unavailable.append(plan.ambiguousModules);
+        unavailable.append(plan.pinFailureModules);
+        unavailable.removeDuplicates();
+        return std::pair<MibEffectivePlan, MibEnvironmentPtr>{plan,
+            MibEnvironmentExtractor().extract(plan, unavailable, loads.roots)};
+    };
+    const auto selectedA = materializeExact("same-a", {providerAFile});
+    ok &= check(selectedA.second->publishable() &&
+                canonical(selectedA.second->loadedProviderPaths().value("SAME-DIR-MIB")) ==
+                    canonical(providerAFile),
+                "same-identity same-directory provider A is deliberately materialized");
+    const auto selectedB = materializeExact("same-b", {providerBFile});
+    ok &= check(selectedB.second->publishable() &&
+                canonical(selectedB.second->loadedProviderPaths().value("SAME-DIR-MIB")) ==
+                    canonical(providerBFile),
+                "reversed exact selection deliberately materializes provider B");
+
+    const auto dependencyA = materializeExact(
+        "dependency-a", {dependencyRootFile, dependencyAFile});
+    ok &= check(dependencyA.first.runtimeConfiguration.explicitRoots().first() ==
+                    "EXACT-DEPENDENCY-MIB" && dependencyA.second->publishable() &&
+                canonical(dependencyA.second->loadedProviderPaths().value("EXACT-DEPENDENCY-MIB")) ==
+                    canonical(dependencyAFile),
+                "authorized dependency is loaded before its importer and provider A publishes");
+    const auto dependencyB = materializeExact(
+        "dependency-b", {dependencyRootFile, dependencyBFile});
+    ok &= check(dependencyB.second->publishable() &&
+                canonical(dependencyB.second->loadedProviderPaths().value("EXACT-DEPENDENCY-MIB")) ==
+                    canonical(dependencyBFile),
+                "replacing dependency membership deliberately materializes provider B");
+    const auto missingDependency = materializeExact("dependency-missing", {dependencyRootFile});
+    ok &= check(missingDependency.first.missingModules.contains("EXACT-DEPENDENCY-MIB") &&
+                !missingDependency.second->publishable(),
+                "removing an exact dependency reports it missing and cannot authorize a Catalog substitute");
+
+    const auto exactMulti = materializeExact("multi", {multiAliasFile});
+    ok &= check(exactMulti.second->publishable() && exactMulti.second->authorizedFiles().size() == 1 &&
+                canonical(exactMulti.second->loadedProviderPaths().value("VENDOR-ROOT-MIB")) ==
+                    canonical(multiAliasFile) &&
+                canonical(exactMulti.second->loadedProviderPaths().value("VENDOR-TC-MIB")) ==
+                    canonical(multiAliasFile),
+                "one exact multi-identity file authorizes every identity it declares");
 
     MibProfileRecord emptyProfile;
     emptyProfile.id = "empty"; emptyProfile.name = "Empty";

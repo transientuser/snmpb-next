@@ -3,6 +3,7 @@
 #include "mibcandidatefilter.h"
 
 #include <QCryptographicHash>
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -53,6 +54,11 @@ QString MibCollection::defaultRoot()
 
 QString MibCollection::legacyManagedRoot()
 {
+    if (QCoreApplication::instance()) {
+        const QString isolated = QCoreApplication::instance()
+            ->property("snmpb.isolatedStateRoot").toString();
+        if (!isolated.isEmpty()) return QDir(isolated).filePath(QStringLiteral("mibs"));
+    }
     return QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
         .filePath(QStringLiteral("mibs"));
 }

@@ -38,6 +38,10 @@ int main(int argc,char **argv)
     auto providerB=providerA;providerB.members[0].provider.sha256="two";
     check(!(MibEnvironmentCacheKey::fromPlan(providerA,"parser")==MibEnvironmentCacheKey::fromPlan(providerB,"parser")),
           "provider hash independently invalidates cache identity");
+    auto providerPathB=providerA;providerA.members[0].provider.canonicalPath="C:/catalog/provider-a.mib";
+    providerPathB.members[0].provider.canonicalPath="C:/catalog/provider-b.mib";
+    check(!(MibEnvironmentCacheKey::fromPlan(providerA,"parser")==MibEnvironmentCacheKey::fromPlan(providerPathB,"parser")),
+          "provider path independently invalidates cache identity");
 
     QSemaphore bStarted,bRelease;QMutex recordMutex;QStringList invoked;int completions=0,stale=0,failuresSeen=0;QString lastProfile;bool lastCacheHit=false;
     MibEnvironmentManager manager([&](const MibEffectivePlan &p){

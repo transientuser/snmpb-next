@@ -614,6 +614,9 @@ MibModuleRecord MibModule::ModuleMetadata(const QString &moduleName, const QStri
 MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) const
 {
     MibEffectivePlan plan = MibEffectivePlanResolver().resolve(profile, dependencyIndex);
+    const bool unmigratedIdentityAuthority = MibProfileRequiresExactMigration(profile);
+    if (unmigratedIdentityAuthority)
+        plan.authorityError = tr("Profile still uses legacy module-identity authority and must be migrated to exact files");
     QSettings settings;
     const QString libraryRoot = MibCollection::configuredRoot(settings);
     const auto collections = runtimeCollectionsFor(profile, dependencyIndex, libraryRoot);
@@ -763,6 +766,10 @@ MibEnvironmentBuildResult MibModule::BuildEnvironment(const MibEffectivePlan &pl
 {
     auto operation=MibEngine::instance().beginOperation(QStringLiteral("async-plan-build"));
     MibEnvironmentBuildResult result;
+    if (!plan.authorityError.isEmpty()) {
+        result.error = plan.authorityError;
+        return result;
+    }
     if (!plan.hasRuntimePaths || !plan.runtimePaths.isValid()) {
         result.error = !plan.hasRuntimePaths
             ? tr("Profile runtime path configuration is missing")
