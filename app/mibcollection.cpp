@@ -180,3 +180,25 @@ MibCollectionResult MibCollection::initialize(const QStringList &bundledPaths,
     result.success = true;
     return result;
 }
+
+MibCollectionResult MibCollection::importFiles(const QStringList &sourceFiles) const
+{
+    MibCollectionResult result;
+    if (!QDir().mkpath(unassignedPath())) {
+        result.error = QObject::tr("Could not create the MIB Library import directory: %1")
+            .arg(unassignedPath());
+        return result;
+    }
+    for (const QString &source : sourceFiles) {
+        const QFileInfo info(source);
+        if (!info.isFile() || !info.isReadable() ||
+            !MibCandidateFilter::accepts(info.fileName())) {
+            result.error = QObject::tr("Not a readable MIB file: %1").arg(source);
+            return result;
+        }
+        if (!copySafely(source, QDir(unassignedPath()).filePath(info.fileName()),
+                        &result, false)) return result;
+    }
+    result.success = true;
+    return result;
+}

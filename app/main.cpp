@@ -218,10 +218,21 @@ int main( int argc, char ** argv )
         };
         if (snmpb.MibModuleObj()->CurrentEnvironment())
             QTimer::singleShot(0, &app, runSmoke);
-        else
+        else {
             QObject::connect(snmpb.MibModuleObj(), &MibModule::profileRuntimeReady, &app,
                 [runSmoke](const QString &,const MibEffectivePlan &,MibEnvironmentPtr,
                            const QStringList &,bool,bool){runSmoke();},Qt::SingleShotConnection);
+            QObject::connect(snmpb.MibModuleObj(), &MibModule::profileRuntimeFailed, &app,
+                [&app, smoke_config_dir](const QString &profileId, const QString &error) {
+                    QFile smokeLog(QDir(smoke_config_dir).filePath("launch-smoke.log"));
+                    if (smokeLog.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                        QTextStream output(&smokeLog);
+                        output << "launch-smoke: FAIL: Profile Environment build failed for "
+                               << profileId << ": " << error << Qt::endl;
+                    }
+                    app.exit(1);
+                }, Qt::SingleShotConnection);
+        }
     }
 
     DiagnosticLogger::log("Startup", "event-loop entry");

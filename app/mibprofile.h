@@ -14,6 +14,20 @@ struct MibProviderPin {
     QString sha256;
 };
 
+enum class MibProfileMemberReason { Added, Dependency };
+enum class MibProfileMemberState { Current, Missing, Changed, CatalogStale };
+
+struct MibProfileMember {
+    QString canonicalPath;
+    QString sha256;
+    QStringList identities;
+    MibProfileMemberReason reason = MibProfileMemberReason::Added;
+    bool operator==(const MibProfileMember &other) const {
+        return canonicalPath == other.canonicalPath && sha256 == other.sha256 &&
+            identities == other.identities && reason == other.reason;
+    }
+};
+
 struct MibProfileRecord {
     QString id;
     QString name;
@@ -22,7 +36,14 @@ struct MibProfileRecord {
     bool includeStandardBase = false;
     QString directory;
     QMap<QString, MibProviderPin> providerPins;
+    QList<MibProfileMember> members;
 };
+
+MibProfileMemberState MibProfileMemberCurrentState(const MibProfileMember &member);
+QList<MibProfileMember> MibProfileMembersFromFiles(
+    const QStringList &files, MibProfileMemberReason reason = MibProfileMemberReason::Added,
+    QStringList *diagnostics = nullptr);
+QStringList MibProfileMemberIdentities(const QList<MibProfileMember> &members);
 
 class MibProfileDefinitions
 {
@@ -41,6 +62,7 @@ public:
     explicit MibProfileRepository(QString path);
     QList<MibProfileRecord> load(QString *error = nullptr) const;
     bool save(const QList<MibProfileRecord> &profiles, QString *error = nullptr) const;
+    bool ordinaryProfileMigrationComplete() const;
     QString path() const { return filePath; }
 private:
     QString filePath;
@@ -62,6 +84,10 @@ public:
     bool importCustomProfile(const QString &stableId, const QString &name,
                              const QStringList &modules, QString *error = nullptr);
     bool refreshAutomaticProfiles(const QString &mibRoot, QString *error = nullptr);
+    bool addFiles(const QString &id, const QStringList &files,
+                  MibProfileMemberReason reason = MibProfileMemberReason::Added,
+                  QString *error = nullptr);
+    bool addFolder(const QString &id, const QString &folder, QString *error = nullptr);
 private:
     static bool isBuiltIn(const QString &id);
     MibProfileRepository repository;

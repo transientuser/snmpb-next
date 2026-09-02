@@ -31,6 +31,23 @@ QString keyPath(const QString &value) {
     return QDir::cleanPath(value);
 #endif
 }
+QString canonicalDirectory(const QString &value)
+{
+    const QFileInfo info(value);
+    const QString canonicalValue = info.canonicalFilePath();
+    return QDir::cleanPath(canonicalValue.isEmpty() ? info.absoluteFilePath() : canonicalValue);
+}
+bool pathWithin(const QString &path, const QString &root)
+{
+    QString prefix = QDir::fromNativeSeparators(canonicalDirectory(root));
+    const QString candidate = QDir::fromNativeSeparators(canonicalDirectory(path));
+    if (!prefix.endsWith('/')) prefix += '/';
+#ifdef Q_OS_WIN
+    return candidate.startsWith(prefix, Qt::CaseInsensitive);
+#else
+    return candidate.startsWith(prefix, Qt::CaseSensitive);
+#endif
+}
 int pathPrecedence(const QString &path, int fallback)
 {
     const QString normalized = QDir::fromNativeSeparators(path);
@@ -48,6 +65,9 @@ int pathPrecedence(const QString &path, int fallback)
 MibDependencyIndex::MibDependencyIndex(QString path)
     : filePath(path.isEmpty() ? defaultPath() : std::move(path)) {}
 
+MibDependencyIndex::MibDependencyIndex(QString path, QString libraryRoot)
+    : filePath(std::move(path)), ownedLibraryRoot(canonicalDirectory(libraryRoot)) {}
+
 QString MibDependencyIndex::defaultPath()
 {
     // Keep this application-owned path stable even when a utility or test has
@@ -55,6 +75,31 @@ QString MibDependencyIndex::defaultPath()
     // resolves AppLocalDataLocation to this same SnmpB directory.
     return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
         .filePath(QStringLiteral("SnmpB/mibs/dependency-index-v1.json"));
+}
+
+QString MibDependencyIndex::pathForLibraryRoot(const QString &libraryRoot)
+{
+    const QString canonicalRoot = QDir::fromNativeSeparators(canonicalDirectory(libraryRoot));
+#ifdef Q_OS_WIN
+    const QByteArray identity = canonicalRoot.toLower().toUtf8();
+#else
+    const QByteArray identity = canonicalRoot.toUtf8();
+#endif
+    const QString key = QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
+        .filePath(QStringLiteral("SnmpB/mibs/indexes/%1/dependency-index-v1.json").arg(key));
+}
+
+MibDependencyIndex MibDependencyIndex::forLibraryRoot(const QString &libraryRoot)
+{
+    return MibDependencyIndex(pathForLibraryRoot(libraryRoot), libraryRoot);
+}
+
+bool MibDependencyIndex::ownsSnapshot(const QString &libraryRoot, quint64 generation) const
+{
+    return !ownedLibraryRoot.isEmpty() && currentGeneration == generation &&
+        keyPath(ownedLibraryRoot) == keyPath(canonicalDirectory(libraryRoot));
 }
 
 bool MibDependencyIndex::load(QString *error)
@@ -92,7 +137,20 @@ bool MibDependencyIndex::load(QString *error)
             .arg(root.value("schemaVersion").toVariant().toString());
         if (error) *error = currentLoadDiagnostic; return false;
     }
+    if (!ownedLibraryRoot.isEmpty()) {
+        const QString storedRoot = root.value("libraryRoot").toString();
+        if (storedRoot.isEmpty() || keyPath(canonicalDirectory(storedRoot)) !=
+            keyPath(ownedLibraryRoot)) {
+            records.clear(); providers.clear(); profileChecks.clear(); currentGeneration = 0;
+            currentLoadStatus = MibDependencyIndexLoadStatus::LibraryMismatch;
+            currentLoadDiagnostic = QObject::tr(
+                "Dependency index belongs to a different MIB Library");
+            if (error) error->clear();
+            return true;
+        }
+    }
     QList<MibDependencyFileRecord> loaded;
+    bool outsideOwnedLibrary = false;
     for (const QJsonValue &value : root.value("files").toArray()) {
         const QJsonObject object = value.toObject(); MibDependencyFileRecord record;
         record.canonicalPath = object.value("path").toString();
@@ -105,7 +163,19 @@ bool MibDependencyIndex::load(QString *error)
         const QJsonObject modules = object.value("modules").toObject();
         for (auto it = modules.begin(); it != modules.end(); ++it)
             record.importsByModule.insert(it.key(), stringList(it.value().toArray()));
-        if (!record.canonicalPath.isEmpty()) loaded.append(record);
+        if (!record.canonicalPath.isEmpty()) {
+            if (!ownedLibraryRoot.isEmpty() && !pathWithin(record.canonicalPath, ownedLibraryRoot))
+                outsideOwnedLibrary = true;
+            else loaded.append(record);
+        }
+    }
+    if (outsideOwnedLibrary) {
+        records.clear(); providers.clear(); profileChecks.clear(); currentGeneration = 0;
+        currentLoadStatus = MibDependencyIndexLoadStatus::LibraryMismatch;
+        currentLoadDiagnostic = QObject::tr(
+            "Dependency index contains providers outside its MIB Library");
+        if (error) error->clear();
+        return true;
     }
     records = loaded; currentGeneration = quint64(root.value("generation").toDouble());
     const bool scannerUpgradeRequired = root.value("scannerVersion").toInt() != 2;
@@ -139,6 +209,7 @@ QString MibDependencyIndexLoadStatusText(MibDependencyIndexLoadStatus status)
     case MibDependencyIndexLoadStatus::EmptyFile: return QObject::tr("empty-file");
     case MibDependencyIndexLoadStatus::MalformedJson: return QObject::tr("malformed-json");
     case MibDependencyIndexLoadStatus::UnsupportedSchema: return QObject::tr("unsupported-schema");
+    case MibDependencyIndexLoadStatus::LibraryMismatch: return QObject::tr("library-mismatch");
     case MibDependencyIndexLoadStatus::ReadError: return QObject::tr("read-error");
     }
     return {};
@@ -165,7 +236,8 @@ bool MibDependencyIndex::save(QString *error) const
     }
     QDir().mkpath(QFileInfo(filePath).absolutePath()); QSaveFile file(filePath);
     const QJsonObject root{{"schemaVersion", 1}, {"scannerVersion", 2}, {"generation", double(currentGeneration)},
-                           {"files", files}, {"profileChecks", checks}};
+                           {"libraryRoot", ownedLibraryRoot}, {"files", files},
+                           {"profileChecks", checks}};
     if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 || !file.commit()) {
         if (error) *error = file.errorString(); return false;
     }
@@ -287,6 +359,23 @@ QList<MibIndexedProvider> MibDependencyIndex::providersFor(const QString &module
         const int folded = QString::compare(a.canonicalPath, b.canonicalPath, Qt::CaseInsensitive);
         return folded == 0 ? a.canonicalPath < b.canonicalPath : folded < 0;
     });
+    return result;
+}
+
+QList<MibIndexedProvider> MibDependencyIndex::providersFor(
+    const QString &moduleName, const QString &folder, MibCatalogProviderScope scope) const
+{
+    const QList<MibIndexedProvider> global = providersFor(moduleName);
+    if (scope == MibCatalogProviderScope::Global) return global;
+    QList<MibIndexedProvider> result;
+    const QString root = canonicalDirectory(folder);
+    for (const auto &provider : global) {
+        const QString providerFolder = canonicalDirectory(QFileInfo(provider.canonicalPath).absolutePath());
+        const bool match = scope == MibCatalogProviderScope::ExactFolder
+            ? keyPath(providerFolder) == keyPath(root)
+            : keyPath(providerFolder) == keyPath(root) || pathWithin(provider.canonicalPath, root);
+        if (match) result.append(provider);
+    }
     return result;
 }
 

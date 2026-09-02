@@ -47,6 +47,7 @@ set(SNMPB_APP_SOURCES
     mibenvironmentmanager.cpp
     mibengine.cpp
     mibenginevalidation.cpp
+    mibruntimeparser.cpp
     mibvaluesemantics.cpp
     mibprofile.cpp
     mibdownloadtransport.cpp
@@ -141,6 +142,7 @@ set(SNMPB_APP_HEADERS
     mibenvironmentcache.h
     mibenvironmentmanager.h
     mibengine.h
+    mibruntimeparser.h
     mibservice_internal.h
     mibvaluesemantics.h
     mibprofile.h
@@ -380,12 +382,16 @@ if(BUILD_TESTING)
     endif()
 
     add_executable(snmpb_mib_effective_plan_test
+        mibengine.cpp mibengine.h
+        mibruntimeparser.cpp mibruntimeparser.h
+        mibenvironment.cpp mibenvironment.h
+        mibenvironmentextractor.cpp mibenvironmentextractor.h
         mibcandidatefilter.cpp mibcandidatefilter.h
         miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
         mibprofile.cpp mibprofile.h
         mibdependencyindex.cpp mibdependencyindex.h
         mibeffectiveplan.cpp mibeffectiveplan.h mibeffectiveplan_test.cpp)
-    target_link_libraries(snmpb_mib_effective_plan_test PRIVATE Qt6::Core)
+    target_link_libraries(snmpb_mib_effective_plan_test PRIVATE Qt6::Core snmpb_libsmi)
     if(WIN32)
         add_test(NAME snmpb.mib-effective-plan COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"

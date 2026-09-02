@@ -1,4 +1,5 @@
 #include "mibdownloadtransport.h"
+#include "mibcollection.h"
 #include "miblibrarywidget.h"
 
 #include <QApplication>
@@ -63,6 +64,16 @@ int main(int argc, char **argv)
     writeMib(QDir(standardsRoot).filePath("DEP-MIB"), "DEP-MIB DEFINITIONS ::= BEGIN\nEND\n");
     writeMib(QDir(standardsRoot).filePath("IANA-ONE-MIB"), "IANA-ONE-MIB DEFINITIONS ::= BEGIN\nEND\n");
     writeMib(QDir(standardsRoot).filePath("IANA-TWO-MIB"), "IANA-TWO-MIB DEFINITIONS ::= BEGIN\nEND\n");
+    const QString importSource = temp.filePath("filename-does-not-match.mib");
+    writeMib(importSource, "DECLARED-IMPORT-MIB DEFINITIONS ::= BEGIN\nEND\n");
+    const MibCollectionResult imported = MibCollection(fixtureRoot).importFiles({importSource});
+    bool ok = check(imported.success && imported.importedCopied == 1 &&
+                    QFileInfo::exists(QDir(fixtureRoot).filePath("Unassigned/filename-does-not-match.mib")),
+                    "Import Files safely copies source filenames to Unassigned without changing identity authority");
+    const MibCollectionResult repeatedImport = MibCollection(fixtureRoot).importFiles({importSource});
+    ok &= check(repeatedImport.success && repeatedImport.identicalSkipped == 1 &&
+                repeatedImport.conflicts.isEmpty(),
+                "Import Files is idempotent for identical content");
     IdleTransport transport;
     MibModuleRecord sourceMetadata;
     sourceMetadata.name = "A-MIB"; sourceMetadata.rootOid = "1.3.6.1.2.1.60";
@@ -125,7 +136,6 @@ int main(int argc, char **argv)
         plan.effectiveModules = plan.explicitModules; plan.sha256 = "test-plan"; return plan;
     };
     MibLibraryWidget widget({}, nullptr, &transport, callbacks);
-    bool ok = true;
     int runtimeSelectionRequests = 0;
     QObject::connect(&widget, &MibLibraryWidget::profileSelectionChanged,
                      [&runtimeSelectionRequests](const QString &, const MibEffectivePlan &) {
@@ -186,15 +196,16 @@ int main(int argc, char **argv)
                 !applicationBuildText.contains("    preferredmibresolver.cpp\n") &&
                 !applicationBuildText.contains("    preferredmibresolver.h\n"),
                 "preferred-module resolver and synthetic Tree Environment are absent from production");
-    ok &= check(applicationSourceText.contains("MibAddModulesToEditableProfile") &&
+    ok &= check(applicationSourceText.contains("profileService()->addFiles") &&
                 applicationSourceText.contains("MibNormalizeRuntimeRequests") &&
+                applicationSourceText.contains("providers.size() == 1") &&
                 applicationSourceText.contains("mibLibrary->selectProfile(activeProfileId)") &&
                 applicationSourceText.contains("retained for compatibility but is not an activation authority"),
                 "download and Connection entry points cannot bypass Profile intent");
     ok &= check(applicationSourceText.contains("modules->CheckProfileDependencies(QStringLiteral(\"mib-library\")") &&
                 applicationSourceText.contains("modules->DependencyIndex()->moduleNames()"),
                 "MIB Library owns the library-wide Check Dependencies action");
-    ok &= check(moduleSourceText.contains("Legacy module editor ignored; use a Custom Profile") &&
+    ok &= check(moduleSourceText.contains("Legacy module editor ignored; use a Profile") &&
                 !moduleSourceText.contains("PersistWanted"),
                 "retired Available/Loaded arrows cannot recreate shadow legacy authority");
     ok &= check(moduleSourceText.contains("for (SmiModule *mod = smiGetFirstModule()") &&
@@ -212,25 +223,30 @@ int main(int argc, char **argv)
                 !effectivePlanSourceText.contains("smiLoadModule") &&
                 !effectivePlanSourceText.contains("Wanted") &&
                 !effectivePlanSourceText.contains("mibpreloads") &&
-                moduleSourceText.contains("MibBoundedDependencyLoader().load(plan, load)") &&
-                moduleSourceText.contains("MibEnvironmentExtractor().extract(plan,missing)") &&
+                moduleSourceText.contains("MibRuntimeParser::loadExplicitRoots(") &&
+                !moduleSourceText.contains("MibBoundedDependencyLoader().load(plan, load)") &&
+                moduleSourceText.contains("MibEnvironmentExtractor().extract(plan,missing,rootOutcomes)") &&
                 moduleSourceText.contains("RestoreRuntimeAfterEditorValidation"),
-                "one pure Effective Plan resolver owns Profile membership and async runtime retains bounded loading");
+                "one pure Effective Plan resolver owns membership while runtime loads explicit roots alias-first and leaves imports native");
     auto *table = widget.findChild<QTableWidget *>("MibLibraryTable");
-    ok &= check(table && table->columnCount() == 4, "Inventory has checkbox plus three data columns");
+    ok &= check(table && table->columnCount() == 6,
+                "Inventory has checkbox, module, status, Active Profile, revision, and origin columns");
     if (!table || table->rowCount() < 4) {
         std::cerr << "Inventory fixture rows unavailable: "
                   << (table ? table->rowCount() : -1) << '\n';
         return 1;
     }
-    ok &= check(table && table->horizontalHeaderItem(3)->text() == "Origin", "Source renamed Origin");
+    ok &= check(table && table->horizontalHeaderItem(2)->text() == "Status" &&
+                table->horizontalHeaderItem(3)->text() == "Active Profile" &&
+                table->horizontalHeaderItem(5)->text() == "Origin",
+                "Inventory exposes Status, Active Profile, and Origin");
     ok &= check(table && table->editTriggers() == QAbstractItemView::NoEditTriggers,
                 "Inventory table disables editing");
     for (int row=0; table && row<table->rowCount(); ++row)
         for (int column=0; column<table->columnCount(); ++column)
             ok &= check(!(table->item(row,column)->flags() & Qt::ItemIsEditable),
                         "Inventory item is read-only");
-    ok &= check(table && !table->item(0,3)->text().isEmpty(), "module origin displayed");
+    ok &= check(table && !table->item(0,5)->text().isEmpty(), "module origin displayed");
     QString opened; bool readOnly = false;
     QObject::connect(&widget, &MibLibraryWidget::openModuleRequested,
                      [&](const QString &path, bool immutable) { opened = path; readOnly = immutable; });
@@ -314,7 +330,7 @@ int main(int argc, char **argv)
     auto *updates = widget.findChild<QPushButton *>("MibLibraryCheckForUpdates");
     auto *cancel = widget.findChild<QPushButton *>("MibLibraryCancel");
     ok &= check(header->property("checkState").toInt() == Qt::Unchecked &&
-                count->text() == "0 selected" && !download->isEnabled() && !install->isEnabled(),
+                count->text() == "0 selected for download" && !download->isEnabled() && !install->isEnabled(),
                 "empty checkbox selection has unchecked header, zero count, and disabled actions");
     auto *headerCheckbox = header->findChild<QCheckBox *>("MibLibraryHeaderSelectAll");
     ok &= check(headerCheckbox &&
@@ -322,32 +338,32 @@ int main(int argc, char **argv)
                 headerCheckbox->geometry().center().x() <=
                     header->sectionViewportPosition(0) + header->sectionSize(0) / 2,
                 "Inventory header checkbox is left-aligned with row checkboxes");
-    ok &= check(download->text() == "Download" &&
-                install->text() == "Install with Dependencies" &&
-                refresh->text() == "Refresh Catalog" && updates->text() == "Check for Updates",
+    ok &= check(download->text() == "Download to Library" &&
+                install->text() == "Download and Add to Active Profile" &&
+                refresh->text() == "Refresh Catalog" && updates->isHidden(),
                 "Inventory actions use final grouped labels");
     table->item(0, 0)->setCheckState(Qt::Checked); application.processEvents();
     ok &= check(header->property("checkState").toInt() == Qt::PartiallyChecked &&
-                count->text() == "1 selected" && download->isEnabled() && install->isEnabled(),
-                "individual checkbox creates partial header and enables selected actions");
+                count->text() == "1 selected for download" && download->isEnabled() && install->isEnabled(),
+                "ordinary active Profile permits exact downloaded-file membership edits");
     search->setText("IANA"); application.processEvents();
     ok &= check(header->property("checkState").toInt() == Qt::Unchecked,
                 "filter change recalculates header against displayed rows");
     clickHeaderCheckbox(header); application.processEvents();
     ok &= check(header->property("checkState").toInt() == Qt::Checked &&
-                count->text() == "3 selected" && table->item(0, 0)->checkState() == Qt::Checked,
+                count->text() == "3 selected for download" && table->item(0, 0)->checkState() == Qt::Checked,
                 "unchecked header selects filtered rows without clearing hidden selection");
     table->item(2, 0)->setCheckState(Qt::Unchecked); application.processEvents();
     ok &= check(header->property("checkState").toInt() == Qt::PartiallyChecked,
                 "individual filtered checkbox updates header to partial");
     clickHeaderCheckbox(header); application.processEvents();
-    ok &= check(header->property("checkState").toInt() == Qt::Checked && count->text() == "3 selected",
+    ok &= check(header->property("checkState").toInt() == Qt::Checked && count->text() == "3 selected for download",
                 "partial header click selects all filtered rows");
     clickHeaderCheckbox(header); application.processEvents();
     ok &= check(header->property("checkState").toInt() == Qt::Unchecked &&
-                count->text() == "1 selected" && table->item(0, 0)->checkState() == Qt::Checked,
+                count->text() == "1 selected for download" && table->item(0, 0)->checkState() == Qt::Checked,
                 "checked header clears filtered rows while preserving hidden selection");
-    ok &= check(refresh->isEnabled() && updates->isEnabled() && !cancel->isVisible(),
+    ok &= check(refresh->isEnabled() && updates->isHidden() && !cancel->isVisible(),
                 "catalog actions are selection-independent and Cancel is hidden while idle");
     refresh->click(); application.processEvents();
     ok &= check(cancel->isVisible() && !refresh->isEnabled() && transport.requested.isValid(),
@@ -414,12 +430,16 @@ int main(int argc, char **argv)
                 tabs->tabText(1) == "Profiles", "Library and Profiles are separate tabs");
     auto *profileSelector = widget.findChild<QComboBox *>("MibProfileEditorSelector");
     auto *profileSummary = widget.findChild<QLabel *>("MibProfileDependencySummary");
+    auto *profileLabel = widget.findChild<QLabel *>("MibProfileActiveLabel");
+    auto *profileGuidance = widget.findChild<QLabel *>("MibProfileGuidance");
     ok &= check(profileSelector && profileSummary && !profileSummary->isHidden() &&
+                profileLabel && profileLabel->text() == "Active MIB Profile:" &&
+                profileGuidance && profileGuidance->text().contains("exact files") &&
                 widget.findChild<QPushButton *>("MibLibraryCheckDependencies") &&
                 !widget.findChild<QPushButton *>("MibProfileCheckDependencies") &&
                 !widget.findChild<QPushButton *>("MibProfileDownloadMissing") &&
                 !widget.findChild<QListWidget *>("MibProfileRequiredDependencies")->isHidden(),
-                "Profiles present read-only plan results without dependency-management controls");
+                "Profiles present exact-file snapshots and read-only plan results without dependency-management controls");
     profileSelector->setCurrentIndex(1); application.processEvents();
     ok &= check(dependencyChecks == 0,
                 "switching Profiles does not invoke library dependency validation");
@@ -444,7 +464,7 @@ int main(int argc, char **argv)
         MibEffectivePlan plan; plan.profileId = profile.id; plan.profileType = profile.type;
         plan.explicitModules = profile.explicitModules;
         plan.effectiveModules = profile.explicitModules;
-        if (profile.type == MibProfileType::Standards) {
+        if (profile.id == MibProfileDefinitions::standardsId()) {
             MibEffectivePlanMember dependency; dependency.identity = "NORTEL-nnSRNode-MIB";
             const bool available = std::any_of(liveModules.cbegin(), liveModules.cend(), [](const MibModuleRecord &record) { return record.name == "NORTEL-nnSRNode-MIB"; });
             dependency.membershipReason = available ? MibPlanMembershipReason::Dependency : MibPlanMembershipReason::Missing;

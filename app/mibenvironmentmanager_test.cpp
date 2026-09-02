@@ -67,6 +67,17 @@ int main(int argc,char **argv)
     check(until([&]{return sameCompletions==1;})&&sameManager.buildCount()==1,"duplicate in-flight cache key is single-flight");
     auto beforeFailure=manager.active();manager.request(plan("FAIL"));
     check(until([&]{return failuresSeen==1;} )&&manager.active()==beforeFailure,"fatal build preserves active Environment");
+
+    int authorityFailures=0;
+    MibEnvironmentManager authorityManager([](const MibEffectivePlan &){
+        MibEnvironmentBuildResult result;result.environment=environment();return result;
+    },nullptr,1024,"parser");
+    QObject::connect(&authorityManager,&MibEnvironmentManager::buildFailed,&app,
+        [&](quint64,const QString &,const QString &){++authorityFailures;});
+    MibEffectivePlan authorityPlan=plan("authority");authorityPlan.hasRuntimePaths=true;
+    authorityManager.request(authorityPlan);
+    check(until([&]{return authorityFailures==1;})&&!authorityManager.active(),
+          "Environment without matching runtime authority cannot publish or enter the active Tree state");
     const quint64 beforeProvider=manager.buildCount();manager.request(providerA);check(until([&]{return lastProfile=="provider";}),"provider A builds");
     manager.request(providerB);check(until([&]{return manager.buildCount()==beforeProvider+2;}),"provider content change misses cache and rebuilds");
 

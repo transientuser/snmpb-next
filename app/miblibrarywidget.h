@@ -41,7 +41,7 @@ public:
     };
     struct Callbacks {
         std::function<bool(const QString &, QString *)> validate;
-        std::function<void(const QStringList &, bool)> downloadsCompleted;
+        std::function<QString(const QStringList &, bool, int)> downloadsCompleted;
         std::function<MibModuleRecord(const QString &, const QString &)> metadata;
         std::function<QList<MibModuleRecord>()> localInventory;
         std::function<DependencySummary()> libraryDependencySummary;
@@ -72,12 +72,15 @@ private slots:
     void refreshCatalog();
     void showCurrentInfo();
     void openCurrentModule();
+    void importFiles();
     void profileChanged();
     void createProfile();
     void duplicateProfile();
     void renameProfile();
     void deleteProfile();
     void addProfileMembers();
+    void addProfileFiles();
+    void addProfileFolder();
     void removeProfileMembers();
     void browseLibraryRoot();
     void openLibraryRoot();
@@ -104,6 +107,7 @@ private:
     QStringList requestedTargets;
     bool loadAfterDownload = false;
     bool catalogRefreshInProgress = false;
+    int completedDownloads = 0;
     QString sourceStatusText;
     MibDownloadSessionState sessionState;
     MibProfileService profiles;
@@ -113,6 +117,7 @@ private:
     QTableWidget *table;
     QTreeWidget *dependencies;
     QLabel *status;
+    QLabel *libraryEmptyState;
     QTabWidget *detailsTabs;
     QMap<QString, QLabel *> infoValues;
     QMap<QString, QWidget *> infoLabels;
@@ -137,6 +142,8 @@ private:
     QPushButton *openProfileFolderButton;
     QLineEdit *libraryRootEdit;
     QLabel *profileSource;
+    QLabel *profileGuidance;
+    QLabel *profileEmptyState;
     QPushButton *cancelButton;
     PerformanceCounters counters;
 };

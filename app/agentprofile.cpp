@@ -59,7 +59,9 @@ AgentProfileManager::AgentProfileManager(Snmpb *snmpb,
     metadataForm->addRow(tr("Tags"), tagsEdit);
     metadataForm->addRow(tr("Notes"), notesEdit);
     mibsEdit = new QListWidget(metadataPage);
-    metadataForm->addRow(tr("Preferred MIB modules"), mibsEdit);
+    // Keep loading/saving this legacy field, but do not expose a competing
+    // MIB-selection surface now that Active MIB Profiles own selection.
+    mibsEdit->hide();
     metadataLayout->addLayout(metadataForm);
     ap.ProfileProps->addWidget(metadataPage);
     credentialStatus = new QLabel(ap.SecName->parentWidget());

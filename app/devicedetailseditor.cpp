@@ -153,11 +153,12 @@ void DeviceDetailsEditor::buildUi()
     notes->setMaximumHeight(72);
     preferredMibs = new QLabel(profilePage);
     editMibs = new QPushButton(tr("Edit..."), profilePage);
-    auto *mibsRow = new QHBoxLayout;
-    mibsRow->addWidget(preferredMibs); mibsRow->addStretch(); mibsRow->addWidget(editMibs);
     metadataForm->addRow(tr("Tags"), tags);
     metadataForm->addRow(tr("Notes"), notes);
-    metadataForm->addRow(tr("Preferred MIBs"), mibsRow);
+    // Retain the legacy preferred-MIB fields for persistence compatibility,
+    // but Profiles are now the only user-facing MIB selection authority.
+    preferredMibs->hide();
+    editMibs->hide();
     profileLayout->addLayout(metadataForm);
     settingsEditAction = new QPushButton(tr("Edit..."), profilePage);
     settingsEditAction->setObjectName("EditConnectionSettings");

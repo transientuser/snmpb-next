@@ -5,6 +5,9 @@
 #include "smi.h"
 
 #include <QElapsedTimer>
+#include <QDir>
+#include <QCryptographicHash>
+#include <QFile>
 #include <QFileInfo>
 #include <QSet>
 #include <algorithm>
@@ -185,13 +188,29 @@ bool oidTextLess(const QString &left, const QString &right)
 
 QString canonicalPath(const QString &path)
 {
-    const QString canonical = QFileInfo(path).canonicalFilePath();
-    return canonical.isEmpty() ? QFileInfo(path).absoluteFilePath() : canonical;
+    if (path.trimmed().isEmpty()) return {};
+    const QString normalized = QDir::fromNativeSeparators(path);
+    const QString canonical = QFileInfo(normalized).canonicalFilePath();
+    return canonical.isEmpty() ? QFileInfo(normalized).absoluteFilePath() : canonical;
+}
+
+bool pathWithin(const QString &path, const QString &directory)
+{
+    QString root = QDir::fromNativeSeparators(canonicalPath(directory));
+    const QString candidate = QDir::fromNativeSeparators(canonicalPath(path));
+    if (!root.endsWith('/')) root += '/';
+#ifdef Q_OS_WIN
+    return candidate.startsWith(root, Qt::CaseInsensitive);
+#else
+    return candidate.startsWith(root, Qt::CaseSensitive);
+#endif
 }
 }
 
 MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
-                                                    const QStringList &failedIdentities) const
+                                                    const QStringList &failedIdentities,
+                                                    const QList<MibExplicitRootLoadResult> &rootOutcomes,
+                                                    const QStringList &diagnostics) const
 {
     auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("environment-extraction"));
     QElapsedTimer timer; timer.start();
@@ -200,6 +219,18 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
     environment->parserId = QStringLiteral("patched-libsmi-%1/env-extractor-%2")
         .arg(QStringLiteral(SMI_VERSION_STRING)).arg(MIB_ENVIRONMENT_BUILDER_VERSION);
     environment->plannedModuleCount = plan.effectiveModules.size();
+    environment->authorityProfileId = plan.profileId;
+    environment->runtimeConfigurationSha256 = plan.runtimeConfiguration.sha256();
+    environment->runtimePathSha256 = plan.runtimePaths.sha256();
+    environment->authorityLibraryGeneration = plan.runtimeConfiguration.libraryGeneration();
+    for (const auto &entry : plan.runtimePaths.entries())
+        environment->authorityPaths.append(entry.canonicalPath);
+    environment->requestedRoots = plan.runtimeConfiguration.explicitRoots();
+    for (const auto &member : plan.runtimeConfiguration.authorizedFiles())
+        environment->authorityFiles.insert(canonicalPath(member.canonicalPath), member.sha256);
+    environment->rootOutcomes = rootOutcomes;
+    environment->authorityDiagnostics = diagnostics;
+    environment->loadedProvidersAuthorized = true;
 
     const auto planMember = [&plan](const QString &identity) -> const MibEffectivePlanMember * {
         for (const auto &member : plan.members) if (member.identity == identity) return &member;
@@ -222,6 +253,63 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
         record.identity = text(module->name);
         record.language = language(module->language);
         record.actualProviderPath = canonicalPath(text(module->path));
+        environment->actualLoadedIdentities.append(record.identity);
+        environment->actualProviderPaths.insert(record.identity, record.actualProviderPath);
+        const auto exactMember = std::find_if(
+            plan.runtimeConfiguration.authorizedFiles().cbegin(),
+            plan.runtimeConfiguration.authorizedFiles().cend(), [&record](const auto &member) {
+#ifdef Q_OS_WIN
+                return canonicalPath(member.canonicalPath).compare(
+                    record.actualProviderPath, Qt::CaseInsensitive) == 0;
+#else
+                return canonicalPath(member.canonicalPath) == record.actualProviderPath;
+#endif
+            });
+        bool exactAuthorized = true;
+        QString exactFailure;
+        if (!plan.runtimeConfiguration.authorizedFiles().isEmpty()) {
+            if (exactMember == plan.runtimeConfiguration.authorizedFiles().cend()) {
+                exactAuthorized = false;
+                exactFailure = QStringLiteral("physical file is not an exact Profile member");
+            } else if (!exactMember->identities.contains(record.identity)) {
+                exactAuthorized = false;
+                exactFailure = QStringLiteral("Profile member did not authorize this declared identity");
+            } else {
+                QFile provider(record.actualProviderPath);
+                if (!provider.open(QIODevice::ReadOnly)) {
+                    exactAuthorized = false;
+                    exactFailure = QStringLiteral("Profile member file is no longer readable");
+                } else {
+                    const QString actualHash = QString::fromLatin1(QCryptographicHash::hash(
+                        provider.readAll(), QCryptographicHash::Sha256).toHex());
+                    if (actualHash != exactMember->sha256) {
+                        exactAuthorized = false;
+                        exactFailure = QStringLiteral("Profile member content changed");
+                    }
+                }
+            }
+        }
+        if (!exactAuthorized || (plan.hasRuntimePaths &&
+            plan.runtimeConfiguration.authorizedFiles().isEmpty() &&
+            !record.actualProviderPath.isEmpty() &&
+            std::none_of(plan.runtimePaths.entries().cbegin(), plan.runtimePaths.entries().cend(),
+                [&record](const MibRuntimePathEntry &entry) {
+                    return pathWithin(record.actualProviderPath, entry.canonicalPath);
+                }))) {
+            environment->loadedProvidersAuthorized = false;
+            const QString detail = exactFailure.isEmpty()
+                ? QStringLiteral("module loaded from unauthorized runtime path") : exactFailure;
+            environment->authorityDiagnostics.append(QStringLiteral("Module '%1' loaded from unauthorized file %2: %3")
+                .arg(record.identity, record.actualProviderPath, detail));
+            MibEnvironmentFinding finding{MibEnvironmentFindingKind::ProviderMismatch,
+                record.identity, {}, record.actualProviderPath, detail};
+            record.findings.append(finding);
+            environment->materializationFindings.append(finding);
+        } else if (plan.hasRuntimePaths && record.actualProviderPath.isEmpty()) {
+            environment->authorityDiagnostics.append(QStringLiteral(
+                "Module '%1' has no physical provider path; authorization could not be independently verified")
+                .arg(record.identity));
+        }
         record.organization = text(module->organization);
         record.contactInfo = text(module->contactinfo);
         record.description = text(module->description);
@@ -440,6 +528,36 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
     environment->failedModuleCount = failed.size();
     environment->constructionStatus = failed.isEmpty() ? MibEnvironmentStatus::Complete
                                                         : MibEnvironmentStatus::Partial;
+    if (plan.hasRuntimePaths) {
+        QSet<QString> outcomeIdentities;
+        bool rootsSucceeded = rootOutcomes.size() == environment->requestedRoots.size();
+        for (const auto &outcome : rootOutcomes) {
+            outcomeIdentities.insert(outcome.identity);
+            if (!outcome.success) {
+                rootsSucceeded = false;
+                environment->authorityDiagnostics.append(outcome.diagnostic.isEmpty()
+                    ? QStringLiteral("Root '%1' did not materialize").arg(outcome.identity)
+                    : outcome.diagnostic);
+            }
+        }
+        for (const QString &root : std::as_const(environment->requestedRoots))
+            if (!outcomeIdentities.contains(root)) {
+                rootsSucceeded = false;
+                environment->authorityDiagnostics.append(
+                    QStringLiteral("Root '%1' has no final load outcome").arg(root));
+            }
+        const bool materializedRequestedRoot = environment->requestedRoots.isEmpty() ||
+            std::any_of(rootOutcomes.cbegin(), rootOutcomes.cend(),
+                [](const auto &outcome) { return outcome.success; });
+        environment->runtimeAuthorityComplete =
+            plan.runtimeConfiguration.profileId() == plan.profileId &&
+            !plan.runtimeConfiguration.sha256().isEmpty() &&
+            !plan.runtimePaths.sha256().isEmpty() && plan.runtimePaths.isValid() &&
+            rootsSucceeded && materializedRequestedRoot && failed.isEmpty() &&
+            environment->loadedProvidersAuthorized;
+        if (!environment->runtimeAuthorityComplete)
+            environment->constructionStatus = MibEnvironmentStatus::Unusable;
+    }
     if (!failed.isEmpty()) environment->materializationFindings.append({
         MibEnvironmentFindingKind::PartialLoad, {}, {}, {},
         QStringLiteral("%1 planned module(s) failed").arg(failed.size())});

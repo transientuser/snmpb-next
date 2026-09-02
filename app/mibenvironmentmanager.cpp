@@ -4,6 +4,24 @@
 #include <QPointer>
 #include <QThread>
 
+namespace {
+bool authorityMatches(const MibEnvironmentPtr &environment, const MibEffectivePlan &plan)
+{
+    if (!plan.hasRuntimePaths)
+        return MibEnvironmentRegistry::isUsableMaterialization(environment);
+    QStringList requestedPaths;
+    for (const auto &entry : plan.runtimePaths.entries()) requestedPaths.append(entry.canonicalPath);
+    return environment && environment->publishable() &&
+        environment->profileId() == plan.profileId &&
+        environment->planHash() == plan.sha256 &&
+        environment->runtimeConfigurationHash() == plan.runtimeConfiguration.sha256() &&
+        environment->runtimePathHash() == plan.runtimePaths.sha256() &&
+        environment->libraryGeneration() == plan.runtimeConfiguration.libraryGeneration() &&
+        environment->authorizedRuntimePaths() == requestedPaths &&
+        environment->explicitRoots() == plan.runtimeConfiguration.explicitRoots();
+}
+}
+
 MibEnvironmentManager::MibEnvironmentManager(Builder builder,QObject *parent,quint64 cacheBudget,QString parserIdentity)
     :QObject(parent),build(std::move(builder)),environmentCache(cacheBudget),parserId(std::move(parserIdentity)){}
 MibEnvironmentManager::~MibEnvironmentManager(){shutdown();}
@@ -11,7 +29,7 @@ quint64 MibEnvironmentManager::request(const MibEffectivePlan &plan,bool bypassC
 {
     Q_ASSERT(QThread::currentThread()==thread());const quint64 requested=++generation;
     const auto key=MibEnvironmentCacheKey::fromPlan(plan,parserId);
-    if(!bypassCache)if(auto cached=environmentCache.find(key)){pending.reset();activeEnvironment=cached;MibEnvironmentRegistry::publish(cached);
+    if(!bypassCache)if(auto cached=environmentCache.find(key);authorityMatches(cached,plan)){pending.reset();activeEnvironment=cached;MibEnvironmentRegistry::publish(cached);
         emit buildCompleted(requested,plan.profileId,cached,plan.effectiveModules,true,
             cached->status()==MibEnvironmentStatus::Partial);return requested;}
     Request request{requested,plan,key,bypassCache};if(inFlight)pending=std::move(request);else start(std::move(request));return requested;
@@ -32,10 +50,11 @@ void MibEnvironmentManager::start(Request request)
 void MibEnvironmentManager::deliver(quint64 completed,const MibEffectivePlan &plan,
  const MibEnvironmentCacheKey &key,MibEnvironmentBuildResult result)
 {
-    inFlight=false;if(stopping)return;const bool usable=MibEnvironmentRegistry::isUsableMaterialization(result.environment);
+    inFlight=false;if(stopping)return;const bool usable=authorityMatches(result.environment,plan);
     if(usable)environmentCache.insert(key,result.environment);
     if(completed!=generation)emit staleResultDiscarded(completed,plan.profileId);
-    else if(!usable)emit buildFailed(completed,plan.profileId,result.error);
+    else if(!usable)emit buildFailed(completed,plan.profileId,result.error.isEmpty()
+        ? QStringLiteral("MIB Environment does not match the requested runtime authority") : result.error);
     else {activeEnvironment=result.environment;MibEnvironmentRegistry::publishMaterialization(result.environment);
         emit buildCompleted(completed,plan.profileId,result.environment,result.loadedModules,false,
             result.environment->status()==MibEnvironmentStatus::Partial);}
@@ -44,7 +63,7 @@ void MibEnvironmentManager::deliver(quint64 completed,const MibEffectivePlan &pl
 void MibEnvironmentManager::startPending()
 {
     if(stopping||!pending)return;auto request=std::move(*pending);pending.reset();
-    if(!request.bypassCache)if(auto cached=environmentCache.find(request.key)){activeEnvironment=cached;MibEnvironmentRegistry::publish(cached);
+    if(!request.bypassCache)if(auto cached=environmentCache.find(request.key);authorityMatches(cached,request.plan)){activeEnvironment=cached;MibEnvironmentRegistry::publish(cached);
         emit buildCompleted(request.generation,request.plan.profileId,cached,request.plan.effectiveModules,true,
             cached->status()==MibEnvironmentStatus::Partial);return;}start(std::move(request));
 }

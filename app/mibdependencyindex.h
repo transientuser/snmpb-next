@@ -56,7 +56,8 @@ struct MibRuntimeRequestNormalization {
 };
 
 enum class MibDependencyIndexLoadStatus {
-    NotLoaded, Loaded, Missing, EmptyFile, MalformedJson, UnsupportedSchema, ReadError
+    NotLoaded, Loaded, Missing, EmptyFile, MalformedJson, UnsupportedSchema,
+    LibraryMismatch, ReadError
 };
 
 enum class MibProviderStatus { Found, Missing, Ambiguous };
@@ -77,6 +78,8 @@ struct MibIndexedProvider {
     QString checkState;
 };
 
+enum class MibCatalogProviderScope { ExactFolder, Subtree, Global };
+
 struct MibProfileDependencyCheck {
     QString profileSignature;
     quint64 indexGeneration = 0;
@@ -92,19 +95,26 @@ class MibDependencyIndex
 {
 public:
     explicit MibDependencyIndex(QString path = {});
+    MibDependencyIndex(QString path, QString libraryRoot);
     static QString defaultPath();
+    static QString pathForLibraryRoot(const QString &libraryRoot);
+    static MibDependencyIndex forLibraryRoot(const QString &libraryRoot);
     bool load(QString *error = nullptr);
     bool save(QString *error = nullptr) const;
     MibDependencyScanResult update(const QStringList &searchPaths, QString *error = nullptr);
     MibDependencyInspection inspect(const QStringList &searchPaths) const;
     MibProviderResolution provider(const QString &moduleName) const;
     QList<MibIndexedProvider> providersFor(const QString &moduleName) const;
+    QList<MibIndexedProvider> providersFor(const QString &moduleName,
+        const QString &folder, MibCatalogProviderScope scope) const;
     QStringList imports(const QString &moduleName) const;
     bool semanticallyVerified(const QString &moduleName) const;
     QStringList moduleNames() const;
     QList<MibDependencyFileRecord> files() const { return records; }
     quint64 generation() const { return currentGeneration; }
     QString path() const { return filePath; }
+    QString libraryRoot() const { return ownedLibraryRoot; }
+    bool ownsSnapshot(const QString &libraryRoot, quint64 generation) const;
     MibDependencyIndexLoadStatus loadStatus() const { return currentLoadStatus; }
     QString loadDiagnostic() const { return currentLoadDiagnostic; }
     void setProfileCheck(const QString &profileId, const MibProfileDependencyCheck &check);
@@ -115,6 +125,7 @@ public:
 private:
     void rebuildProviders();
     QString filePath;
+    QString ownedLibraryRoot;
     QList<MibDependencyFileRecord> records;
     QMap<QString, QList<int>> providers;
     QMap<QString, MibProfileDependencyCheck> profileChecks;

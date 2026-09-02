@@ -26,6 +26,7 @@
 #include "miblibrary.h"
 #include "mibdependencyindex.h"
 #include "mibeffectiveplan.h"
+#include "mibruntimeparser.h"
 #include "mibenvironment.h"
 #include "mibenvironmentmanager.h"
 
@@ -95,7 +96,8 @@ signals:
 
 private:
     MibEnvironmentBuildResult BuildEnvironment(const MibEffectivePlan &plan);
-    QStringList LoadEffectivePlan(const MibEffectivePlan &plan);
+    QStringList LoadEffectivePlan(const MibEffectivePlan &plan,
+                                  QList<MibExplicitRootLoadResult> *outcomes = nullptr);
     void InitLib(int restart);
     void RebuildTotalList();
     void RebuildCandidateList();

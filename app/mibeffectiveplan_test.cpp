@@ -1,15 +1,28 @@
 #include "mibeffectiveplan.h"
+#include "mibenvironmentextractor.h"
+#include "mibruntimeparser.h"
+#include "smi.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QSet>
+#include <cstdlib>
 #include <iostream>
+#include <memory>
 
 namespace {
 bool check(bool value, const char *message) { if (!value) std::cerr << "FAIL: " << message << '\n'; return value; }
 bool writeFile(const QString &path, const QByteArray &data) { QFile file(path); return file.open(QIODevice::WriteOnly) && file.write(data) == data.size(); }
+QString canonical(const QString &path) {
+    const QString result = QFileInfo(path).canonicalFilePath();
+    return QDir::fromNativeSeparators(result.isEmpty() ? QFileInfo(path).absoluteFilePath() : result);
+}
 QByteArray mib(const QString &identity, const QStringList &imports = {}) {
     QByteArray data = identity.toUtf8() + " DEFINITIONS ::= BEGIN\n";
     if (!imports.isEmpty()) data += "IMPORTS value FROM " + imports.join("\n other FROM ").toUtf8() + ";\n";
@@ -81,11 +94,78 @@ int main(int argc, char **argv)
     writeFile(QDir(productA).filePath("conflict-a.mib"), mib("CONFLICT-MIB") + "-- A\n");
     writeFile(QDir(productA).filePath("conflict-b.mib"), mib("CONFLICT-MIB") + "-- B\n");
     writeFile(QDir(productB).filePath("same-identity.mib"), mib("ROOT-MIB", {"DEPENDENCY-MIB"}));
+    writeFile(QDir(productA).filePath("TEST-MIB"), mib("TEST-MIB") + "-- provider A\n");
+    writeFile(QDir(productB).filePath("TEST-MIB"), mib("TEST-MIB") + "-- provider B\n");
     MibDependencyIndex index(QDir(temp.path()).filePath("index.json")); index.update({standards, productA, productB});
+
+    const MibRuntimeCollectionReference standardsCollection{
+        "standards", MibRuntimeCollectionRole::Standards, standards, false};
+    const MibRuntimeCollectionReference productCollection{
+        "vendor/product-a", MibRuntimeCollectionRole::Product, productA, false};
+    const MibRuntimeCollectionReference pibCollection{
+        "vendor/pibs", MibRuntimeCollectionRole::Pib, productB, true};
+    const MibProfileRuntimeConfigurationBuilder runtimeBuilder;
 
     MibProfileRecord automatic; automatic.id = "automatic-a"; automatic.name = "Vendor Product A";
     automatic.type = MibProfileType::Folder; automatic.directory = productA;
     automatic.explicitModules = {"SECOND-IDENTITY-MIB", "ROOT-MIB", "MISSING-USER-MIB", "EQUIVALENT-MIB", "CONFLICT-MIB"};
+    MibProfileRecord automaticRuntimeProfile = automatic;
+    automaticRuntimeProfile.includeStandardBase = true;
+    const auto automaticRuntime = runtimeBuilder.build(
+        automaticRuntimeProfile, index, {productCollection, standardsCollection, pibCollection});
+    const auto repeatedRuntime = runtimeBuilder.build(
+        automaticRuntimeProfile, index, {productCollection, standardsCollection, pibCollection});
+    const MibRuntimePathConfigurationBuilder pathBuilder;
+    const auto automaticPaths = pathBuilder.derive(automaticRuntime, index);
+    const auto repeatedPaths = pathBuilder.derive(repeatedRuntime, index);
+    ok &= check(automaticRuntime.profileId() == automatic.id &&
+                automaticRuntime.profileType() == MibProfileType::Folder &&
+                automaticRuntime.explicitRoots().contains("ROOT-MIB") &&
+                automaticRuntime.orderedCollections().first().id == productCollection.id &&
+                automaticRuntime.standardsPolicy() == MibRuntimeStandardsPolicy::Fallback,
+                "automatic Profile maps to product-first collections, roots, and Standards fallback");
+    ok &= check(automaticRuntime.sha256() == repeatedRuntime.sha256() &&
+                MibProfileRuntimeConfigurationBuilder::canonicalBytes(automaticRuntime) ==
+                    MibProfileRuntimeConfigurationBuilder::canonicalBytes(repeatedRuntime),
+                "equivalent runtime configurations are byte-stable");
+    ok &= check(automaticRuntime.rootAliases().value("ROOT-MIB").canonicalPath.endsWith("odd-name.mib") &&
+                automaticRuntime.rootAliases().value("ROOT-MIB").collectionId == productCollection.id,
+                "filename-to-identity mismatch is represented for an explicit root");
+    ok &= check(automaticRuntime.rootAliases().value("SECOND-IDENTITY-MIB").canonicalPath.endsWith("multi.mib") &&
+                automaticRuntime.rootAliases().value("SECOND-IDENTITY-MIB").identity == "SECOND-IDENTITY-MIB",
+                "multi-identity file alias is represented for an explicit root");
+    ok &= check(automaticRuntime.orderedCollections().last().includesPibs &&
+                automaticRuntime.orderedCollections().last().role == MibRuntimeCollectionRole::Pib,
+                "PIB participation is explicit in the collection contract");
+    ok &= check(automaticPaths.isValid() && automaticPaths.orderedPaths().first() ==
+                    QFileInfo(productA).canonicalFilePath() &&
+                automaticPaths.entries().first().collectionId == productCollection.id &&
+                automaticPaths.orderedPaths().contains(QFileInfo(standards).canonicalFilePath()),
+                "Automatic Profile derives authorized product-first runtime paths");
+    ok &= check(automaticPaths.orderedPaths() == repeatedPaths.orderedPaths() &&
+                automaticPaths.sha256() == repeatedPaths.sha256(),
+                "equivalent runtime path derivation is stable");
+    const auto reversedRuntime = runtimeBuilder.build(
+        automaticRuntimeProfile, index, {standardsCollection, productCollection, pibCollection});
+    const auto reversedPaths = pathBuilder.derive(reversedRuntime, index);
+    ok &= check(reversedRuntime.orderedCollections().first().id == standardsCollection.id &&
+                reversedRuntime.sha256() != automaticRuntime.sha256(),
+                "collection precedence order is preserved and hash-sensitive");
+    ok &= check(reversedPaths.orderedPaths().first() == QFileInfo(standards).canonicalFilePath() &&
+                reversedPaths.orderedPaths() != automaticPaths.orderedPaths(),
+                "runtime path derivation preserves Standards-before-product precedence");
+    MibProfileRecord changedRoots = automaticRuntimeProfile;
+    changedRoots.explicitModules.removeAll("ROOT-MIB");
+    ok &= check(runtimeBuilder.build(changedRoots, index,
+                    {productCollection, standardsCollection, pibCollection}).sha256() != automaticRuntime.sha256(),
+                "runtime hash changes with explicit roots");
+    MibDependencyIndex newerIndex(QDir(temp.path()).filePath("newer-index.json"));
+    newerIndex.update({standards, productA, productB});
+    writeFile(QDir(productB).filePath("generation-only.mib"), mib("GENERATION-ONLY-MIB"));
+    newerIndex.update({standards, productA, productB});
+    ok &= check(runtimeBuilder.build(automaticRuntimeProfile, newerIndex,
+                    {productCollection, standardsCollection, pibCollection}).sha256() != automaticRuntime.sha256(),
+                "runtime hash changes with Library generation");
     const auto first = MibEffectivePlanResolver().resolve(automatic, index);
     const auto second = MibEffectivePlanResolver().resolve(automatic, index);
     ok &= check(first.sha256 == second.sha256 && MibEffectivePlanResolver::canonicalBytes(first) == MibEffectivePlanResolver::canonicalBytes(second), "same inputs are byte-identical");
@@ -102,6 +182,19 @@ int main(int argc, char **argv)
                 allPlan.profileId == all.id && allPlan.explicitModules == index.moduleNames() &&
                 allPlan.sha256 == repeatedAllPlan.sha256,
                 "All MIBs is a deterministic built-in Profile backed by an Effective Plan");
+    const MibProfileRecord standardsProfile = MibProfileDefinitions::builtIns().at(1);
+    const auto standardsRuntime = runtimeBuilder.build(standardsProfile, index, {standardsCollection});
+    const auto standardsPaths = pathBuilder.derive(standardsRuntime, index);
+    QStringList expectedStandardRoots = MibProfileDefinitions::standardsModules();
+    expectedStandardRoots.sort(Qt::CaseSensitive);
+    ok &= check(standardsRuntime.explicitRoots() == expectedStandardRoots &&
+                standardsRuntime.explicitRoots().size() == 14 &&
+                standardsRuntime.orderedCollections().size() == 1 &&
+                standardsRuntime.orderedCollections().first().role == MibRuntimeCollectionRole::Standards,
+                "built-in Standards Profile keeps its small root set distinct from its collection");
+    ok &= check(standardsPaths.isValid() && standardsPaths.entries().size() == 1 &&
+                standardsPaths.entries().first().collectionRole == MibRuntimeCollectionRole::Standards,
+                "built-in Standards runtime paths contain only the Standards collection");
     QMap<QString, int> attempts;
     const auto retried = MibBoundedDependencyLoader().load(first,
         [&attempts](const QString &, const QString &identity) {
@@ -118,6 +211,439 @@ int main(int argc, char **argv)
     MibProfileRecord custom = automatic; custom.id = "custom"; custom.type = MibProfileType::Custom;
     custom.directory = productA; custom.explicitModules = {"ROOT-MIB"}; custom.includeStandardBase = true;
     const auto customPlan = MibEffectivePlanResolver().resolve(custom, index);
+    const auto customRuntime = runtimeBuilder.build(
+        custom, index, {productCollection, standardsCollection});
+    const auto customPaths = pathBuilder.derive(customRuntime, index);
+    ok &= check(customRuntime.explicitRoots() == QStringList{"ROOT-MIB"} &&
+                customRuntime.orderedCollections().size() == 2 &&
+                customRuntime.standardsPolicy() == MibRuntimeStandardsPolicy::Fallback,
+                "Custom Profile preserves explicit roots and caller-supplied collection order");
+    ok &= check(customPaths.isValid() && customPaths.orderedPaths().first() ==
+                    QFileInfo(productA).canonicalFilePath(),
+                "Custom Profile derives paths without expanding explicit roots");
+
+    const auto missingStandardsRuntime = runtimeBuilder.build(custom, index, {productCollection});
+    const auto missingStandardsPaths = pathBuilder.derive(missingStandardsRuntime, index);
+    ok &= check(!missingStandardsPaths.isValid() &&
+                missingStandardsPaths.diagnostics().join('\n').contains("Standards fallback"),
+                "Standards fallback without a Standards collection fails validation");
+
+    const MibRuntimeCollectionReference inactivePib{
+        "inactive-pib", MibRuntimeCollectionRole::Pib, productB, false};
+    MibProfileRecord noStandards = custom; noStandards.includeStandardBase = false;
+    const auto inactivePibRuntime = runtimeBuilder.build(
+        noStandards, index, {productCollection, inactivePib});
+    const auto inactivePibPaths = pathBuilder.derive(inactivePibRuntime, index);
+    ok &= check(inactivePibPaths.isValid() &&
+                !inactivePibPaths.orderedPaths().contains(QFileInfo(productB).canonicalFilePath()),
+                "inactive PIB collection does not leak into runtime paths");
+    const auto activePibRuntime = runtimeBuilder.build(
+        noStandards, index, {productCollection, pibCollection});
+    const auto activePibPaths = pathBuilder.derive(activePibRuntime, index);
+    ok &= check(activePibPaths.isValid() && activePibPaths.orderedPaths().contains(
+                    QFileInfo(productB).canonicalFilePath()) &&
+                activePibPaths.entries().last().includesPibs,
+                "active PIB collection participates in the shared ordered path list");
+
+    const MibRuntimeCollectionReference duplicateProduct{
+        "duplicate-product", MibRuntimeCollectionRole::General,
+        QDir(productA).filePath("."), false};
+    const auto duplicateRuntime = runtimeBuilder.build(
+        noStandards, index, {productCollection, duplicateProduct});
+    const auto duplicatePaths = pathBuilder.derive(duplicateRuntime, index);
+    ok &= check(duplicatePaths.isValid() &&
+                duplicatePaths.orderedPaths().count(QFileInfo(productA).canonicalFilePath()) == 1 &&
+                duplicatePaths.entries().first().collectionId == productCollection.id,
+                "canonical first occurrence wins during path deduplication");
+
+    const QString emptyCollectionRoot = QDir(temp.path()).filePath("Vendor/Empty");
+    QDir().mkpath(emptyCollectionRoot);
+    const MibRuntimeCollectionReference firstSharedId{
+        "shared-id", MibRuntimeCollectionRole::General, emptyCollectionRoot, false};
+    const MibRuntimeCollectionReference secondSharedId{
+        "shared-id", MibRuntimeCollectionRole::Product, productA, false};
+    const auto unauthorizedAliasRuntime = runtimeBuilder.build(
+        noStandards, index, {firstSharedId, secondSharedId});
+    const auto unauthorizedAliasPaths = pathBuilder.derive(unauthorizedAliasRuntime, index);
+    ok &= check(!unauthorizedAliasPaths.isValid() &&
+                unauthorizedAliasPaths.diagnostics().join('\n').contains("Root alias") &&
+                unauthorizedAliasPaths.diagnostics().join('\n').contains("authorized collection"),
+                "root alias outside the uniquely identified authorized collection is rejected");
+
+    QDir().mkpath(QDir(productA).filePath("z-child/deep"));
+    QDir().mkpath(QDir(productA).filePath("a-child"));
+    writeFile(QDir(productA).filePath("z-child/deep/NESTED-MIB"), mib("NESTED-MIB"));
+    writeFile(QDir(productA).filePath("a-child/EARLY-MIB"), mib("EARLY-MIB"));
+    MibDependencyIndex nestedIndex(QDir(temp.path()).filePath("nested-index.json"));
+    nestedIndex.update({standards, productA});
+    const auto nestedRuntime = runtimeBuilder.build(noStandards, nestedIndex, {productCollection});
+    const auto nestedPaths = pathBuilder.derive(nestedRuntime, nestedIndex);
+    const QString aChild = QFileInfo(QDir(productA).filePath("a-child")).canonicalFilePath();
+    const QString zDeep = QFileInfo(QDir(productA).filePath("z-child/deep")).canonicalFilePath();
+    ok &= check(nestedPaths.isValid() && nestedPaths.orderedPaths().contains(aChild) &&
+                nestedPaths.orderedPaths().contains(zDeep) &&
+                nestedPaths.orderedPaths().indexOf(aChild) < nestedPaths.orderedPaths().indexOf(zDeep),
+                "indexed descendant directories expand recursively in stable lexical order");
+
+    QSettings legacySettings(QDir(temp.path()).filePath("legacy.ini"), QSettings::IniFormat);
+    legacySettings.beginWriteArray("mibpaths"); legacySettings.setArrayIndex(0);
+    legacySettings.setValue("dir", "C:/projects/snmpb-next/build-graph-presentation/app/mibs");
+    legacySettings.setArrayIndex(1); legacySettings.setValue("dir", "C:/Save/ExtremeMibs");
+    legacySettings.endArray(); legacySettings.sync();
+    const auto legacyIsolatedPaths = pathBuilder.derive(nestedRuntime, nestedIndex);
+    ok &= check(legacyIsolatedPaths.orderedPaths() == nestedPaths.orderedPaths() &&
+                !legacyIsolatedPaths.orderedPaths().join('\n').contains("build-graph-presentation") &&
+                !legacyIsolatedPaths.orderedPaths().join('\n').contains("ExtremeMibs"),
+                "legacy mibpaths settings cannot contaminate pure runtime path derivation");
+
+    MibProfileRecord parserProfile;
+    parserProfile.id = "parser-profile"; parserProfile.name = "Parser Profile";
+    parserProfile.type = MibProfileType::Custom; parserProfile.explicitModules = {"TEST-MIB"};
+    const auto parserConfiguration = [&](const MibRuntimeCollectionReference &collection) {
+        const auto runtime = runtimeBuilder.build(parserProfile, index, {collection});
+        return pathBuilder.derive(runtime, index);
+    };
+    const auto parserA = parserConfiguration(productCollection);
+    const MibRuntimeCollectionReference productBCollection{
+        "vendor/product-b", MibRuntimeCollectionRole::Product, productB, false};
+    const auto parserB = parserConfiguration(productBCollection);
+    smiInit("phase-c-runtime-test");
+    smiSetFlags(SMI_FLAG_ERRORS | SMI_FLAG_NODESCR);
+    bool restoreCalled = false;
+    const auto resetA1 = MibRuntimeParser::reset(parserA, [&] { restoreCalled = true; });
+    ok &= check(resetA1.success && restoreCalled &&
+                (resetA1.restoredFlags & SMI_FLAG_ERRORS) &&
+                (resetA1.restoredFlags & SMI_FLAG_NODESCR),
+                "fresh runtime parser restores flags and application configuration callback");
+    ok &= check(smiLoadModule("TEST-MIB") != nullptr && smiGetModule("TEST-MIB") &&
+                canonical(smiGetModule("TEST-MIB")->path).contains("Product A"),
+                "Profile A loads same-identity provider A");
+    const auto resetB = MibRuntimeParser::reset(parserB);
+    ok &= check(resetB.success && smiLoadModule("TEST-MIB") != nullptr &&
+                canonical(smiGetModule("TEST-MIB")->path).contains("Product B"),
+                "Profile B reset prevents first-loaded provider A from leaking");
+    const auto resetA2 = MibRuntimeParser::reset(parserA);
+    ok &= check(resetA2.success && smiLoadModule("TEST-MIB") != nullptr &&
+                canonical(smiGetModule("TEST-MIB")->path).contains("Product A") &&
+                resetA1.appliedPaths == resetA2.appliedPaths,
+                "Profile A-B-A produces deterministic paths and provider result");
+
+    MibProfileRecord invalidParserProfile = parserProfile;
+    invalidParserProfile.includeStandardBase = true;
+    const auto invalidRuntime = runtimeBuilder.build(
+        invalidParserProfile, index, {productCollection});
+    const auto invalidPaths = pathBuilder.derive(invalidRuntime, index);
+    std::unique_ptr<char, decltype(&std::free)> beforeInvalidPath{smiGetPath(), std::free};
+    const QString beforeInvalidProvider = canonical(smiGetModule("TEST-MIB")->path);
+    const auto invalidReset = MibRuntimeParser::reset(invalidPaths);
+    std::unique_ptr<char, decltype(&std::free)> afterInvalidPath{smiGetPath(), std::free};
+    ok &= check(!invalidReset.success && smiIsLoaded("TEST-MIB") &&
+                beforeInvalidProvider == canonical(smiGetModule("TEST-MIB")->path) &&
+                QByteArray(beforeInvalidPath.get()) == QByteArray(afterInvalidPath.get()),
+                "invalid runtime configuration is rejected before parser reset");
+
+    QDir().mkpath(QDir(temp.path()).filePath("legacy-provider"));
+    writeFile(QDir(temp.path()).filePath("legacy-provider/TEST-MIB"),
+              mib("TEST-MIB") + "-- stale provider\n");
+    legacySettings.beginWriteArray("mibpaths"); legacySettings.setArrayIndex(0);
+    legacySettings.setValue("dir", QDir(temp.path()).filePath("legacy-provider"));
+    legacySettings.endArray(); legacySettings.sync();
+    const auto resetLegacyIsolation = MibRuntimeParser::reset(parserB);
+    std::unique_ptr<char, decltype(&std::free)> appliedLegacyIsolation{smiGetPath(), std::free};
+    ok &= check(resetLegacyIsolation.success &&
+                !QString::fromLocal8Bit(appliedLegacyIsolation.get()).contains("legacy-provider") &&
+                smiLoadModule("TEST-MIB") &&
+                canonical(smiGetModule("TEST-MIB")->path).contains("Product B"),
+                "actual parser reset excludes competing legacy mibpaths provider");
+
+    const auto resetInactivePib = MibRuntimeParser::reset(inactivePibPaths);
+    std::unique_ptr<char, decltype(&std::free)> inactivePibPath{smiGetPath(), std::free};
+    const auto resetActivePib = MibRuntimeParser::reset(activePibPaths);
+    std::unique_ptr<char, decltype(&std::free)> activePibPath{smiGetPath(), std::free};
+    ok &= check(resetInactivePib.success && resetActivePib.success &&
+                !QString::fromLocal8Bit(inactivePibPath.get()).contains("Product B") &&
+                QString::fromLocal8Bit(activePibPath.get()).contains("Product B"),
+                "PIB runtime path participates only when configured and does not leak across reset");
+    const QString bundledMibs = QDir(QCoreApplication::applicationDirPath()).filePath("mibs");
+    if (QDir(bundledMibs).exists()) {
+        MibDependencyIndex bundledIndex(QDir(temp.path()).filePath("bundled-index.json"));
+        bundledIndex.update({bundledMibs});
+        MibProfileRecord bundledProfile;
+        bundledProfile.id = "bundled"; bundledProfile.name = "Bundled";
+        bundledProfile.type = MibProfileType::Custom;
+        bundledProfile.explicitModules = {"SNMPv2-MIB"};
+        const MibRuntimeCollectionReference bundledCollection{
+            "bundled", MibRuntimeCollectionRole::Standards, bundledMibs, false};
+        const auto bundledRuntime = runtimeBuilder.build(
+            bundledProfile, bundledIndex, {bundledCollection});
+        const auto bundledPaths = pathBuilder.derive(bundledRuntime, bundledIndex);
+        const auto bundledReset = MibRuntimeParser::reset(bundledPaths);
+        ok &= check(bundledReset.success && smiLoadModule("SNMPv2-MIB") &&
+                    smiGetModule("SNMPv2-MIB"),
+                    "fresh parser loads a representative bundled standards module");
+        const auto bundledExactReset = MibRuntimeParser::reset(bundledPaths);
+        const QString bundledProvider = QDir(bundledMibs).filePath("SNMPv2-MIB");
+        ok &= check(bundledExactReset.success &&
+                    smiLoadModule(QDir::toNativeSeparators(bundledProvider).toLocal8Bit().constData()) &&
+                    smiGetModule("SNMPv2-MIB"),
+                    "fresh parser retains existing exact-provider root loading");
+    }
+
+    QTemporaryDir aliasFixture;
+    const QString aliasProduct = QDir(aliasFixture.path()).filePath("Vendor/Product");
+    const QString aliasStandards = QDir(aliasFixture.path()).filePath("Standards");
+    QDir().mkpath(aliasProduct); QDir().mkpath(aliasStandards);
+    writeFile(QDir(aliasStandards).filePath("DEPENDENCY-MIB"),
+              "DEPENDENCY-MIB DEFINITIONS ::= BEGIN\n"
+              "value OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 99999 }\nEND\n");
+    writeFile(QDir(aliasProduct).filePath("AAA-TEST-MIB.mib"),
+              "AAA-TEST-MIB DEFINITIONS ::= BEGIN\n"
+              "aaaRoot OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 99998 }\nEND\n");
+    const QString atmAliasFile = QDir(aliasProduct).filePath("atm_tc.mib");
+    const QString bridgeAliasFile = QDir(aliasProduct).filePath("rfc4188.mib");
+    const QString baseAliasFile = QDir(aliasProduct).filePath("base.my");
+    const QString multiAliasFile = QDir(aliasProduct).filePath("vendor-file.mib");
+    writeFile(atmAliasFile, mib("ATM-TC-MIB", {"DEPENDENCY-MIB"}));
+    writeFile(bridgeAliasFile, mib("BRIDGE-MIB"));
+    writeFile(baseAliasFile, mib("EXTREME-BASE-MIB"));
+    writeFile(multiAliasFile, mib("VENDOR-ROOT-MIB") + mib("VENDOR-TC-MIB"));
+    MibDependencyIndex aliasIndex(QDir(aliasFixture.path()).filePath("alias-index.json"));
+    aliasIndex.update({aliasProduct, aliasStandards});
+    MibProfileRecord aliasProfile;
+    aliasProfile.id = "alias-profile"; aliasProfile.name = "Alias Profile";
+    aliasProfile.type = MibProfileType::Custom;
+    aliasProfile.explicitModules = {"AAA-TEST-MIB", "ATM-TC-MIB", "BRIDGE-MIB",
+        "EXTREME-BASE-MIB", "VENDOR-ROOT-MIB", "VENDOR-TC-MIB"};
+    const MibRuntimeCollectionReference aliasProductCollection{
+        "alias-product", MibRuntimeCollectionRole::Product, aliasProduct, false};
+    const MibRuntimeCollectionReference aliasStandardsCollection{
+        "alias-standards", MibRuntimeCollectionRole::Standards, aliasStandards, false};
+    const auto aliasRuntime = runtimeBuilder.build(
+        aliasProfile, aliasIndex, {aliasProductCollection, aliasStandardsCollection});
+    const auto aliasPaths = pathBuilder.derive(aliasRuntime, aliasIndex);
+    ok &= check(aliasRuntime.rootAliases().contains("ATM-TC-MIB") &&
+                aliasRuntime.rootAliases().contains("BRIDGE-MIB") &&
+                aliasRuntime.rootAliases().contains("EXTREME-BASE-MIB") &&
+                !aliasRuntime.rootAliases().contains("AAA-TEST-MIB"),
+                "runtime contract distinguishes filename aliases from conventional roots");
+    MibRuntimeParser::reset(aliasPaths);
+    const auto aliasLoads = MibRuntimeParser::loadExplicitRoots(aliasRuntime, aliasPaths);
+    QMap<QString, MibExplicitRootLoadResult> aliasResults;
+    for (const auto &result : aliasLoads.roots) aliasResults.insert(result.identity, result);
+    ok &= check(aliasResults.value("AAA-TEST-MIB").success &&
+                (aliasResults.value("AAA-TEST-MIB").status == MibExplicitRootLoadStatus::LoadedByIdentity ||
+                 aliasResults.value("AAA-TEST-MIB").status == MibExplicitRootLoadStatus::AlreadyLoaded),
+                "conventional explicit root resolves without a filename alias");
+    ok &= check(aliasResults.value("ATM-TC-MIB").success &&
+                aliasResults.value("ATM-TC-MIB").status == MibExplicitRootLoadStatus::LoadedByAlias,
+                "ATM-TC-MIB loads through authorized atm_tc.mib alias");
+    ok &= check(aliasResults.value("BRIDGE-MIB").success &&
+                aliasResults.value("BRIDGE-MIB").status == MibExplicitRootLoadStatus::LoadedByAlias,
+                "BRIDGE-MIB loads through authorized rfc4188.mib alias");
+    ok &= check(aliasResults.value("EXTREME-BASE-MIB").success &&
+                aliasResults.value("EXTREME-BASE-MIB").status == MibExplicitRootLoadStatus::LoadedByAlias,
+                "EXTREME-BASE-MIB loads through authorized base.my alias");
+    ok &= check(smiGetModule("DEPENDENCY-MIB") &&
+                !aliasRuntime.rootAliases().contains("DEPENDENCY-MIB") &&
+                aliasLoads.roots.size() == aliasRuntime.explicitRoots().size(),
+                "alias-loaded root imports resolve natively without dependency exact-file planning");
+    ok &= check(aliasResults.value("VENDOR-ROOT-MIB").success &&
+                aliasResults.value("VENDOR-TC-MIB").success &&
+                aliasResults.value("VENDOR-TC-MIB").status == MibExplicitRootLoadStatus::AlreadyLoaded,
+                "one alias file satisfies multiple explicit identities and second root verifies already loaded");
+
+    MibEffectivePlan authorizedEnvironmentPlan;
+    authorizedEnvironmentPlan.profileId = aliasProfile.id;
+    authorizedEnvironmentPlan.profileName = aliasProfile.name;
+    authorizedEnvironmentPlan.sha256 = "phase-e-authorized";
+    authorizedEnvironmentPlan.runtimeConfiguration = aliasRuntime;
+    authorizedEnvironmentPlan.runtimePaths = aliasPaths;
+    authorizedEnvironmentPlan.hasRuntimePaths = true;
+    authorizedEnvironmentPlan.explicitModules = aliasRuntime.explicitRoots();
+    authorizedEnvironmentPlan.effectiveModules = aliasRuntime.explicitRoots();
+    authorizedEnvironmentPlan.effectiveModules.append("DEPENDENCY-MIB");
+    authorizedEnvironmentPlan.effectiveModules.removeDuplicates();
+    const auto authorizedEnvironment = MibEnvironmentExtractor().extract(
+        authorizedEnvironmentPlan, {}, aliasLoads.roots);
+    ok &= check(authorizedEnvironment->publishable() &&
+                authorizedEnvironment->providersAuthorized() &&
+                authorizedEnvironment->profileId() == aliasProfile.id &&
+                authorizedEnvironment->runtimeConfigurationHash() == aliasRuntime.sha256() &&
+                authorizedEnvironment->runtimePathHash() == aliasPaths.sha256() &&
+                authorizedEnvironment->rootLoadOutcomes().size() ==
+                    aliasRuntime.explicitRoots().size() &&
+                authorizedEnvironment->loadedProviderPaths().contains("DEPENDENCY-MIB"),
+                "complete alias roots and native Standards dependency produce an authorized publishable Environment");
+
+    QList<MibExplicitRootLoadResult> partialOutcomes = aliasLoads.roots;
+    partialOutcomes.first().success = false;
+    partialOutcomes.first().status = MibExplicitRootLoadStatus::ParserError;
+    partialOutcomes.first().diagnostic = "synthetic parser failure";
+    const auto partialEnvironment = MibEnvironmentExtractor().extract(
+        authorizedEnvironmentPlan, {partialOutcomes.first().identity}, partialOutcomes);
+    ok &= check(!partialEnvironment->publishable() &&
+                partialEnvironment->status() == MibEnvironmentStatus::Unusable,
+                "one failed required root rejects a partially materialized Environment");
+
+    MibProfileRecord exactProfile;
+    exactProfile.id = "exact"; exactProfile.name = "Exact";
+    exactProfile.type = MibProfileType::Custom;
+    exactProfile.members = MibProfileMembersFromFiles({bridgeAliasFile});
+    exactProfile.explicitModules = MibProfileMemberIdentities(exactProfile.members);
+    const auto exactRuntime = runtimeBuilder.build(exactProfile, aliasIndex,
+        {aliasProductCollection, aliasStandardsCollection});
+    const auto exactPaths = pathBuilder.derive(exactRuntime, aliasIndex);
+    MibRuntimeParser::reset(exactPaths);
+    const auto exactLoads = MibRuntimeParser::loadExplicitRoots(exactRuntime, exactPaths);
+    MibEffectivePlan exactPlan;
+    exactPlan.profileId = exactProfile.id; exactPlan.profileName = exactProfile.name;
+    exactPlan.sha256 = "phase-e-exact"; exactPlan.runtimeConfiguration = exactRuntime;
+    exactPlan.runtimePaths = exactPaths; exactPlan.hasRuntimePaths = true;
+    exactPlan.explicitModules = {"BRIDGE-MIB"}; exactPlan.effectiveModules = {"BRIDGE-MIB"};
+    const auto exactEnvironment = MibEnvironmentExtractor().extract(
+        exactPlan, {}, exactLoads.roots);
+    ok &= check(exactEnvironment->publishable() && exactEnvironment->providersAuthorized(),
+                "an exact Profile member is authorized by physical path and hash");
+
+    const QString selectedFile = QDir(aliasProduct).filePath("selected-root.mib");
+    writeFile(selectedFile,
+              "SELECTED-ROOT-MIB DEFINITIONS ::= BEGIN\n"
+              "IMPORTS aaaRoot FROM AAA-TEST-MIB;\n"
+              "selectedRoot OBJECT IDENTIFIER ::= { aaaRoot 1 }\nEND\n");
+    aliasIndex.update({aliasProduct, aliasStandards});
+    MibProfileRecord siblingProfile;
+    siblingProfile.id = "sibling"; siblingProfile.name = "Sibling";
+    siblingProfile.type = MibProfileType::Custom;
+    siblingProfile.members = MibProfileMembersFromFiles({selectedFile});
+    siblingProfile.explicitModules = MibProfileMemberIdentities(siblingProfile.members);
+    const auto siblingRuntime = runtimeBuilder.build(siblingProfile, aliasIndex,
+        {aliasProductCollection, aliasStandardsCollection});
+    const auto siblingPaths = pathBuilder.derive(siblingRuntime, aliasIndex);
+    MibRuntimeParser::reset(siblingPaths);
+    const auto siblingLoads = MibRuntimeParser::loadExplicitRoots(siblingRuntime, siblingPaths);
+    MibEffectivePlan siblingPlan;
+    siblingPlan.profileId = siblingProfile.id; siblingPlan.profileName = siblingProfile.name;
+    siblingPlan.sha256 = "phase-e-sibling"; siblingPlan.runtimeConfiguration = siblingRuntime;
+    siblingPlan.runtimePaths = siblingPaths; siblingPlan.hasRuntimePaths = true;
+    siblingPlan.explicitModules = {"SELECTED-ROOT-MIB"};
+    siblingPlan.effectiveModules = {"SELECTED-ROOT-MIB"};
+    const auto unauthorizedSiblingEnvironment = MibEnvironmentExtractor().extract(
+        siblingPlan, {}, siblingLoads.roots);
+    ok &= check(!unauthorizedSiblingEnvironment->publishable() &&
+                !unauthorizedSiblingEnvironment->providersAuthorized() &&
+                unauthorizedSiblingEnvironment->constructionDiagnostics().join('\n').contains(
+                    "not an exact Profile member"),
+                "a sibling file in an authorized directory is rejected unless it is an exact member");
+
+    MibProfileRecord emptyProfile;
+    emptyProfile.id = "empty"; emptyProfile.name = "Empty";
+    emptyProfile.type = MibProfileType::Custom;
+    const auto emptyRuntime = runtimeBuilder.build(emptyProfile, aliasIndex,
+        {aliasProductCollection, aliasStandardsCollection});
+    const auto emptyPaths = pathBuilder.derive(emptyRuntime, aliasIndex);
+    MibRuntimeParser::reset(emptyPaths);
+    MibEffectivePlan emptyPlan;
+    emptyPlan.profileId = emptyProfile.id; emptyPlan.profileName = emptyProfile.name;
+    emptyPlan.sha256 = "phase-e-empty"; emptyPlan.runtimeConfiguration = emptyRuntime;
+    emptyPlan.runtimePaths = emptyPaths; emptyPlan.hasRuntimePaths = true;
+    const auto emptyEnvironment = MibEnvironmentExtractor().extract(emptyPlan);
+    ok &= check(emptyEnvironment->publishable() && emptyEnvironment->explicitRoots().isEmpty(),
+                "valid zero-root Profile produces an authorized empty Environment");
+
+    MibRuntimeParser::reset(parserA);
+    const auto unauthorizedAliasLoads = MibRuntimeParser::loadExplicitRoots(aliasRuntime, parserA);
+    ok &= check(std::any_of(unauthorizedAliasLoads.roots.cbegin(), unauthorizedAliasLoads.roots.cend(),
+                    [](const auto &result) {
+                        return result.identity == "ATM-TC-MIB" && !result.success &&
+                            result.status == MibExplicitRootLoadStatus::UnauthorizedAlias;
+                    }),
+                "alias outside the active runtime collection is rejected defensively");
+
+    QFile::remove(atmAliasFile);
+    MibRuntimeParser::reset(aliasPaths);
+    const auto missingAliasLoads = MibRuntimeParser::loadExplicitRoots(aliasRuntime, aliasPaths);
+    ok &= check(std::any_of(missingAliasLoads.roots.cbegin(), missingAliasLoads.roots.cend(),
+                    [](const auto &result) {
+                        return result.identity == "ATM-TC-MIB" && !result.success &&
+                            result.status == MibExplicitRootLoadStatus::MissingAliasFile;
+                    }),
+                "missing explicit-root alias fails without alternate-provider fallback");
+
+    writeFile(atmAliasFile, mib("ATM-TC-MIB", {"DEPENDENCY-MIB"}));
+    aliasIndex.update({aliasProduct, aliasStandards});
+    const auto currentAliasRuntime = runtimeBuilder.build(
+        aliasProfile, aliasIndex, {aliasProductCollection, aliasStandardsCollection});
+    const auto currentAliasPaths = pathBuilder.derive(currentAliasRuntime, aliasIndex);
+    QFile changedAlias(atmAliasFile);
+    ok &= check(changedAlias.open(QIODevice::Append) &&
+                changedAlias.write("-- changed after planning\n") > 0,
+                "changed-alias fixture mutation succeeds");
+    changedAlias.close();
+    MibRuntimeParser::reset(currentAliasPaths);
+    const auto changedAliasLoads = MibRuntimeParser::loadExplicitRoots(
+        currentAliasRuntime, currentAliasPaths);
+    ok &= check(std::any_of(changedAliasLoads.roots.cbegin(), changedAliasLoads.roots.cend(),
+                    [](const auto &result) {
+                        return result.identity == "ATM-TC-MIB" && !result.success &&
+                            result.status == MibExplicitRootLoadStatus::AliasContentChanged;
+                    }),
+                "changed alias hash fails before exact loading");
+
+    MibProfileRecord missingNativeProfile;
+    missingNativeProfile.id = "missing-native";
+    missingNativeProfile.name = "Missing Native";
+    missingNativeProfile.type = MibProfileType::Custom;
+    missingNativeProfile.explicitModules = {"NO-SUCH-NATIVE-MIB"};
+    const auto missingNativeRuntime = runtimeBuilder.build(missingNativeProfile, aliasIndex,
+        {aliasProductCollection, aliasStandardsCollection});
+    const auto missingNativePaths = pathBuilder.derive(missingNativeRuntime, aliasIndex);
+    MibRuntimeParser::reset(missingNativePaths);
+    const auto missingNativeLoads = MibRuntimeParser::loadExplicitRoots(
+        missingNativeRuntime, missingNativePaths);
+    ok &= check(missingNativeLoads.roots.size() == 1 &&
+                !missingNativeLoads.roots.first().success &&
+                missingNativeLoads.roots.first().status == MibExplicitRootLoadStatus::NativeLookupFailed,
+                "missing conventional root reports native lookup failure without provider fallback");
+
+    const QString wrongAliasFile = QDir(aliasProduct).filePath("wrong-provider.mib");
+    writeFile(wrongAliasFile, mib("ACTUAL-IDENTITY-MIB"));
+    const QString wrongIndexPath = QDir(aliasFixture.path()).filePath("wrong-index.json");
+    MibDependencyIndex wrongIndex(wrongIndexPath);
+    wrongIndex.update({aliasProduct, aliasStandards});
+    QFile wrongIndexFile(wrongIndexPath);
+    ok &= check(wrongIndexFile.open(QIODevice::ReadOnly), "wrong-identity index fixture opens");
+    QJsonObject wrongIndexRoot = QJsonDocument::fromJson(wrongIndexFile.readAll()).object();
+    wrongIndexFile.close();
+    QJsonArray wrongFiles = wrongIndexRoot.value("files").toArray();
+    for (qsizetype i = 0; i < wrongFiles.size(); ++i) {
+        QJsonObject file = wrongFiles.at(i).toObject();
+        if (canonical(file.value("path").toString()) != canonical(wrongAliasFile)) continue;
+        file.insert("modules", QJsonObject{{"CLAIMED-IDENTITY-MIB", QJsonArray{}}});
+        wrongFiles.replace(i, file);
+    }
+    wrongIndexRoot.insert("files", wrongFiles);
+    ok &= check(writeFile(wrongIndexPath, QJsonDocument(wrongIndexRoot).toJson()),
+                "wrong-identity index fixture persists");
+    MibDependencyIndex claimedIndex(wrongIndexPath);
+    QString claimedIndexError;
+    ok &= check(claimedIndex.load(&claimedIndexError), "wrong-identity index fixture reloads");
+    MibProfileRecord claimedProfile;
+    claimedProfile.id = "claimed-identity";
+    claimedProfile.name = "Claimed Identity";
+    claimedProfile.type = MibProfileType::Custom;
+    claimedProfile.explicitModules = {"CLAIMED-IDENTITY-MIB"};
+    const auto claimedRuntime = runtimeBuilder.build(claimedProfile, claimedIndex,
+        {aliasProductCollection, aliasStandardsCollection});
+    const auto claimedPaths = pathBuilder.derive(claimedRuntime, claimedIndex);
+    MibRuntimeParser::reset(claimedPaths);
+    const auto claimedLoads = MibRuntimeParser::loadExplicitRoots(claimedRuntime, claimedPaths);
+    ok &= check(claimedLoads.roots.size() == 1 && !claimedLoads.roots.first().success &&
+                claimedLoads.roots.first().status ==
+                    MibExplicitRootLoadStatus::RequestedIdentityNotDeclared &&
+                claimedLoads.roots.first().diagnostic.contains("CLAIMED-IDENTITY-MIB") &&
+                claimedLoads.roots.first().diagnostic.contains("wrong-provider.mib"),
+                "alias file that does not declare the requested identity fails with file and identity diagnostic");
+    smiExit();
     ok &= check(customPlan.member("ROOT-MIB") && !customPlan.member("ROOT-MIB")->provider.canonicalPath.contains("Product A") && customPlan.dependencyModules.contains("DEPENDENCY-MIB"), "custom has no folder affinity");
     ok &= check(customPlan.sha256 != first.sha256,
                 "changing selected provider and provider-specific imports changes plan hash");

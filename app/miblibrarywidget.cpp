@@ -132,6 +132,21 @@ QString normalizeContactDisplayText(const QString &source)
     }
     return lines.join(QLatin1Char('\n'));
 }
+
+QString inventoryStatusText(MibLibraryStatus status)
+{
+    switch (status) {
+    case MibLibraryStatus::Bundled:
+    case MibLibraryStatus::Installed: return QObject::tr("Ready");
+    case MibLibraryStatus::Available: return QObject::tr("Available");
+    case MibLibraryStatus::Downloading: return QObject::tr("Downloading");
+    case MibLibraryStatus::Failed: return QObject::tr("Failed");
+    case MibLibraryStatus::Invalid: return QObject::tr("Invalid");
+    case MibLibraryStatus::Conflict: return QObject::tr("Conflict");
+    case MibLibraryStatus::Unresolved: return QObject::tr("Missing dependency");
+    }
+    return QObject::tr("Unknown");
+}
 }
 
 MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
@@ -170,7 +185,11 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     search = new QLineEdit(this); search->setObjectName("MibLibrarySearch");
     search->setPlaceholderText(tr("Search modules"));
     sourceFilter = new QComboBox(this); sourceFilter->addItem(tr("All sources"));
-    statusFilter = new QComboBox(this); statusFilter->hide();
+    statusFilter = new QComboBox(this); statusFilter->setObjectName("MibLibraryStatusFilter");
+    statusFilter->addItem(tr("All states"));
+    for (const QString &state : {tr("Ready"), tr("Available"), tr("Missing dependency"),
+                                 tr("Conflict"), tr("Invalid"), tr("Failed")})
+        statusFilter->addItem(state);
     auto *localRefresh = new QPushButton(tr("Refresh"), this);
     localRefresh->setObjectName("MibLibraryRefresh");
     auto *checkDependencies = new QPushButton(tr("Check Dependencies"), this);
@@ -179,6 +198,7 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     refreshButton->setObjectName("MibLibraryRefreshCatalog");
     auto *checkUpdates = new QPushButton(tr("Check for Updates"), this);
     checkUpdates->setObjectName("MibLibraryCheckForUpdates");
+    checkUpdates->hide();
     cancelButton = new QPushButton(tr("Cancel"), this);
     cancelButton->setObjectName("MibLibraryCancel"); cancelButton->hide();
     filters->addWidget(search, 1); filters->addWidget(sourceFilter); filters->addWidget(localRefresh);
@@ -186,8 +206,8 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     filters->addWidget(refreshButton); filters->addWidget(checkUpdates); filters->addWidget(cancelButton);
     layout->addLayout(filters);
     table = new QTableWidget(this); table->setObjectName("MibLibraryTable");
-    table->setColumnCount(4); table->setHorizontalHeaderLabels(
-        {QString(), tr("Module"), tr("Revision"), tr("Origin")});
+    table->setColumnCount(6); table->setHorizontalHeaderLabels(
+        {QString(), tr("Module"), tr("Status"), tr("Active Profile"), tr("Revision"), tr("Origin")});
     auto *checkHeader = new CheckableHeaderView(table);
     checkHeader->setObjectName("MibLibraryCheckableHeader");
     checkHeader->setProperty("indicatorAlignment", QStringLiteral("left"));
@@ -199,19 +219,27 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     auto *selection = new QHBoxLayout;
-    selectedCount = new QLabel(tr("0 selected"), this);
+    selectedCount = new QLabel(tr("0 selected for download"), this);
     selectedCount->setObjectName("MibLibrarySelectedCount");
-    downloadButton = new QPushButton(tr("Download"), this);
+    downloadButton = new QPushButton(tr("Download to Library"), this);
     downloadButton->setObjectName("MibLibraryDownload");
-    installDependenciesButton = new QPushButton(tr("Install with Dependencies"), this);
+    installDependenciesButton = new QPushButton(tr("Download and Add to Active Profile"), this);
     installDependenciesButton->setObjectName("MibLibraryInstallWithDependencies");
     selection->addWidget(selectedCount); selection->addStretch();
+    auto *importButton = new QPushButton(tr("Import Files..."), inventoryPage);
+    importButton->setObjectName("MibLibraryImportFiles");
+    selection->addWidget(importButton);
     selection->addWidget(downloadButton); selection->addWidget(installDependenciesButton);
     auto *tablePane = new QWidget(inventoryPage);
     tablePane->setObjectName("MibLibraryInventoryTablePane");
     auto *tableLayout = new QVBoxLayout(tablePane);
     tableLayout->setContentsMargins(0, 0, 0, 0);
     tableLayout->addWidget(table, 1);
+    libraryEmptyState = new QLabel(
+        tr("No MIB modules found. Import MIB files or refresh the configured Library folder."), tablePane);
+    libraryEmptyState->setObjectName("MibLibraryEmptyState");
+    libraryEmptyState->setWordWrap(true); libraryEmptyState->hide();
+    tableLayout->addWidget(libraryEmptyState);
     tableLayout->addLayout(selection);
     detailsTabs = new QTabWidget(this);
     detailsTabs->setObjectName("MibLibraryDetailsTabs");
@@ -350,10 +378,15 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     profileCombo = new QComboBox(profilePage); profileCombo->setObjectName("MibProfileEditorSelector");
     auto *newProfile = new QPushButton(tr("New"), profilePage);
     auto *duplicateProfileButton = new QPushButton(tr("Duplicate"), profilePage);
+    auto *addFilesButton = new QPushButton(tr("Add Files"), profilePage);
+    auto *addFolderButton = new QPushButton(tr("Add Folder"), profilePage);
     renameProfileButton = new QPushButton(tr("Rename"), profilePage);
     deleteProfileButton = new QPushButton(tr("Delete"), profilePage);
-    profileActions->addWidget(new QLabel(tr("Profile:"), profilePage)); profileActions->addWidget(profileCombo, 1);
-    for (QPushButton *button : {newProfile, duplicateProfileButton, renameProfileButton, deleteProfileButton})
+    auto *activeProfileLabel = new QLabel(tr("Active MIB Profile:"), profilePage);
+    activeProfileLabel->setObjectName("MibProfileActiveLabel");
+    profileActions->addWidget(activeProfileLabel); profileActions->addWidget(profileCombo, 1);
+    for (QPushButton *button : {newProfile, duplicateProfileButton, addFilesButton,
+                                addFolderButton, renameProfileButton, deleteProfileButton})
         profileActions->addWidget(button);
     profileLayout->addLayout(profileActions);
     auto *profileDetails = new QHBoxLayout;
@@ -363,6 +396,9 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     openProfileFolderButton->setObjectName("MibProfileOpenFolder");
     profileDetails->addWidget(profileSource, 1); profileDetails->addWidget(openProfileFolderButton);
     profileLayout->addLayout(profileDetails);
+    profileGuidance = new QLabel(profilePage);
+    profileGuidance->setObjectName("MibProfileGuidance");
+    profileGuidance->setWordWrap(true); profileLayout->addWidget(profileGuidance);
     auto *profileSplitter = new QSplitter(profilePage);
     auto *availablePane = new QWidget(profileSplitter); auto *availableLayout = new QVBoxLayout(availablePane);
     availableLayout->addWidget(new QLabel(tr("Available MIBs"), availablePane));
@@ -384,6 +420,10 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     includeStandards = new QCheckBox(tr("Include standard SNMP / MIB-II base"), memberPane);
     includeStandards->setObjectName("MibProfileIncludeStandards");
     memberLayout->addWidget(memberSearch); memberLayout->addWidget(memberList); memberLayout->addWidget(includeStandards);
+    profileEmptyState = new QLabel(memberPane);
+    profileEmptyState->setObjectName("MibProfileEmptyState");
+    profileEmptyState->setWordWrap(true); profileEmptyState->hide();
+    memberLayout->addWidget(profileEmptyState);
     auto *requiredLabel = new QLabel(tr("Required Dependencies"), memberPane);
     memberLayout->addWidget(requiredLabel);
     requiredList = new QListWidget(memberPane); requiredList->setObjectName("MibProfileRequiredDependencies");
@@ -403,6 +443,7 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
         setFilteredSelection(checkHeader->checkState() != Qt::Checked);
     };
     connect(refreshButton, &QPushButton::clicked, this, &MibLibraryWidget::refreshCatalog);
+    connect(statusFilter, &QComboBox::currentIndexChanged, this, &MibLibraryWidget::applyFilter);
     connect(localRefresh, &QPushButton::clicked, this, [this]() {
         if (callbacks.collectionChanged) callbacks.collectionChanged();
         refresh();
@@ -419,6 +460,7 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     });
     connect(browseRoot, &QPushButton::clicked, this, &MibLibraryWidget::browseLibraryRoot);
     connect(openRoot, &QPushButton::clicked, this, &MibLibraryWidget::openLibraryRoot);
+    connect(importButton, &QPushButton::clicked, this, &MibLibraryWidget::importFiles);
     connect(openProfileFolderButton, &QPushButton::clicked, this, &MibLibraryWidget::openProfileFolder);
     connect(cancelButton, &QPushButton::clicked, transport, &MibDownloadTransport::cancel);
     connect(downloadButton, &QPushButton::clicked, this, [this]() { downloadSelected(false); });
@@ -437,6 +479,8 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     connect(renameProfileButton, &QPushButton::clicked, this, &MibLibraryWidget::renameProfile);
     connect(deleteProfileButton, &QPushButton::clicked, this, &MibLibraryWidget::deleteProfile);
     connect(addMemberButton, &QPushButton::clicked, this, &MibLibraryWidget::addProfileMembers);
+    connect(addFilesButton, &QPushButton::clicked, this, &MibLibraryWidget::addProfileFiles);
+    connect(addFolderButton, &QPushButton::clicked, this, &MibLibraryWidget::addProfileFolder);
     connect(removeMemberButton, &QPushButton::clicked, this, &MibLibraryWidget::removeProfileMembers);
     connect(includeStandards, &QCheckBox::toggled, this, [this]() { saveCurrentProfile(); });
     connect(availableSearch, &QLineEdit::textChanged, this, [this](const QString &text) {
@@ -497,6 +541,7 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
             status->setText(visibleFailure); return;
         }
         sessionState.succeed(module);
+        ++completedDownloads;
         catalog.upsert(entry);
         DiagnosticLogger::log("MIB", tr("Installed module=%1 source=%2 initial=%3 final=%4 http=%5 redirects=%6")
             .arg(module, entry.sourceName,
@@ -558,6 +603,15 @@ void MibLibraryWidget::refresh()
     ++counters.inventoryBuilds;
     records = library.inventory(bundledPaths, catalog, localRecords);
     const qint64 inventoryMs = phaseTimer.restart();
+    const MibProfileRecord *activeProfile = profiles.find(QSettings().value(
+        "mib-library/current-profile", MibProfileDefinitions::allId()).toString());
+    QSet<QString> activeModules;
+    if (activeProfile && activeProfile->type != MibProfileType::All) {
+        const MibEffectivePlan activePlan = planFor(*activeProfile);
+        const QStringList effective = callbacks.effectivePlan
+            ? activePlan.effectiveModules : activeProfile->explicitModules;
+        activeModules = QSet<QString>(effective.cbegin(), effective.cend());
+    }
     table->setRowCount(records.size());
     QStringList sources{tr("All origins")};
     for (int row = 0; row < records.size(); ++row) {
@@ -572,20 +626,38 @@ void MibLibraryWidget::refresh()
             moduleItem->setIcon(style()->standardIcon(QStyle::SP_MessageBoxCritical));
             moduleItem->setToolTip(tr("Failed: %1").arg(failure));
         }
+        const MibLibraryStatus displayedStatus = sessionState.status(record.moduleName, record.status);
+        auto *statusItem = new QTableWidgetItem(inventoryStatusText(displayedStatus));
+        const bool inActiveProfile = activeProfile &&
+            (activeProfile->type == MibProfileType::All ||
+             activeModules.contains(record.moduleName));
+        auto *activeItem = new QTableWidgetItem(inActiveProfile ? tr("Included") : tr("Not included"));
+        if (displayedStatus == MibLibraryStatus::Unresolved ||
+            displayedStatus == MibLibraryStatus::Conflict ||
+            displayedStatus == MibLibraryStatus::Invalid ||
+            displayedStatus == MibLibraryStatus::Failed) {
+            statusItem->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
+            statusItem->setToolTip(displayedStatus == MibLibraryStatus::Unresolved
+                ? tr("A required dependency is missing from the MIB Library")
+                : inventoryStatusText(displayedStatus));
+        }
         auto *revisionItem = new QTableWidgetItem(record.revision);
         auto *originItem = new QTableWidgetItem(originText(record));
-        for (QTableWidgetItem *item : {moduleItem, revisionItem, originItem})
+        for (QTableWidgetItem *item : {moduleItem, statusItem, activeItem, revisionItem, originItem})
             item->setFlags(item->flags() & ~Qt::ItemIsEditable);
         table->setItem(row, 0, checkItem);
         table->setItem(row, 1, moduleItem);
-        table->setItem(row, 2, revisionItem);
-        table->setItem(row, 3, originItem);
+        table->setItem(row, 2, statusItem);
+        table->setItem(row, 3, activeItem);
+        table->setItem(row, 4, revisionItem);
+        table->setItem(row, 5, originItem);
         if (!sources.contains(originText(record))) sources.append(originText(record));
     }
     const qint64 tableBuildMs = phaseTimer.restart();
     const QString oldSource = sourceFilter->currentText();
     sourceFilter->clear(); sourceFilter->addItems(sources);
     sourceFilter->setCurrentText(oldSource); applyFilter();
+    libraryEmptyState->setVisible(records.isEmpty());
     const qint64 filterMs = phaseTimer.restart();
     if (!currentModule.isEmpty()) {
         for (int row = 0; row < table->rowCount(); ++row)
@@ -625,10 +697,13 @@ void MibLibraryWidget::applyFilter()
 {
     for (int row = 0; row < table->rowCount(); ++row) {
         const bool matchSearch = table->item(row, 1)->text().contains(search->text(), Qt::CaseInsensitive) ||
-            table->item(row, 2)->text().contains(search->text(), Qt::CaseInsensitive) ||
-            table->item(row, 3)->text().contains(search->text(), Qt::CaseInsensitive);
-        const bool matchSource = sourceFilter->currentIndex() <= 0 || table->item(row, 3)->text() == sourceFilter->currentText();
-        table->setRowHidden(row, !(matchSearch && matchSource));
+            table->item(row, 4)->text().contains(search->text(), Qt::CaseInsensitive) ||
+            table->item(row, 5)->text().contains(search->text(), Qt::CaseInsensitive);
+        const bool matchSource = sourceFilter->currentIndex() <= 0 ||
+            table->item(row, 5)->text() == sourceFilter->currentText();
+        const bool matchStatus = statusFilter->currentIndex() <= 0 ||
+            table->item(row, 2)->text() == statusFilter->currentText();
+        table->setRowHidden(row, !(matchSearch && matchSource && matchStatus));
     }
     updateSelectionUi();
 }
@@ -652,9 +727,15 @@ void MibLibraryWidget::updateSelectionUi()
     auto *header = static_cast<CheckableHeaderView *>(table->horizontalHeader());
     if (header) header->setCheckState(visibleSelected == 0 ? Qt::Unchecked
         : visibleSelected == visible ? Qt::Checked : Qt::PartiallyChecked);
-    selectedCount->setText(tr("%n selected", nullptr, totalSelected));
+    selectedCount->setText(tr("%n selected for download", nullptr, totalSelected));
     const bool enabled = totalSelected > 0 && downloadQueue.isEmpty();
-    downloadButton->setEnabled(enabled); installDependenciesButton->setEnabled(enabled);
+    downloadButton->setEnabled(enabled);
+    const MibProfileRecord *profile = profileCombo
+        ? profiles.find(profileCombo->currentData().toString()) : nullptr;
+    const bool editableProfile = profile && profile->type == MibProfileType::Custom;
+    installDependenciesButton->setEnabled(enabled && editableProfile);
+    installDependenciesButton->setToolTip(editableProfile ? QString() :
+        tr("Choose an editable Profile to add downloaded MIB files."));
 }
 
 void MibLibraryWidget::setOperationActive(bool active)
@@ -703,6 +784,7 @@ void MibLibraryWidget::resolveSelected()
 void MibLibraryWidget::downloadSelected(bool loadAfter)
 {
     requestedTargets = selectedModules();
+    completedDownloads = 0;
     for (const QString &module : requestedTargets) sessionState.begin(module);
     QMap<QString, MibLibraryStatus> known;
     for (const auto &record : records) known.insert(record.moduleName, record.status);
@@ -716,8 +798,13 @@ void MibLibraryWidget::downloadNext()
 {
     if (downloadQueue.isEmpty()) {
         setOperationActive(false); refresh();
-        if (callbacks.downloadsCompleted) callbacks.downloadsCompleted(requestedTargets, loadAfterDownload);
-        status->setText(tr("Download and validation complete")); return;
+        const QString outcome = callbacks.downloadsCompleted
+            ? callbacks.downloadsCompleted(requestedTargets, loadAfterDownload, completedDownloads)
+            : QString();
+        status->setText(outcome.isEmpty()
+            ? tr("Downloaded %n MIB file(s) to the Library.", nullptr, completedDownloads)
+            : outcome);
+        return;
     }
     const MibCatalogEntry *entry = catalog.find(downloadQueue.first());
     if (!entry) { status->setText(tr("No catalog entry for %1").arg(downloadQueue.first())); downloadQueue.clear(); setOperationActive(false); return; }
@@ -829,11 +916,9 @@ void MibLibraryWidget::refreshProfiles(const QString &selectId)
     const QSignalBlocker blocker(profileCombo);
     profileCombo->clear();
     for (const MibProfileRecord &profile : profiles.profiles())
-        profileCombo->addItem(profile.name + (profile.type == MibProfileType::Folder
-            ? tr("  Automatic") : profile.type == MibProfileType::Custom
-                ? tr("  Custom") : QString()), profile.id);
+        profileCombo->addItem(profile.name, profile.id);
     int index = profileCombo->findData(id);
-    if (index < 0) index = profileCombo->findData(MibProfileDefinitions::allId());
+    if (index < 0 && profileCombo->count() > 0) index = 0;
     profileCombo->setCurrentIndex(index);
     profileChanged();
 }
@@ -856,13 +941,17 @@ void MibLibraryWidget::profileChanged()
     renameProfileButton->setEnabled(editable); deleteProfileButton->setEnabled(editable);
     addMemberButton->setEnabled(editable); removeMemberButton->setEnabled(editable);
     includeStandards->setEnabled(editable);
-    profileSource->setText(selectedProfile.type == MibProfileType::Folder
-        ? tr("Type: Automatic — Source: %1 — %n product MIB(s)", nullptr,
-             selectedProfile.explicitModules.size()).arg(selectedProfile.directory)
-        : selectedProfile.type == MibProfileType::Custom ? tr("Type: Custom") : tr("Type: Built-in"));
+    profileSource->setText(tr("%n exact file member(s)", nullptr, selectedProfile.members.size()));
+    profileGuidance->setText(tr("Profile membership is a saved snapshot of exact files. Later folder changes do not rewrite this Profile."));
     openProfileFolderButton->setVisible(selectedProfile.type == MibProfileType::Folder);
     const MibEffectivePlan plan = planFor(selectedProfile);
     refreshProfileLists(&plan);
+    for (int row = 0; row < table->rowCount(); ++row) {
+        const QString module = table->item(row, 1)->text();
+        table->item(row, 3)->setText(plan.effectiveModules.contains(module)
+            ? tr("Included") : tr("Not included"));
+    }
+    updateSelectionUi();
     emit profileSelectionChanged(id, plan);
 }
 
@@ -898,6 +987,31 @@ void MibLibraryWidget::openLibraryRoot()
     QDesktopServices::openUrl(QUrl::fromLocalFile(library.rootPath()));
 }
 
+void MibLibraryWidget::importFiles()
+{
+    const QStringList files = QFileDialog::getOpenFileNames(
+        this, tr("Import MIB Files"), QString(), tr("MIB files (*.mib *.txt *-MIB);;All files (*)"));
+    if (files.isEmpty()) return;
+    for (const QString &file : files) {
+        QString error;
+        if (callbacks.validate && !callbacks.validate(file, &error)) {
+            QMessageBox::warning(this, tr("Import MIB Files"),
+                tr("No files were imported. %1 could not be validated: %2")
+                    .arg(QFileInfo(file).fileName(), error));
+            return;
+        }
+    }
+    const MibCollectionResult result = MibCollection(library.rootPath()).importFiles(files);
+    if (!result.success) {
+        QMessageBox::warning(this, tr("Import MIB Files"), result.error);
+        return;
+    }
+    if (callbacks.collectionChanged) callbacks.collectionChanged();
+    refresh();
+    status->setText(tr("Imported %1 file(s) to the Library; %2 identical file(s) already existed; %3 conflict(s) were preserved. Active Profile membership was not changed.")
+        .arg(result.importedCopied).arg(result.identicalSkipped).arg(result.conflicts.size()));
+}
+
 void MibLibraryWidget::openProfileFolder()
 {
     const MibProfileRecord *profile = profiles.find(profileCombo->currentData().toString());
@@ -931,8 +1045,21 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
     const int memberScroll = memberList->verticalScrollBar()->value();
     const QSignalBlocker blocker(includeStandards);
     includeStandards->setChecked(profile->includeStandardBase);
-    memberList->clear(); memberList->addItems(profile->type == MibProfileType::All
-        ? availableModuleNames() : profile->explicitModules);
+    memberList->clear();
+    if (!profile->members.isEmpty()) {
+        for (const auto &member : profile->members) {
+            auto *item = new QListWidgetItem(tr("%1 — %2").arg(
+                member.identities.join(QStringLiteral(", ")),
+                QDir::toNativeSeparators(member.canonicalPath)), memberList);
+            item->setData(Qt::UserRole, member.canonicalPath);
+            const auto state = MibProfileMemberCurrentState(member);
+            if (state != MibProfileMemberState::Current)
+                item->setToolTip(state == MibProfileMemberState::Missing
+                    ? tr("Profile file is missing") : tr("Profile file content changed"));
+        }
+    } else memberList->addItems(profile->explicitModules);
+    profileEmptyState->setVisible(memberList->count() == 0);
+    profileEmptyState->setText(tr("This Profile is empty. Add files or take a one-time folder snapshot."));
     QStringList available = availableModuleNames();
     for (const QString &member : profile->explicitModules) available.removeAll(member);
     availableList->clear(); availableList->addItems(available);
@@ -979,16 +1106,18 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
             providerDetails.append(tr("%1 [%2]").arg(provider.canonicalPath, provider.sha256.left(12)));
         item->setToolTip(tr("Reason: %1\n%2").arg(providerReasonText(requirement.providerReason),
             providerDetails.join('\n')));
-        if (missing || ambiguous || pinFailure) {
-            item->setForeground(palette().brush(QPalette::Disabled, QPalette::Text));
-        }
+        if (missing || ambiguous || pinFailure)
+            item->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
     }
     const DependencySummary librarySummary = callbacks.libraryDependencySummary
         ? callbacks.libraryDependencySummary() : DependencySummary{};
-    QString profileSummary = tr("%1 selected · %2 dependencies · %3 effective modules · %4 missing · %5 ambiguous")
+    QString profileSummary = tr("%1 selected · %2 dependencies · %3 ready")
         .arg(effective.explicitModules.size()).arg(effective.dependencyModules.size())
-        .arg(effective.effectiveModules.size()).arg(effective.missingModules.size())
-        .arg(effective.ambiguousModules.size());
+        .arg(effective.effectiveModules.size());
+    if (!effective.missingModules.isEmpty())
+        profileSummary += tr(" · %1 missing").arg(effective.missingModules.size());
+    if (!effective.ambiguousModules.isEmpty())
+        profileSummary += tr(" · %1 conflicts").arg(effective.ambiguousModules.size());
     if (!effective.pinFailureModules.isEmpty())
         profileSummary += tr(" · %1 invalid pins").arg(effective.pinFailureModules.size());
     if (!effective.converged)
@@ -1026,7 +1155,7 @@ void MibLibraryWidget::deleteProfile()
 {
     const QString id = profileCombo->currentData().toString(); QString error;
     if (!profiles.remove(id, &error)) { status->setText(error); return; }
-    refreshProfiles(MibProfileDefinitions::allId()); emit profilesChanged();
+    refreshProfiles(); emit profilesChanged();
 }
 
 void MibLibraryWidget::saveCurrentProfile()
@@ -1042,10 +1171,42 @@ void MibLibraryWidget::addProfileMembers()
 {
     const MibProfileRecord *current = profiles.find(profileCombo->currentData().toString());
     if (!current || current->type != MibProfileType::Custom) return;
-    MibProfileRecord changed = *current;
-    for (QListWidgetItem *item : availableList->selectedItems()) changed.explicitModules.append(item->text());
-    changed.explicitModules.removeDuplicates(); QString error;
-    if (!profiles.update(changed, &error)) status->setText(error);
+    QStringList files;
+    for (QListWidgetItem *item : availableList->selectedItems()) {
+        const auto record = std::find_if(records.cbegin(), records.cend(), [item](const auto &candidate) {
+            return candidate.moduleName == item->text() && !candidate.localPath.isEmpty();
+        });
+        if (record != records.cend()) files.append(record->localPath);
+    }
+    QString error;
+    if (!profiles.addFiles(current->id, files, MibProfileMemberReason::Added, &error))
+        status->setText(error.isEmpty() ? tr("Select Catalog entries with local files") : error);
+    emit profilesChanged(); profileChanged();
+}
+
+void MibLibraryWidget::addProfileFiles()
+{
+    const MibProfileRecord *current = profiles.find(profileCombo->currentData().toString());
+    if (!current || current->type != MibProfileType::Custom) return;
+    const QStringList files = QFileDialog::getOpenFileNames(this, tr("Add MIB Files to Profile"),
+        library.rootPath(), tr("MIB files (*.mib *.my *.smiv1 *.smiv2 *.txt *-MIB);;All files (*)"));
+    if (files.isEmpty()) return;
+    QString error;
+    if (!profiles.addFiles(current->id, files, MibProfileMemberReason::Added, &error))
+        status->setText(error);
+    emit profilesChanged(); profileChanged();
+}
+
+void MibLibraryWidget::addProfileFolder()
+{
+    const MibProfileRecord *current = profiles.find(profileCombo->currentData().toString());
+    if (!current || current->type != MibProfileType::Custom) return;
+    const QString folder = QFileDialog::getExistingDirectory(this,
+        tr("Add Folder Snapshot to Profile"), library.rootPath());
+    if (folder.isEmpty()) return;
+    QString error;
+    if (!profiles.addFolder(current->id, folder, &error)) status->setText(error);
+    else status->setText(tr("Added a recursive snapshot of eligible files. Later folder changes will not alter this Profile."));
     emit profilesChanged(); profileChanged();
 }
 
@@ -1054,7 +1215,19 @@ void MibLibraryWidget::removeProfileMembers()
     const MibProfileRecord *current = profiles.find(profileCombo->currentData().toString());
     if (!current || current->type != MibProfileType::Custom) return;
     MibProfileRecord changed = *current;
-    for (QListWidgetItem *item : memberList->selectedItems()) changed.explicitModules.removeAll(item->text());
+    for (QListWidgetItem *item : memberList->selectedItems()) {
+        const QString path = item->data(Qt::UserRole).toString();
+        if (!path.isEmpty()) changed.members.erase(std::remove_if(changed.members.begin(), changed.members.end(),
+            [&path](const auto &member) {
+#ifdef Q_OS_WIN
+                return member.canonicalPath.compare(path, Qt::CaseInsensitive) == 0;
+#else
+                return member.canonicalPath == path;
+#endif
+            }), changed.members.end());
+        else changed.explicitModules.removeAll(item->text());
+    }
+    if (!changed.members.isEmpty()) changed.explicitModules = MibProfileMemberIdentities(changed.members);
     QString error; if (!profiles.update(changed, &error)) status->setText(error);
     emit profilesChanged(); profileChanged();
 }

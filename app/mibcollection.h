@@ -35,6 +35,7 @@ public:
     QStringList runtimeSearchPaths() const;
     MibCollectionResult initialize(const QStringList &bundledPaths,
                                    const QString &legacyRoot = legacyManagedRoot()) const;
+    MibCollectionResult importFiles(const QStringList &sourceFiles) const;
 private:
     QString root;
 };

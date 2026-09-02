@@ -232,33 +232,37 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     mibLibraryCallbacks.validate = [this](const QString &path, QString *error) {
         return modules->ValidateModuleFile(path, error);
     };
-    mibLibraryCallbacks.downloadsCompleted = [this](const QStringList &requested, bool load) {
+    mibLibraryCallbacks.downloadsCompleted = [this](const QStringList &requested, bool load,
+                                                     int downloaded) -> QString {
         modules->RescanPath(); QString indexError; modules->RefreshDependencyIndex(&indexError);
         if (!indexError.isEmpty()) DiagnosticLogger::log("MIB", indexError);
-        if (!load) return;
+        if (!load) return tr("Downloaded %n MIB file(s) to the Library.", nullptr, downloaded);
 
         const QString activeProfileId = QSettings().value(
             "mib-library/current-profile", MibProfileDefinitions::allId()).toString();
-        QStringList identities;
+        QStringList exactFiles;
         const MibRuntimeRequestNormalization normalized =
             MibNormalizeRuntimeRequests(requested, *modules->DependencyIndex());
-        for (const QString &identity : normalized.identities)
-            if (!modules->DependencyIndex()->providersFor(identity).isEmpty())
-                identities.append(identity);
-        identities.removeDuplicates();
-
-        const MibProfileModuleAdditionResult result = MibAddModulesToEditableProfile(
-            *mibLibrary->profileService(), activeProfileId, identities);
-        if (result.status == MibProfileModuleAdditionStatus::Updated ||
-            result.status == MibProfileModuleAdditionStatus::Unchanged) {
-            DiagnosticLogger::log("MIB", tr("Downloaded MIB identities applied to Custom Profile '%1': %2")
-                .arg(activeProfileId, result.addedModules.join(QStringLiteral(", "))));
+        for (const QString &identity : normalized.identities) {
+            const auto providers = modules->DependencyIndex()->providersFor(identity);
+            if (providers.size() == 1) exactFiles.append(providers.first().canonicalPath);
+        }
+        exactFiles.removeDuplicates();
+        QString profileError;
+        const bool updated = mibLibrary->profileService()->addFiles(
+            activeProfileId, exactFiles, MibProfileMemberReason::Added, &profileError);
+        if (updated) {
+            DiagnosticLogger::log("MIB", tr("Downloaded exact MIB files applied to Profile '%1': %2")
+                .arg(activeProfileId, exactFiles.join(QStringLiteral(", "))));
             mibLibrary->selectProfile(activeProfileId);
-        } else if (result.status == MibProfileModuleAdditionStatus::PersistenceFailed) {
-            DiagnosticLogger::log("MIB", tr("Downloaded MIBs were added to the Library, but the active Custom Profile could not be saved: %1")
-                .arg(result.error));
+            const MibProfileRecord *active = mibLibrary->profileService()->find(activeProfileId);
+            return tr("Downloaded %1 MIB file(s) to the Library. Added %2 unambiguous exact file(s) to Profile '%3'.")
+                .arg(downloaded).arg(exactFiles.size())
+                .arg(active ? active->name : activeProfileId);
         } else {
-            DiagnosticLogger::log("MIB", tr("Downloaded MIBs were added to the Library; select an editable Custom Profile to activate them"));
+            DiagnosticLogger::log("MIB", tr("Downloaded files were not added to the Profile: %1").arg(profileError));
+            return tr("Downloaded %n MIB file(s) to the Library, but exact Profile membership was not changed: %1",
+                      nullptr, downloaded).arg(profileError);
         }
     };
     mibLibraryCallbacks.metadata = [this](const QString &module, const QString &path) {
@@ -370,7 +374,7 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     auto *browserProfileRow = new QWidget(w.MIBTreeLayout);
     auto *browserProfileLayout = new QHBoxLayout(browserProfileRow);
     browserProfileLayout->setContentsMargins(0, 0, 0, 4);
-    browserProfileLayout->addWidget(new QLabel(tr("MIB Profile:"), browserProfileRow));
+    browserProfileLayout->addWidget(new QLabel(tr("Active MIB Profile:"), browserProfileRow));
     browserProfileLayout->addWidget(browserProfile, 1);
     qobject_cast<QVBoxLayout *>(w.MIBTreeLayout->layout())->insertWidget(1, browserProfileRow);
     const auto refreshMibProfiles = [this, browserProfile]() {

@@ -26,6 +26,7 @@
 #include <qtextstream.h>
 #include <QStringBuilder>
 #include <QElapsedTimer>
+#include <QCryptographicHash>
 #include <algorithm>
 
 #include "mibmodule.h"
@@ -41,6 +42,120 @@
 #include "mibengine.h"
 #include "mibprofile.h"
 #include "mibcandidatefilter.h"
+#include "mibruntimeparser.h"
+
+namespace {
+QString currentLibraryRoot()
+{
+    QSettings settings;
+    return MibCollection::configuredRoot(settings);
+}
+
+QString canonicalRuntimePath(const QString &path)
+{
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    return QDir::cleanPath(canonical.isEmpty() ? QFileInfo(path).absoluteFilePath() : canonical);
+}
+
+bool sameRuntimePath(const QString &a, const QString &b)
+{
+#ifdef Q_OS_WIN
+    return canonicalRuntimePath(a).compare(canonicalRuntimePath(b), Qt::CaseInsensitive) == 0;
+#else
+    return canonicalRuntimePath(a) == canonicalRuntimePath(b);
+#endif
+}
+
+MibRuntimeCollectionReference collectionForProvider(const QString &libraryRoot,
+                                                     const QString &providerPath)
+{
+    const QDir root(libraryRoot);
+    const QString relative = QDir::fromNativeSeparators(root.relativeFilePath(providerPath));
+    if (relative == QStringLiteral("..") || relative.startsWith(QStringLiteral("../"))) return {};
+    const QStringList parts = relative.split('/', Qt::SkipEmptyParts);
+    if (parts.size() < 2) return {};
+    if (parts.first().compare(QStringLiteral("Standards"), Qt::CaseInsensitive) == 0)
+        return {QStringLiteral("standards"), MibRuntimeCollectionRole::Standards,
+                QDir(libraryRoot).filePath(QStringLiteral("Standards")), false};
+    if (parts.first().compare(QStringLiteral("Unassigned"), Qt::CaseInsensitive) == 0)
+        return {QStringLiteral("unassigned"), MibRuntimeCollectionRole::General,
+                QDir(libraryRoot).filePath(QStringLiteral("Unassigned")), false};
+    const QString relativeCollection = parts.size() >= 3
+        ? parts.at(0) + u'/' + parts.at(1) : parts.at(0);
+    return {QStringLiteral("product:%1").arg(relativeCollection),
+            MibRuntimeCollectionRole::Product,
+            QDir(libraryRoot).filePath(relativeCollection), false};
+}
+
+void appendCollection(QList<MibRuntimeCollectionReference> *collections,
+                      MibRuntimeCollectionReference collection)
+{
+    if (collection.id.isEmpty() || collection.canonicalRoot.isEmpty()) return;
+    collection.canonicalRoot = canonicalRuntimePath(collection.canonicalRoot);
+    if (std::none_of(collections->cbegin(), collections->cend(),
+        [&collection](const auto &existing) {
+            return existing.id == collection.id ||
+                sameRuntimePath(existing.canonicalRoot, collection.canonicalRoot);
+        })) collections->append(std::move(collection));
+}
+
+QList<MibRuntimeCollectionReference> runtimeCollectionsFor(
+    const MibProfileRecord &profile, const MibDependencyIndex &index,
+    const QString &libraryRoot)
+{
+    const MibRuntimeCollectionReference standards{QStringLiteral("standards"),
+        MibRuntimeCollectionRole::Standards,
+        QDir(libraryRoot).filePath(QStringLiteral("Standards")), false};
+    const MibRuntimeCollectionReference unassigned{QStringLiteral("unassigned"),
+        MibRuntimeCollectionRole::General,
+        QDir(libraryRoot).filePath(QStringLiteral("Unassigned")), false};
+    QList<MibRuntimeCollectionReference> result;
+    if (profile.type == MibProfileType::Standards) {
+        appendCollection(&result, standards);
+        return result;
+    }
+    if (profile.type == MibProfileType::Folder) {
+        appendCollection(&result, {profile.id + QStringLiteral("/product"),
+            MibRuntimeCollectionRole::Product, profile.directory, false});
+        if (profile.includeStandardBase) appendCollection(&result, standards);
+        return result;
+    }
+
+    if (!profile.members.isEmpty()) {
+        for (const auto &member : profile.members)
+            appendCollection(&result, collectionForProvider(libraryRoot, member.canonicalPath));
+        return result;
+    }
+
+    QList<MibRuntimeCollectionReference> products;
+    bool needsStandards = false;
+    bool needsUnassigned = false;
+    const QStringList roots = profile.type == MibProfileType::All
+        ? index.moduleNames() : profile.explicitModules;
+    for (const QString &identity : roots) {
+        for (const auto &provider : index.providersFor(identity)) {
+            const auto collection = collectionForProvider(libraryRoot, provider.canonicalPath);
+            if (collection.role == MibRuntimeCollectionRole::Standards) needsStandards = true;
+            else if (collection.id == QStringLiteral("unassigned")) needsUnassigned = true;
+            else appendCollection(&products, collection);
+        }
+    }
+    std::sort(products.begin(), products.end(), [](const auto &a, const auto &b) {
+        return QString::compare(a.id, b.id, Qt::CaseInsensitive) < 0;
+    });
+    if (profile.type == MibProfileType::All) {
+        if (needsStandards) appendCollection(&result, standards);
+        if (needsUnassigned) appendCollection(&result, unassigned);
+        for (const auto &product : std::as_const(products)) appendCollection(&result, product);
+    } else {
+        for (const auto &product : std::as_const(products)) appendCollection(&result, product);
+        if (needsUnassigned) appendCollection(&result, unassigned);
+        if (needsStandards || profile.includeStandardBase) appendCollection(&result, standards);
+    }
+    return result;
+}
+
+}
 
 LoadedMibModule::LoadedMibModule(MibModuleRecord moduleRecord)
     : record(std::move(moduleRecord))
@@ -99,7 +214,7 @@ QString LoadedMibModule::GetMibLanguage() const
 static MibModule *CurrentModuleObject = NULL;
 
 MibModule::MibModule(Snmpb *snmpb)
-    : s(snmpb)
+    : s(snmpb), dependencyIndex(MibDependencyIndex::forLibraryRoot(currentLibraryRoot()))
 {
     QElapsedTimer phase; phase.start();
     DiagnosticLogger::log("MIB", tr("dependency index path=\"%1\"").arg(
@@ -322,11 +437,28 @@ void MibModule::RebuildTotalListLegacyCompileAll()
 void MibModule::RebuildCandidateList()
 {
     auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("candidate-list"));
-    std::unique_ptr<char, decltype(&std::free)> rawPath{smiGetPath(), std::free};
-    const QStringList paths = rawPath ? QString::fromLocal8Bit(rawPath.get()).split(
-        SMI_PATH_SEPARATOR, Qt::SkipEmptyParts) : QStringList{};
+    const QString libraryRoot = currentLibraryRoot();
+    if (!sameRuntimePath(dependencyIndex.libraryRoot(), libraryRoot)) {
+        dependencyIndex = MibDependencyIndex::forLibraryRoot(libraryRoot);
+        QString loadError;
+        dependencyIndex.load(&loadError);
+        if (!loadError.isEmpty())
+            DiagnosticLogger::log("MIB", tr("Library-owned dependency index load failed: %1")
+                                  .arg(loadError));
+    }
+    const QStringList paths = MibCollection(libraryRoot).runtimeSearchPaths();
     const MibDependencyInspection inspection = dependencyIndex.inspect(paths);
-    dependencyIndexStale = inspection.stale(); Total.clear(); KnownModuleNames.clear(); AvailableRecords.clear();
+    bool stale = inspection.stale();
+    if (dependencyIndex.generation() == 0 || inspection.stale()) {
+        QString updateError;
+        const MibDependencyScanResult update = dependencyIndex.update(paths, &updateError);
+        if (updateError.isEmpty()) stale = false;
+        DiagnosticLogger::log("MIB", tr(
+            "current Library dependency index synchronized generation=%1 scanned=%2 reused=%3 deleted=%4%5")
+            .arg(dependencyIndex.generation()).arg(update.scanned).arg(update.reused)
+            .arg(update.deleted).arg(updateError.isEmpty() ? QString() : tr(" error=\"%1\"").arg(updateError)));
+    }
+    dependencyIndexStale = stale; Total.clear(); KnownModuleNames.clear(); AvailableRecords.clear();
     QSet<QString> candidatePaths;
     for (const MibPhysicalCandidate &candidate : inspection.candidates) {
         Total.append(QStringList{candidate.filename});
@@ -434,9 +566,12 @@ MibProfileDependencyCheck MibModule::CheckProfileDependencies(
 MibDependencyScanResult MibModule::RefreshDependencyIndex(QString *error)
 {
     auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("dependency-refresh"));
-    ReadMibPaths(); std::unique_ptr<char, decltype(&std::free)> rawPath{smiGetPath(), std::free};
-    const QStringList paths = rawPath ? QString::fromLocal8Bit(rawPath.get()).split(
-        SMI_PATH_SEPARATOR, Qt::SkipEmptyParts) : QStringList{};
+    const QString libraryRoot = currentLibraryRoot();
+    if (!sameRuntimePath(dependencyIndex.libraryRoot(), libraryRoot)) {
+        dependencyIndex = MibDependencyIndex::forLibraryRoot(libraryRoot);
+        if (!dependencyIndex.load(error)) return {};
+    }
+    const QStringList paths = MibCollection(libraryRoot).runtimeSearchPaths();
     const MibDependencyScanResult result = dependencyIndex.update(paths, error);
     RebuildCandidateList();
     return result;
@@ -478,42 +613,41 @@ MibModuleRecord MibModule::ModuleMetadata(const QString &moduleName, const QStri
 
 MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) const
 {
-    return MibEffectivePlanResolver().resolve(profile, dependencyIndex);
+    MibEffectivePlan plan = MibEffectivePlanResolver().resolve(profile, dependencyIndex);
+    QSettings settings;
+    const QString libraryRoot = MibCollection::configuredRoot(settings);
+    const auto collections = runtimeCollectionsFor(profile, dependencyIndex, libraryRoot);
+    plan.runtimeConfiguration = MibProfileRuntimeConfigurationBuilder().build(
+        profile, dependencyIndex, collections);
+    plan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(
+        plan.runtimeConfiguration, dependencyIndex);
+    plan.hasRuntimePaths = true;
+    plan.sha256 = QString::fromLatin1(QCryptographicHash::hash(
+        MibEffectivePlanResolver::canonicalBytes(plan), QCryptographicHash::Sha256).toHex());
+    return plan;
 }
 
-QStringList MibModule::LoadEffectivePlan(const MibEffectivePlan &plan)
+QStringList MibModule::LoadEffectivePlan(const MibEffectivePlan &plan,
+                                         QList<MibExplicitRootLoadResult> *outcomes)
 {
     auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("load-effective-plan"));
-    const auto load = [this](const QString &path, const QString &identity) {
-            MibDependencyLoadAttempt attempt;
-            SmiModule *loaded = smiGetModule(identity.toLocal8Bit().constData());
-            if (!loaded) {
-                ErrorWhileLoading = false;
-                smiLoadModule(QDir::toNativeSeparators(path).toLocal8Bit().constData());
-                loaded = smiGetModule(identity.toLocal8Bit().constData());
-            } else ErrorWhileLoading = false;
-            const QString actualPath = loaded && loaded->path
-                ? QFileInfo(QString::fromLocal8Bit(loaded->path)).canonicalFilePath() : QString();
-            const QString plannedPath = QFileInfo(path).canonicalFilePath();
-            const bool providerMatches = !actualPath.isEmpty() &&
-                actualPath.compare(plannedPath, Qt::CaseInsensitive) == 0;
-            if (!ErrorWhileLoading && loaded && providerMatches) {
-                attempt.success = true; attempt.loadedModuleNames = {identity};
-            } else if (loaded && !providerMatches) {
-                attempt.diagnostic = tr("planned=%1 actual=%2").arg(plannedPath, actualPath);
-                DiagnosticLogger::log("MIB", tr("Effective Plan provider mismatch module=%1 %2")
-                    .arg(identity, attempt.diagnostic));
-            }
-            return attempt;
-    };
-    const MibDependencyCheckResult result = MibBoundedDependencyLoader().load(plan, load);
-    QStringList unavailable;
-    for (const MibDependencyFailure &failure : result.failures)
-        unavailable.append(failure.moduleName);
+    const MibExplicitRootLoadBatch loaded = MibRuntimeParser::loadExplicitRoots(
+        plan.runtimeConfiguration, plan.runtimePaths);
+    if (outcomes) *outcomes = loaded.roots;
+    QStringList unavailable = loaded.failedIdentities();
     unavailable.removeDuplicates();
     unavailable.sort(Qt::CaseSensitive);
-    for (const QString &identity : std::as_const(unavailable))
-        emit LogError(tr("Effective Plan MIB module '%1' is unavailable").arg(identity));
+    for (const auto &root : loaded.roots) {
+        if (!root.success) {
+            emit LogError(root.diagnostic);
+            DiagnosticLogger::log("MIB", root.diagnostic);
+        } else {
+            DiagnosticLogger::log("MIB", tr(
+                "Explicit Profile root materialized identity=%1 method=%2%3")
+                .arg(root.identity).arg(static_cast<int>(root.status))
+                .arg(root.physicalPath.isEmpty() ? QString() : tr(" path=%1").arg(root.physicalPath)));
+        }
+    }
     return unavailable;
 }
 
@@ -580,12 +714,12 @@ void MibModule::RebuildUnloadedList()
 
 void MibModule::AddModule()
 {
-    DiagnosticLogger::log("MIB", QStringLiteral("Legacy module editor ignored; use a Custom Profile"));
+    DiagnosticLogger::log("MIB", QStringLiteral("Legacy module editor ignored; use a Profile"));
 }
 
 void MibModule::RemoveModule()
 {
-    DiagnosticLogger::log("MIB", QStringLiteral("Legacy module editor ignored; use a Custom Profile"));
+    DiagnosticLogger::log("MIB", QStringLiteral("Legacy module editor ignored; use a Profile"));
 }
 
 void MibModule::ReadMibPaths()
@@ -629,20 +763,60 @@ MibEnvironmentBuildResult MibModule::BuildEnvironment(const MibEffectivePlan &pl
 {
     auto operation=MibEngine::instance().beginOperation(QStringLiteral("async-plan-build"));
     MibEnvironmentBuildResult result;
-    InitLib(1);
-    const QStringList unavailable=LoadEffectivePlan(plan);
+    if (!plan.hasRuntimePaths || !plan.runtimePaths.isValid()) {
+        result.error = !plan.hasRuntimePaths
+            ? tr("Profile runtime path configuration is missing")
+            : plan.runtimePaths.diagnostics().join(QStringLiteral("; "));
+        return result;
+    }
+    if (!dependencyIndex.ownsSnapshot(currentLibraryRoot(),
+                                      plan.runtimeConfiguration.libraryGeneration())) {
+        result.error = tr("MIB Library changed after the Profile runtime configuration was created");
+        return result;
+    }
+    const auto reset = MibRuntimeParser::reset(plan.runtimePaths, [] {
+        smiSetErrorHandler(NormalErrorHdlr);
+        smiSetErrorLevel(0);
+    });
+    if (!reset.success) { result.error = reset.error; return result; }
+    DiagnosticLogger::log("MIB", tr("Profile runtime parser reset paths=%1 path-hash=%2")
+        .arg(reset.appliedPaths.size()).arg(plan.runtimePaths.sha256()));
+    QList<MibExplicitRootLoadResult> rootOutcomes;
+    const QStringList unavailable=LoadEffectivePlan(plan,&rootOutcomes);
     QStringList missing;
     for(const QString &identity:plan.effectiveModules)
-        if(!smiIsLoaded(identity.toLocal8Bit().constData()))missing.append(identity);
+        if(!smiGetModule(identity.toLocal8Bit().constData()))missing.append(identity);
+    missing.append(plan.missingModules);
+    missing.append(plan.ambiguousModules);
+    missing.append(plan.pinFailureModules);
     missing.append(unavailable);missing.removeDuplicates();
-    result.environment=MibEnvironmentExtractor().extract(plan,missing);
+    result.environment=MibEnvironmentExtractor().extract(plan,missing,rootOutcomes);
     for(SmiModule *module=smiGetFirstModule();module;module=smiGetNextModule(module))
         if(module->name)result.loadedModules.append(QString::fromLocal8Bit(module->name));
     result.loadedModules.removeDuplicates();result.loadedModules.sort(Qt::CaseSensitive);
-    if(!MibEnvironmentRegistry::isUsableMaterialization(result.environment))
-        result.error=tr("No planned MIB modules could be materialized");
-    else if(!missing.isEmpty())
-        result.error=tr("%n planned module(s) did not load; a usable partial environment was activated",nullptr,missing.size());
+    if (!dependencyIndex.ownsSnapshot(currentLibraryRoot(),
+                                      plan.runtimeConfiguration.libraryGeneration())) {
+        result.environment.reset();
+        result.error = tr("MIB Library generation changed during Environment construction");
+        return result;
+    }
+    if (!result.environment || !result.environment->publishable()) {
+        QString firstProvider;
+        QString firstActualProvider;
+        for (const auto &member : plan.members)
+            if (!member.provider.canonicalPath.isEmpty()) {
+                firstProvider = member.provider.canonicalPath;
+                if (SmiModule *loaded = smiGetModule(member.identity.toLocal8Bit().constData());
+                    loaded && loaded->path)
+                    firstActualProvider = QString::fromLocal8Bit(loaded->path);
+                break;
+            }
+        result.error=tr("MIB Environment authorization failed; parser modules=%1; first provider=%2; first actual=%3; runtime paths=%4; diagnostics=%5")
+            .arg(result.loadedModules.size()).arg(firstProvider, firstActualProvider,
+                plan.runtimePaths.orderedPaths().join(QDir::listSeparator()),
+                result.environment ? result.environment->constructionDiagnostics().join(QStringLiteral("; "))
+                                   : QString());
+    }
     return result;
 }
 

@@ -8,7 +8,9 @@ class MibEnvironmentExtractor
 {
 public:
     MibEnvironmentPtr extract(const MibEffectivePlan &plan,
-                              const QStringList &failedIdentities = {}) const;
+                              const QStringList &failedIdentities = {},
+                              const QList<MibExplicitRootLoadResult> &rootOutcomes = {},
+                              const QStringList &diagnostics = {}) const;
 };
 
 #endif

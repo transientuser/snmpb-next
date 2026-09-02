@@ -5,13 +5,16 @@
 #include <QByteArray>
 #include <QHash>
 #include <QList>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
 #include <memory>
 
-inline constexpr int MIB_ENVIRONMENT_SCHEMA_VERSION = 2;
-inline constexpr int MIB_ENVIRONMENT_BUILDER_VERSION = 2;
+#include "mibruntimeparser.h"
+
+inline constexpr int MIB_ENVIRONMENT_SCHEMA_VERSION = 3;
+inline constexpr int MIB_ENVIRONMENT_BUILDER_VERSION = 3;
 
 enum class MibEnvironmentStatus { Complete, Partial, Unusable };
 enum class MibEnvironmentFindingKind {
@@ -186,6 +189,22 @@ public:
     const QList<MibEnvironmentNodeRecord> &nodes() const { return nodeRecords; }
     const QList<MibEnvironmentTypeRecord> &types() const { return typeRecords; }
     const MibEnvironmentTelemetry &telemetry() const { return metrics; }
+    const QString &profileId() const { return authorityProfileId; }
+    const QString &runtimeConfigurationHash() const { return runtimeConfigurationSha256; }
+    const QString &runtimePathHash() const { return runtimePathSha256; }
+    quint64 libraryGeneration() const { return authorityLibraryGeneration; }
+    const QStringList &authorizedRuntimePaths() const { return authorityPaths; }
+    const QMap<QString, QString> &authorizedFiles() const { return authorityFiles; }
+    const QStringList &explicitRoots() const { return requestedRoots; }
+    const QList<MibExplicitRootLoadResult> &rootLoadOutcomes() const { return rootOutcomes; }
+    const QStringList &loadedModuleIdentities() const { return actualLoadedIdentities; }
+    const QMap<QString, QString> &loadedProviderPaths() const { return actualProviderPaths; }
+    const QStringList &constructionDiagnostics() const { return authorityDiagnostics; }
+    bool providersAuthorized() const { return loadedProvidersAuthorized; }
+    bool authorityComplete() const { return runtimeAuthorityComplete; }
+    bool publishable() const {
+        return constructionStatus == MibEnvironmentStatus::Complete && runtimeAuthorityComplete;
+    }
 
     const MibEnvironmentModuleRecord *module(const QString &identity) const;
     const MibEnvironmentNodeRecord *nodeByOid(const QString &numericOid) const;
@@ -201,6 +220,19 @@ private:
     friend class MibEnvironmentExtractor;
     QString planSha256;
     QString parserId;
+    QString authorityProfileId;
+    QString runtimeConfigurationSha256;
+    QString runtimePathSha256;
+    quint64 authorityLibraryGeneration = 0;
+    QStringList authorityPaths;
+    QMap<QString, QString> authorityFiles;
+    QStringList requestedRoots;
+    QList<MibExplicitRootLoadResult> rootOutcomes;
+    QStringList actualLoadedIdentities;
+    QMap<QString, QString> actualProviderPaths;
+    QStringList authorityDiagnostics;
+    bool loadedProvidersAuthorized = false;
+    bool runtimeAuthorityComplete = false;
     MibEnvironmentStatus constructionStatus = MibEnvironmentStatus::Unusable;
     qsizetype plannedModuleCount = 0;
     qsizetype loadedModuleCount = 0;

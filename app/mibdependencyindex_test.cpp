@@ -169,6 +169,49 @@ int main(int argc, char **argv)
     const auto changed = reloaded.update({first, second});
     ok &= check(changed.scanned >= 1 && reloaded.imports("B-MIB").contains("NEW-DEP"), "changed file invalidates cached hash/edges");
 
+    QTemporaryDir ownershipFixture;
+    const QString libraryA = QDir(ownershipFixture.path()).filePath("Library-A");
+    const QString libraryB = QDir(ownershipFixture.path()).filePath("Library-B");
+    const QString standardsA = QDir(libraryA).filePath("Standards");
+    const QString standardsB = QDir(libraryB).filePath("Standards");
+    QDir().mkpath(standardsA); QDir().mkpath(standardsB);
+    const QString providerA = QDir(standardsA).filePath("ISOLATED-MIB");
+    const QString providerB = QDir(standardsB).filePath("ISOLATED-MIB");
+    writeFile(providerA, mib("ISOLATED-MIB") + "-- Library A\n");
+    writeFile(providerB, mib("ISOLATED-MIB") + "-- Library B\n");
+    MibDependencyIndex ownedA(QDir(ownershipFixture.path()).filePath("owned-a.json"), libraryA);
+    MibDependencyIndex ownedB(QDir(ownershipFixture.path()).filePath("owned-b.json"), libraryB);
+    ownedA.update({standardsA}); ownedB.update({standardsB});
+    const quint64 generationA = ownedA.generation();
+    ok &= check(ownedA.ownsSnapshot(libraryA, generationA) &&
+                !ownedA.ownsSnapshot(libraryB, generationA) &&
+                ownedA.provider("ISOLATED-MIB").path == QFileInfo(providerA).canonicalFilePath() &&
+                ownedB.provider("ISOLATED-MIB").path == QFileInfo(providerB).canonicalFilePath(),
+                "Library-owned indexes isolate same-identity providers across Library instances");
+    ok &= check(MibDependencyIndex::pathForLibraryRoot(libraryA) !=
+                MibDependencyIndex::pathForLibraryRoot(libraryB),
+                "each canonical Library root has a distinct persistent index path");
+
+    const QString sharedOwnershipPath = QDir(ownershipFixture.path()).filePath("shared.json");
+    MibDependencyIndex storedA(sharedOwnershipPath, libraryA); storedA.update({standardsA});
+    MibDependencyIndex wrongOwner(sharedOwnershipPath, libraryB);
+    ok &= check(wrongOwner.load() &&
+                wrongOwner.loadStatus() == MibDependencyIndexLoadStatus::LibraryMismatch &&
+                wrongOwner.files().isEmpty(),
+                "persisted providers cannot be loaded by a different Library owner");
+
+    QThread::msleep(5);
+    writeFile(providerA, mib("ISOLATED-MIB") + "-- Library A generation two\n");
+    QFile providerAFile(providerA);
+    providerAFile.setFileTime(QDateTime::currentDateTime().addSecs(2),
+                              QFileDevice::FileModificationTime);
+    const auto refreshedA = ownedA.update({standardsA});
+    ok &= check(refreshedA.changed && ownedA.generation() > generationA &&
+                !ownedA.ownsSnapshot(libraryA, generationA) &&
+                ownedA.ownsSnapshot(libraryA, ownedA.generation()) &&
+                ownedA.provider("ISOLATED-MIB").path == QFileInfo(providerA).canonicalFilePath(),
+                "refresh advances generation, rejects the stale snapshot, and rebuilds current providers");
+
     QTemporaryDir productFixture;
     const QString standardsTree = QDir(productFixture.path()).filePath("Standards/IETF");
     const QString unassignedTree = QDir(productFixture.path()).filePath("Unassigned/Misc");
