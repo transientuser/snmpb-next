@@ -384,11 +384,13 @@ QByteArray MibEffectivePlanResolver::canonicalBytes(const MibEffectivePlan &plan
     root.insert(QStringLiteral("schema"), MibEffectivePlan::SchemaVersion);
     root.insert(QStringLiteral("policy"), MibEffectivePlan::PolicyVersion);
     root.insert(QStringLiteral("profileType"), static_cast<int>(plan.profileType));
-    root.insert(QStringLiteral("libraryGeneration"), QString::number(plan.libraryGeneration));
+    if (plan.resolverPolicyVersion == 0)
+        root.insert(QStringLiteral("libraryGeneration"), QString::number(plan.libraryGeneration));
     root.insert(QStringLiteral("explicit"), strings(plan.explicitModules));
     root.insert(QStringLiteral("converged"), plan.converged);
     root.insert(QStringLiteral("authorityError"), plan.authorityError);
     root.insert(QStringLiteral("convergencePasses"), plan.convergencePasses);
+    root.insert(QStringLiteral("resolverPolicy"), plan.resolverPolicyVersion);
     root.insert(QStringLiteral("nonConvergent"), strings(plan.nonConvergentModules));
     QJsonArray members;
     for (const auto &item : plan.members) {
@@ -423,7 +425,7 @@ QByteArray MibEffectivePlanResolver::canonicalBytes(const MibEffectivePlan &plan
     root.insert(QStringLiteral("runtimeFiles"),
                 QJsonDocument::fromJson(runtimeAuthorityCanonicalBytes(plan)).object()
                     .value(QStringLiteral("files")));
-    if (plan.hasRuntimePaths) {
+    if (plan.hasRuntimePaths && plan.resolverPolicyVersion == 0) {
         root.insert(QStringLiteral("runtimeConfiguration"), plan.runtimeConfiguration.sha256());
         root.insert(QStringLiteral("runtimePaths"), plan.runtimePaths.sha256());
     }
@@ -434,8 +436,16 @@ QByteArray MibEffectivePlanResolver::runtimeAuthorityCanonicalBytes(const MibEff
 {
     QJsonObject root{{QStringLiteral("schema"), MibEffectivePlan::RuntimeAuthoritySchemaVersion},
                      {QStringLiteral("stageSchema"), MibEffectivePlan::RuntimeStageSchemaVersion},
-                     {QStringLiteral("runtimeConfiguration"), plan.runtimeConfiguration.sha256()},
-                     {QStringLiteral("runtimePaths"), plan.runtimePaths.sha256()}};
+                     {QStringLiteral("resolverPolicy"), plan.resolverPolicyVersion}};
+    if (plan.resolverPolicyVersion == 0) {
+        root.insert(QStringLiteral("runtimeConfiguration"), plan.runtimeConfiguration.sha256());
+        root.insert(QStringLiteral("runtimePaths"), plan.runtimePaths.sha256());
+    } else {
+        root.insert(QStringLiteral("runtimeConfigurationSchema"),
+                    MibProfileRuntimeConfiguration::SchemaVersion);
+        root.insert(QStringLiteral("runtimePathSchema"), MibRuntimePathConfiguration::SchemaVersion);
+        root.insert(QStringLiteral("roots"), strings(plan.runtimeConfiguration.explicitRoots()));
+    }
     QJsonArray files;
     for (const auto &file : plan.runtimeFiles) {
         QJsonArray aliases;
@@ -450,7 +460,9 @@ QByteArray MibEffectivePlanResolver::runtimeAuthorityCanonicalBytes(const MibEff
             {QStringLiteral("requiredBy"), strings(file.requiredBy)},
             {QStringLiteral("loadOrder"), file.loadOrder},
             {QStringLiteral("aliases"), aliases},
-            {QStringLiteral("diagnostics"), strings(file.diagnostics)}});
+            {QStringLiteral("diagnostics"), strings(file.diagnostics)},
+            {QStringLiteral("resolutionTier"), static_cast<int>(file.resolutionTier)},
+            {QStringLiteral("resolutionRationale"), file.resolutionRationale}});
     }
     root.insert(QStringLiteral("files"), files);
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
@@ -463,6 +475,271 @@ void MibEffectivePlanResolver::sealRuntimeAuthority(MibEffectivePlan *plan)
         runtimeAuthorityCanonicalBytes(*plan), QCryptographicHash::Sha256).toHex());
     plan->sha256 = QString::fromLatin1(QCryptographicHash::hash(
         canonicalBytes(*plan), QCryptographicHash::Sha256).toHex());
+}
+
+MibEffectivePlan MibEffectiveRuntimePlanResolver::resolve(
+    const MibEffectivePlanResolverInput &input, const MibDependencyIndex &library) const
+{
+    struct Selection {
+        MibProfileMember member;
+        MibPlanResolutionTier tier = MibPlanResolutionTier::Root;
+        QString rationale;
+    };
+    const auto key = [](const QString &path) {
+#ifdef Q_OS_WIN
+        return QDir::fromNativeSeparators(canonicalPath(path)).toLower();
+#else
+        return QDir::fromNativeSeparators(canonicalPath(path));
+#endif
+    };
+    const auto fileHash = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? QString::fromLatin1(QCryptographicHash::hash(
+            file.readAll(), QCryptographicHash::Sha256).toHex()) : QString();
+    };
+    QStringList scopes;
+    for (const QString &scope : input.orderedScopes) {
+        const QString value = canonicalPath(scope);
+        if (!value.isEmpty() && !scopes.contains(value)) scopes.append(value);
+    }
+    QList<MibDependencyFileRecord> records = library.files();
+    std::sort(records.begin(), records.end(), [&key](const auto &a, const auto &b) {
+        return key(a.canonicalPath) < key(b.canonicalPath);
+    });
+    const auto recordFor = [&records, &key](const QString &path, const QString &hash)
+        -> const MibDependencyFileRecord * {
+        const QString wanted = key(path);
+        for (const auto &record : records)
+            if (key(record.canonicalPath) == wanted && record.sha256 == hash) return &record;
+        return nullptr;
+    };
+
+    QMap<QString, Selection> selected;
+    QList<MibPlanResolutionDiagnostic> diagnostics;
+    for (MibProfileMember root : input.roots) {
+        root.canonicalPath = canonicalPath(root.canonicalPath);
+        root.identities = sortedUnique(root.identities);
+        root.reason = MibProfileMemberReason::Added;
+        const QString actualHash = fileHash(root.canonicalPath);
+        const auto *record = recordFor(root.canonicalPath, root.sha256);
+        QString failure;
+        if (actualHash.isEmpty()) failure = QObject::tr("Root file is missing or unreadable");
+        else if (actualHash != root.sha256) failure = QObject::tr("Root file content changed");
+        else if (!record) failure = QObject::tr("Root file is absent from the Catalog snapshot");
+        else for (const QString &identity : std::as_const(root.identities))
+            if (!record->importsByModule.contains(identity)) {
+                failure = QObject::tr("Root file does not declare %1").arg(identity); break;
+            }
+        if (!failure.isEmpty()) {
+            const QStringList identities = root.identities.isEmpty()
+                ? QStringList{QFileInfo(root.canonicalPath).fileName()} : root.identities;
+            for (const QString &identity : identities)
+                diagnostics.append({identity, {}, QStringLiteral("ROOT"), {},
+                    MibPlanResolutionTier::InvalidRoot, {}, failure});
+            continue;
+        }
+        root.identities = sortedUnique(record->importsByModule.keys());
+        selected.insert(key(root.canonicalPath), {root, MibPlanResolutionTier::Root,
+            QObject::tr("Exact user-selected root")});
+    }
+
+    bool progress = true;
+    while (progress) {
+        progress = false;
+        QMap<QString, QString> identityOwner;
+        QMap<QString, QStringList> requiredBy;
+        for (auto it = selected.cbegin(); it != selected.cend(); ++it) {
+            for (const QString &identity : it->member.identities) identityOwner.insert(identity, it.key());
+            if (const auto *record = recordFor(it->member.canonicalPath, it->member.sha256))
+                for (auto declaration = record->importsByModule.cbegin();
+                     declaration != record->importsByModule.cend(); ++declaration)
+                    for (const QString &dependency : declaration.value())
+                        if (!identityOwner.contains(dependency))
+                            requiredBy[dependency].append(declaration.key());
+        }
+        QStringList frontier = requiredBy.keys();
+        frontier = sortedUnique(frontier);
+        for (const QString &identity : std::as_const(frontier)) {
+            if (identityOwner.contains(identity)) continue;
+            QStringList requesters = sortedUnique(requiredBy.value(identity));
+            QList<MibIndexedProvider> all = library.providersFor(identity);
+            QList<MibIndexedProvider> winning;
+            MibPlanResolutionTier tier = MibPlanResolutionTier::Unresolved;
+            QString winningScope;
+            const auto eligible = [&scopes](const MibIndexedProvider &provider) {
+                return std::any_of(scopes.cbegin(), scopes.cend(), [&provider](const QString &scope) {
+                    return pathWithin(provider.canonicalPath, scope);
+                });
+            };
+            if (const auto pin = input.pins.constFind(identity); pin != input.pins.cend()) {
+                tier = MibPlanResolutionTier::ExplicitPin;
+                for (const auto &provider : std::as_const(all))
+                    if (samePath(provider.canonicalPath, pin->canonicalPath) &&
+                        provider.sha256 == pin->sha256 && eligible(provider) &&
+                        fileHash(provider.canonicalPath) == pin->sha256) winning.append(provider);
+                if (winning.isEmpty()) {
+                    diagnostics.append({identity, requesters, QStringLiteral("IMPORTS"), all,
+                        MibPlanResolutionTier::StalePin, {},
+                        QObject::tr("Explicit pin is missing, changed, does not declare the identity, or is out of scope")});
+                    continue;
+                }
+            } else {
+                QStringList requesterDirectories;
+                for (const QString &requester : std::as_const(requesters)) {
+                    const auto owner = selected.constFind(identityOwner.value(requester));
+                    if (owner == selected.cend()) continue;
+                    const QString directory = QFileInfo(owner->member.canonicalPath).absolutePath();
+                    if (!requesterDirectories.contains(directory)) requesterDirectories.append(directory);
+                    for (const auto &provider : std::as_const(all))
+                        if (eligible(provider) && samePath(QFileInfo(provider.canonicalPath).absolutePath(), directory))
+                            winning.append(provider);
+                }
+                if (!winning.isEmpty()) {
+                    tier = MibPlanResolutionTier::RequesterDirectory;
+                    winningScope = requesterDirectories.join(QStringLiteral(";"));
+                }
+                if (winning.isEmpty()) {
+                    QStringList requesterScopes;
+                    for (const QString &requester : std::as_const(requesters)) {
+                        const auto owner = selected.constFind(identityOwner.value(requester));
+                        if (owner == selected.cend()) continue;
+                        QString best;
+                        for (const QString &scope : std::as_const(scopes))
+                            if (pathWithin(owner->member.canonicalPath, scope) && scope.size() > best.size()) best = scope;
+                        if (!best.isEmpty() && !requesterScopes.contains(best)) requesterScopes.append(best);
+                    }
+                    for (const auto &provider : std::as_const(all))
+                        if (std::any_of(requesterScopes.cbegin(), requesterScopes.cend(),
+                            [&provider](const QString &scope) { return pathWithin(provider.canonicalPath, scope); }))
+                            winning.append(provider);
+                    if (!winning.isEmpty()) {
+                        tier = MibPlanResolutionTier::RequesterBatch;
+                        winningScope = requesterScopes.join(QStringLiteral(";"));
+                    }
+                }
+                if (winning.isEmpty()) for (const QString &scope : std::as_const(scopes)) {
+                    for (const auto &provider : std::as_const(all))
+                        if (pathWithin(provider.canonicalPath, scope)) winning.append(provider);
+                    if (!winning.isEmpty()) {
+                        tier = MibPlanResolutionTier::OrderedScope; winningScope = scope; break;
+                    }
+                }
+            }
+            std::sort(winning.begin(), winning.end(), [&key](const auto &a, const auto &b) {
+                return key(a.canonicalPath) < key(b.canonicalPath);
+            });
+            winning.erase(std::unique(winning.begin(), winning.end(), [&key](const auto &a, const auto &b) {
+                return key(a.canonicalPath) == key(b.canonicalPath);
+            }), winning.end());
+            if (winning.isEmpty()) {
+                diagnostics.append({identity, requesters, QStringLiteral("IMPORTS"), all,
+                    all.isEmpty() ? MibPlanResolutionTier::Unresolved : MibPlanResolutionTier::OutOfScope,
+                    {}, all.isEmpty() ? QObject::tr("No Catalog provider exists")
+                                      : QObject::tr("Providers exist only outside ordered scope")});
+                continue;
+            }
+            QSet<QString> hashes;
+            for (const auto &provider : std::as_const(winning)) hashes.insert(provider.sha256);
+            if (hashes.size() != 1 || hashes.contains(QString())) {
+                diagnostics.append({identity, requesters, QStringLiteral("IMPORTS"), winning,
+                    MibPlanResolutionTier::Ambiguous, winningScope,
+                    QObject::tr("Winning tier contains differing-content providers")});
+                continue;
+            }
+            const MibIndexedProvider chosen = winning.first();
+            const auto *record = recordFor(chosen.canonicalPath, chosen.sha256);
+            if (!record) continue;
+            const QStringList identities = sortedUnique(record->importsByModule.keys());
+            QString conflictIdentity;
+            for (const QString &provided : identities) {
+                const auto owner = selected.constFind(identityOwner.value(provided));
+                if (owner != selected.cend() &&
+                    !samePath(owner->member.canonicalPath, chosen.canonicalPath)) {
+                    conflictIdentity = provided; break;
+                }
+            }
+            if (!conflictIdentity.isEmpty()) {
+                diagnostics.append({identity, requesters, QStringLiteral("IMPORTS"), winning,
+                    MibPlanResolutionTier::ProviderConflict, winningScope,
+                    QObject::tr("Selected multi-identity file conflicts on %1").arg(conflictIdentity)});
+                continue;
+            }
+            MibProfileMember dependency{canonicalPath(chosen.canonicalPath), chosen.sha256,
+                                        identities, MibProfileMemberReason::Dependency};
+            QString rationale = tier == MibPlanResolutionTier::ExplicitPin ? QObject::tr("Explicit pin")
+                : tier == MibPlanResolutionTier::RequesterDirectory
+                    ? QObject::tr("Requester directory %1").arg(winningScope)
+                : tier == MibPlanResolutionTier::RequesterBatch ? QObject::tr("Requester batch %1").arg(winningScope)
+                : QObject::tr("Ordered scope %1").arg(winningScope);
+            if (winning.size() > 1)
+                rationale += QObject::tr("; %1 byte-identical alternatives; chose canonical path first")
+                    .arg(winning.size());
+            selected.insert(key(dependency.canonicalPath), {dependency, tier, rationale});
+            progress = true;
+        }
+    }
+
+    MibProfileRecord manifest;
+    manifest.id = input.id.isEmpty() ? QStringLiteral("resolver-v1") : input.id;
+    manifest.name = QStringLiteral("Resolved runtime plan");
+    manifest.type = MibProfileType::Custom;
+    for (auto it = selected.cbegin(); it != selected.cend(); ++it) manifest.members.append(it->member);
+    MibEffectivePlan plan = MibEffectivePlanResolver().resolve(manifest, library);
+    plan.resolverPolicyVersion = MibEffectivePlan::DependencyResolverPolicyVersion;
+    QSet<QString> provided;
+    QSet<QString> rootIdentities;
+    for (const auto &selection : std::as_const(selected)) {
+        for (const QString &identity : selection.member.identities) provided.insert(identity);
+        if (selection.member.reason == MibProfileMemberReason::Added)
+            for (const QString &identity : selection.member.identities) rootIdentities.insert(identity);
+    }
+    QMap<QString, MibPlanResolutionDiagnostic> finalByIdentity;
+    for (const auto &diagnostic : std::as_const(diagnostics)) {
+        if (diagnostic.dependencyKind != QStringLiteral("ROOT") && provided.contains(diagnostic.identity))
+            continue;
+        auto existing = finalByIdentity.find(diagnostic.identity);
+        if (existing == finalByIdentity.end()) finalByIdentity.insert(diagnostic.identity, diagnostic);
+        else existing->requesters = sortedUnique(existing->requesters + diagnostic.requesters);
+    }
+    const QList<MibPlanResolutionDiagnostic> finalDiagnostics = finalByIdentity.values();
+    plan.resolutionDiagnostics = finalDiagnostics;
+    for (const auto &diagnostic : std::as_const(finalDiagnostics))
+        if (diagnostic.tier == MibPlanResolutionTier::InvalidRoot) {
+            plan.authorityError = QObject::tr("One or more exact roots are missing, changed, or invalid");
+            break;
+        }
+    plan.missingModules.clear(); plan.ambiguousModules.clear(); plan.pinFailureModules.clear();
+    for (const auto &diagnostic : std::as_const(finalDiagnostics)) {
+        if (diagnostic.tier == MibPlanResolutionTier::Ambiguous ||
+            diagnostic.tier == MibPlanResolutionTier::ProviderConflict)
+            plan.ambiguousModules.append(diagnostic.identity);
+        else if (diagnostic.tier == MibPlanResolutionTier::StalePin)
+            plan.pinFailureModules.append(diagnostic.identity);
+        else plan.missingModules.append(diagnostic.identity);
+    }
+    plan.missingModules = sortedUnique(plan.missingModules);
+    plan.ambiguousModules = sortedUnique(plan.ambiguousModules);
+    plan.pinFailureModules = sortedUnique(plan.pinFailureModules);
+    plan.dependencyModules.clear();
+    for (auto &member : plan.members) {
+        member.membershipReason = rootIdentities.contains(member.identity)
+            ? MibPlanMembershipReason::Explicit : MibPlanMembershipReason::Dependency;
+        if (member.membershipReason == MibPlanMembershipReason::Dependency)
+            plan.dependencyModules.append(member.identity);
+    }
+    plan.dependencyModules = sortedUnique(plan.dependencyModules);
+    for (auto &file : plan.runtimeFiles) {
+        const auto selection = selected.constFind(key(file.canonicalPath));
+        if (selection != selected.cend()) {
+            file.resolutionTier = selection->tier;
+            file.resolutionRationale = selection->rationale;
+        }
+    }
+    plan.runtimeConfiguration = MibProfileRuntimeConfigurationBuilder().build(manifest, library, {});
+    plan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(plan.runtimeConfiguration, library);
+    plan.hasRuntimePaths = true;
+    MibEffectivePlanResolver::sealRuntimeAuthority(&plan);
+    return plan;
 }
 
 MibDependencyCheckResult MibBoundedDependencyLoader::load(

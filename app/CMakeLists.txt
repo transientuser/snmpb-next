@@ -403,6 +403,18 @@ if(BUILD_TESTING)
         add_test(NAME snmpb.mib-effective-plan COMMAND $<TARGET_FILE:snmpb_mib_effective_plan_test>)
     endif()
 
+    add_executable(snmpb_mib_effective_resolver_test
+        mibruntimestage.cpp mibruntimestage.h
+        mibcandidatefilter.cpp mibcandidatefilter.h
+        miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h
+        mibprofile.cpp mibprofile.h
+        mibdependencyindex.cpp mibdependencyindex.h
+        mibeffectiveplan.cpp mibeffectiveplan.h mibeffectiveresolver_test.cpp)
+    target_link_libraries(snmpb_mib_effective_resolver_test PRIVATE Qt6::Core)
+    add_test(NAME snmpb.mib-effective-resolver
+        COMMAND $<TARGET_FILE:snmpb_mib_effective_resolver_test>)
+    snmpb_configure_qt_test_runtime(snmpb.mib-effective-resolver)
+
     add_executable(snmpb_mib_legacy_migration_test
         mibcandidatefilter.cpp mibcandidatefilter.h
         miblibrary.cpp miblibrary.h mibcollection.cpp mibcollection.h

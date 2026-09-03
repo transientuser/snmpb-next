@@ -119,6 +119,26 @@ struct MibEffectivePlanMember {
 };
 
 enum class MibEffectivePlanFileOrigin { Root, Dependency };
+enum class MibPlanResolutionTier { Root, ExplicitPin, RequesterDirectory, RequesterBatch,
+                                  OrderedScope, Unresolved, OutOfScope, Ambiguous,
+                                  StalePin, ProviderConflict, InvalidRoot };
+
+struct MibPlanResolutionDiagnostic {
+    QString identity;
+    QStringList requesters;
+    QString dependencyKind = QStringLiteral("IMPORTS");
+    QList<MibIndexedProvider> candidates;
+    MibPlanResolutionTier tier = MibPlanResolutionTier::Unresolved;
+    QString scope;
+    QString reason;
+};
+
+struct MibEffectivePlanResolverInput {
+    QString id;
+    QList<MibProfileMember> roots;
+    QStringList orderedScopes;
+    QMap<QString, MibProviderPin> pins;
+};
 
 struct MibEffectivePlanFile {
     QString canonicalPath;
@@ -129,6 +149,8 @@ struct MibEffectivePlanFile {
     int loadOrder = -1;
     QList<MibRuntimeRootAlias> aliases;
     QStringList diagnostics;
+    MibPlanResolutionTier resolutionTier = MibPlanResolutionTier::Root;
+    QString resolutionRationale;
 };
 
 struct MibEffectivePlan {
@@ -136,6 +158,7 @@ struct MibEffectivePlan {
     static constexpr int PolicyVersion = 2;
     static constexpr int RuntimeAuthoritySchemaVersion = 1;
     static constexpr int RuntimeStageSchemaVersion = 1;
+    static constexpr int DependencyResolverPolicyVersion = 1;
     static constexpr int MaximumConvergencePasses = 8;
 
     QString profileId;
@@ -154,6 +177,8 @@ struct MibEffectivePlan {
     QStringList initialLoadOrder;
     QList<MibEffectivePlanFile> runtimeFiles;
     QString runtimeAuthoritySha256;
+    int resolverPolicyVersion = 0;
+    QList<MibPlanResolutionDiagnostic> resolutionDiagnostics;
     QString authorityError;
     int convergencePasses = 0;
     bool converged = true;
@@ -175,6 +200,13 @@ public:
     static QByteArray canonicalBytes(const MibEffectivePlan &plan);
     static QByteArray runtimeAuthorityCanonicalBytes(const MibEffectivePlan &plan);
     static void sealRuntimeAuthority(MibEffectivePlan *plan);
+};
+
+class MibEffectiveRuntimePlanResolver
+{
+public:
+    MibEffectivePlan resolve(const MibEffectivePlanResolverInput &input,
+                             const MibDependencyIndex &library) const;
 };
 
 #endif
