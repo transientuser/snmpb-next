@@ -22,10 +22,18 @@ Origin, catalog revision (or `—`), filename, and local path; provider, URL, do
 SHA-256, and routine state are hidden when they do not apply. IANA downloads retain all
 available provenance fields. State is shown only for transient or exceptional conditions.
 
-Profiles are stored in `mibs/profiles-v1.json` using schema version 2 and atomic `QSaveFile`
-writes. A Custom record contains a stable UUID, display name, declared module identities,
-and the standard-base option. Missing identities remain in the file so installing a module
-later restores it automatically. Reading does not create or rewrite the file.
+Profiles are stored in `mibs/profiles-v1.json` using schema version 5 and atomic `QSaveFile`
+writes. A current manifest record contains a stable ID, display name, exact `roots`, ordered
+dependency-resolution `scope`, and exceptional provider `pins`. Each root records its source
+path, expected SHA-256, and every declared identity. Each scope records a stable collection
+identifier plus canonical path metadata. Each pin records the identity, exact provider path,
+expected SHA-256, and optional reason. Dependencies are never persisted as editable roots.
+
+Schemas 1â€“4 remain readable solely for migration. Their `members`, `modules`, `directory`,
+`includeStandardBase`, `providerPins`, and `unresolvedLegacyModules` fields are compatibility
+input, not current runtime authority. Migration persists the schema-5 manifest before any
+external completion marker can be written. A current manifest is never converted back to
+legacy membership.
 
 `All MIBs` and `Standards / MIB-II` are synthesized permanent profiles. `All MIBs` means
 every locally available, usable declared module identity. The maintainable V1 standards
@@ -35,26 +43,22 @@ base is:
     IF-MIB, IP-MIB, TCP-MIB, UDP-MIB, ENTITY-MIB, HOST-RESOURCES-MIB,
     BRIDGE-MIB, Q-BRIDGE-MIB, LLDP-MIB, INET-ADDRESS-MIB
 
-Custom profiles store only intentional top-level members. Effective membership adds the
-optional standards base and recursively resolved IMPORTS. Cycles and shared dependencies
-use the existing dependency resolver. Required dependencies are keyed by declared module
-identity before presentation, with one row carrying its Available/Missing state and whether
-it came from the standards base or an imported dependency. Missing references are preserved
-and reported. **Download Missing** is enabled only when the configured authoritative catalog
-has an entry; it uses the existing HTTPS, validation, atomic-install, and provenance pipeline.
+Custom profiles store only intentional exact roots. Activation resolves recursive IMPORTS
+within the ordered scope, applies pins before automatic selection, and produces a sealed
+Effective Runtime Plan. Missing/changed roots and missing/changed/non-declaring pins are hard
+errors with no provider fallback. Catalog additions outside scope are irrelevant. Add Files
+adds roots; Add Folder takes a one-time recursive root snapshot and does not attach the folder.
 
-The browser selector changes visibility through the existing tree proxy. It does not unload
-libsmi modules or rebuild parser state. A module not already loaded is loaded once when first
-needed; subsequent profile switches filter the retained snapshot and avoid parser teardown.
-Connection-to-profile association and device support detection are intentionally deferred.
+The browser selector requests an Environment built from the resolved Plan, isolated runtime
+stage, and fresh parser state. The previous immutable Environment remains available until the
+new Plan is verified and publishable. Connection-to-profile association and device support
+detection remain deferred.
 
-Automatic profiles answer which MIBs apply to a product line. Beneath the configured
-user-visible root, `Standards/**` and `Unassigned/**` are recursive global library material
-and never create profiles. A `<Vendor>/<Product>` directory creates one Automatic profile
-named `<Vendor> <Product>`; everything below Product belongs to that one profile. A
-first-level folder with no child directories is a simple-product fallback only when it has
-a supported MIB/PIB file directly. Automatic explicit membership comes from declared module
-identities and is read-only. Dependencies augment its effective set through the same global
-graph. Equivalent copies may belong to several products; different-content provider
-conflicts remain global. Selecting any profile changes visibility only and never changes
-runtime Wanted or actual libsmi Loaded state.
+Legacy folder snapshots are converted once into ordinary manifests. For a legacy profile
+with a broad generated Standards population (at least twenty Standards files, non-Standards
+content, and unresolved legacy identity residue), non-Standards exact files are conservatively
+retained as roots while Standards is kept as resolution scope. For other exact-member profiles,
+uniquely reachable dependency-only files become derived; cyclic, ambiguous, and unexplained
+files remain roots so user intent is never silently lost. An Unassigned
+file is retained when it is part of the non-Standards legacy intent; this is not a universal
+rule that all Unassigned files belong to every profile.

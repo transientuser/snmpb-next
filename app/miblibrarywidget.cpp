@@ -941,9 +941,9 @@ void MibLibraryWidget::profileChanged()
     const bool editable = selectedProfile.type == MibProfileType::Custom;
     renameProfileButton->setEnabled(editable); deleteProfileButton->setEnabled(editable);
     addMemberButton->setEnabled(editable); removeMemberButton->setEnabled(editable);
-    includeStandards->setEnabled(editable);
-    profileSource->setText(tr("%n exact file member(s)", nullptr, selectedProfile.members.size()));
-    profileGuidance->setText(tr("Profile membership is a saved snapshot of exact files. Later folder changes do not rewrite this Profile."));
+    includeStandards->hide();
+    profileSource->setText(tr("%n exact root file(s)", nullptr, selectedProfile.roots.size()));
+    profileGuidance->setText(tr("Profile roots are a saved snapshot of exact files. Dependencies are derived when the Profile is activated."));
     openProfileFolderButton->hide();
     const MibEffectivePlan plan = planFor(selectedProfile);
     refreshProfileLists(&plan);
@@ -1045,10 +1045,10 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
     const int availableScroll = availableList->verticalScrollBar()->value();
     const int memberScroll = memberList->verticalScrollBar()->value();
     const QSignalBlocker blocker(includeStandards);
-    includeStandards->setChecked(profile->includeStandardBase);
+    includeStandards->setChecked(false);
     memberList->clear();
-    if (!profile->members.isEmpty()) {
-        for (const auto &member : profile->members) {
+    if (!profile->roots.isEmpty()) {
+        for (const auto &member : profile->roots) {
             const auto state = MibProfileMemberCurrentState(member);
             const QString stateText = state == MibProfileMemberState::Current ? tr("OK")
                 : state == MibProfileMemberState::Missing ? tr("Missing")
@@ -1064,7 +1064,7 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
                 item->setToolTip(item->toolTip() + (state == MibProfileMemberState::Missing
                     ? tr("\nProfile file is missing") : tr("\nProfile file content changed")));
         }
-    } else memberList->addItems(profile->explicitModules);
+    }
     profileEmptyState->setVisible(memberList->count() == 0);
     profileEmptyState->setText(tr("This Profile is empty. Add files or take a one-time folder snapshot."));
     QStringList available = availableModuleNames();
@@ -1169,7 +1169,7 @@ void MibLibraryWidget::saveCurrentProfile()
 {
     const MibProfileRecord *current = profiles.find(profileCombo->currentData().toString());
     if (!current || current->type != MibProfileType::Custom) return;
-    MibProfileRecord changed = *current; changed.includeStandardBase = includeStandards->isChecked();
+    MibProfileRecord changed = *current;
     QString error; if (!profiles.update(changed, &error)) status->setText(error);
     emit profilesChanged(); profileChanged();
 }
@@ -1224,17 +1224,17 @@ void MibLibraryWidget::removeProfileMembers()
     MibProfileRecord changed = *current;
     for (QListWidgetItem *item : memberList->selectedItems()) {
         const QString path = item->data(Qt::UserRole).toString();
-        if (!path.isEmpty()) changed.members.erase(std::remove_if(changed.members.begin(), changed.members.end(),
+        if (!path.isEmpty()) changed.roots.erase(std::remove_if(changed.roots.begin(), changed.roots.end(),
             [&path](const auto &member) {
 #ifdef Q_OS_WIN
                 return member.canonicalPath.compare(path, Qt::CaseInsensitive) == 0;
 #else
                 return member.canonicalPath == path;
 #endif
-            }), changed.members.end());
+            }), changed.roots.end());
         else changed.explicitModules.removeAll(item->text());
     }
-    if (!changed.members.isEmpty()) changed.explicitModules = MibProfileMemberIdentities(changed.members);
+    changed.explicitModules = MibProfileMemberIdentities(changed.roots);
     QString error; if (!profiles.update(changed, &error)) status->setText(error);
     emit profilesChanged(); profileChanged();
 }

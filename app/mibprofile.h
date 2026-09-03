@@ -14,6 +14,15 @@ enum class MibProfileType { All, Standards, Custom, Folder };
 struct MibProviderPin {
     QString canonicalPath;
     QString sha256;
+    QString reason;
+};
+
+struct MibProfileScope {
+    QString id;
+    QString canonicalPath;
+    bool operator==(const MibProfileScope &other) const {
+        return id == other.id && canonicalPath == other.canonicalPath;
+    }
 };
 
 enum class MibProfileMemberReason { Added, Dependency };
@@ -40,6 +49,9 @@ struct MibProfileRecord {
     QMap<QString, MibProviderPin> providerPins;
     QList<MibProfileMember> members;
     QStringList unresolvedLegacyModules;
+    int manifestVersion = 0;
+    QList<MibProfileMember> roots;
+    QList<MibProfileScope> orderedScopes;
 };
 
 MibProfileMemberState MibProfileMemberCurrentState(const MibProfileMember &member);
@@ -48,6 +60,8 @@ QList<MibProfileMember> MibProfileMembersFromFiles(
     QStringList *diagnostics = nullptr);
 QStringList MibProfileMemberIdentities(const QList<MibProfileMember> &members);
 bool MibProfileRequiresExactMigration(const MibProfileRecord &profile);
+bool MibProfileIsManifest(const MibProfileRecord &profile);
+QStringList MibProfileScopePaths(const MibProfileRecord &profile);
 
 class MibProfileDefinitions
 {

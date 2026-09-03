@@ -36,6 +36,80 @@ QByteArray mib(const QString &identity, const QStringList &imports = {}) {
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
+    if (application.arguments().value(1) == QStringLiteral("--voss-migrate")) {
+        const QString libraryRoot = application.arguments().value(2);
+        const QString profilePath = application.arguments().value(3);
+        const QString profileId = application.arguments().value(4);
+        const QString indexPath = application.arguments().value(5);
+        const QString stagePath = application.arguments().value(6);
+        const QString pinPath = canonical(application.arguments().value(7));
+        QString error;
+        MibDependencyIndex index(indexPath, libraryRoot);
+        index.update({libraryRoot}, &error);
+        MibProfileRepository repository(profilePath);
+        QList<MibProfileRecord> records = repository.load(&error);
+        auto seed = std::find_if(records.begin(), records.end(), [&profileId](const auto &profile) {
+            return profile.id == profileId;
+        });
+        const auto providers = index.providersFor(QStringLiteral("INET-ADDRESS-MIB"));
+        const auto pin = std::find_if(providers.cbegin(), providers.cend(), [&pinPath](const auto &provider) {
+            return canonical(provider.canonicalPath) == pinPath;
+        });
+        if (!error.isEmpty() || seed == records.end() || pin == providers.cend()) return 2;
+        seed->providerPins.insert(QStringLiteral("INET-ADDRESS-MIB"),
+            {pin->canonicalPath, pin->sha256, QStringLiteral("Explicit VOSS migration decision")});
+        if (!repository.save(records, &error)) return 3;
+        MibProfileService service(repository);
+        if (!service.migrateLegacyProfiles(index, &error)) return 4;
+        const MibProfileRecord *profile = service.find(profileId);
+        if (!profile) return 5;
+        MibEffectivePlanResolverInput input;
+        input.id = profile->id;
+        input.roots = profile->roots;
+        input.orderedScopes = MibProfileScopePaths(*profile);
+        input.pins = profile->providerPins;
+        MibEffectivePlan plan = MibEffectiveRuntimePlanResolver().resolve(input, index);
+        int roots = 0, dependencies = 0;
+        for (const auto &file : plan.runtimeFiles)
+            file.origin == MibEffectivePlanFileOrigin::Root ? ++roots : ++dependencies;
+        const auto stage = plan.isComplete() ? MibRuntimeStage::prepare(plan, stagePath)
+                                             : MibRuntimeStageResult{};
+        MibEnvironmentPtr environment;
+        int failedLoads = 0;
+        if (stage.success) {
+            plan.runtimeConfiguration = stage.configuration;
+            plan.runtimePaths = stage.paths;
+            plan.hasRuntimePaths = true;
+            smiInit("voss-migration-test");
+            const auto reset = MibRuntimeParser::reset(plan.runtimePaths);
+            const auto loads = reset.success
+                ? MibRuntimeParser::loadExplicitRoots(plan.runtimeConfiguration, plan.runtimePaths)
+                : MibExplicitRootLoadBatch{};
+            failedLoads = loads.failedIdentities().size();
+            environment = MibEnvironmentExtractor().extract(plan, loads.failedIdentities(), loads.roots,
+                reset.success ? QStringList{} : QStringList{reset.error});
+        }
+        std::cout << "legacy_members=" << seed->members.size()
+                  << " manifest=" << MibProfileIsManifest(*profile)
+                  << " migrated_roots=" << profile->roots.size()
+                  << " scopes=" << MibProfileScopePaths(*profile).join(';').toStdString()
+                  << " pins=" << profile->providerPins.size()
+                  << " unresolved_legacy=" << profile->unresolvedLegacyModules.size()
+                  << " plan_roots=" << roots << " plan_dependencies=" << dependencies
+                  << " plan_total=" << plan.runtimeFiles.size()
+                  << " ambiguities=" << plan.ambiguousModules.size()
+                  << " unresolved=" << plan.missingModules.size()
+                  << " stage=" << stage.success << " failed_loads=" << failedLoads
+                  << " parser_modules=" << (environment ? environment->loadedCount() : 0)
+                  << " unauthorized=" << (environment && environment->providersAuthorized() ? 0 : 1)
+                  << " nodes=" << (environment ? environment->nodes().size() : 0)
+                  << " types=" << (environment ? environment->types().size() : 0)
+                  << " publishable=" << (environment && environment->publishable()) << '\n';
+        if (environment) smiExit();
+        return environment && profile->roots.size() == 42 && roots == 42 && dependencies == 31 &&
+            plan.runtimeFiles.size() == 73 && environment->loadedCount() == 73 &&
+            environment->providersAuthorized() && environment->publishable() ? 0 : 6;
+    }
     if (application.arguments().value(1) == QStringLiteral("--corpus")) {
         MibDependencyIndex corpus(application.arguments().value(2));
         QString error;

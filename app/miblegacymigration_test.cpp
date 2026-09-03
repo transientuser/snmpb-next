@@ -38,10 +38,10 @@ int main(int argc,char**argv)
     const auto first=MibLegacyMigration::migrate(settings,profiles,index);
     const qint64 migrationMsecs=migrationTimer.elapsed();
     const MibProfileRecord *imported=profiles.find(MibLegacyMigration::profileId());
-    const int migratedIdentityCount=imported?imported->explicitModules.size():0;
+    const int migratedIdentityCount=imported?imported->explicitModules.size()+imported->unresolvedLegacyModules.size():0;
     ok&=check(first.migrated&&first.inputCount==4&&first.duplicateCount==1&&first.unresolvedCount==1&&
-        imported&&imported->type==MibProfileType::Custom&&imported->explicitModules==QStringList({"A-MIB","STALE-MIB","SYNOPTICS-ROOT-MIB"}),"identity normalization duplicate stale and filename mismatch migration");
-    ok&=check(imported&&imported->members.size()==2&&
+        imported&&MibProfileIsManifest(*imported)&&imported->explicitModules==QStringList({"A-MIB","SYNOPTICS-ROOT-MIB"}),"identity normalization duplicate stale and filename mismatch migration");
+    ok&=check(imported&&imported->roots.size()==2&&
         imported->unresolvedLegacyModules==QStringList{"STALE-MIB"},
         "legacy preload migration persists exact unique files and unresolved intent before marker");
     ok&=check(profiles.find(userId)&&profiles.find(userId)->name=="Existing User Profile","existing profile preserved");
@@ -50,14 +50,14 @@ int main(int argc,char**argv)
     preloads(settings,{"OTHER-MIB"});
     const auto behindBack=MibLegacyMigration::migrate(settings,profiles,index);
     ok&=check(behindBack.alreadyComplete&&profiles.find(MibLegacyMigration::profileId())->explicitModules==
-        QStringList({"A-MIB","STALE-MIB","SYNOPTICS-ROOT-MIB"}),"legacy mutation is no longer live authority");
+        QStringList({"A-MIB","SYNOPTICS-ROOT-MIB"}),"legacy mutation is no longer live authority");
     const QList<MibProfileMember> exactBeforeMarkerRetry =
-        profiles.find(MibLegacyMigration::profileId())->members;
+        profiles.find(MibLegacyMigration::profileId())->roots;
     settings.remove(MibLegacyMigration::markerKey());
     preloads(settings,{"A-MIB","synro.mib","STALE-MIB"});
     const auto markerRetry=MibLegacyMigration::migrate(settings,profiles,index);
     ok&=check(markerRetry.migrated&&
-        profiles.find(MibLegacyMigration::profileId())->members==exactBeforeMarkerRetry,
+        profiles.find(MibLegacyMigration::profileId())->roots==exactBeforeMarkerRetry,
         "marker-write retry never downgrades already-persisted exact membership");
     profiles.remove(MibLegacyMigration::profileId());
     MibLegacyMigration::migrate(settings,profiles,index);

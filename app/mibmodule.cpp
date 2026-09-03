@@ -492,16 +492,28 @@ MibModuleRecord MibModule::ModuleMetadata(const QString &moduleName, const QStri
 
 MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) const
 {
-    MibEffectivePlan plan = MibEffectivePlanResolver().resolve(profile, dependencyIndex);
-    const bool unmigratedIdentityAuthority = MibProfileRequiresExactMigration(profile);
-    if (unmigratedIdentityAuthority)
-        plan.authorityError = tr("Profile still uses legacy module-identity authority and must be migrated to exact files");
-    plan.runtimeConfiguration = MibProfileRuntimeConfigurationBuilder().build(
-        profile, dependencyIndex, {});
-    plan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(
-        plan.runtimeConfiguration, dependencyIndex);
-    plan.hasRuntimePaths = true;
-    MibEffectivePlanResolver::sealRuntimeAuthority(&plan);
+    if (!MibProfileIsManifest(profile)) {
+        MibEffectivePlan plan;
+        plan.profileId = profile.id;
+        plan.profileName = profile.name;
+        plan.authorityError = tr("Profile still uses legacy authority and must be migrated before activation");
+        return plan;
+    }
+    MibEffectivePlanResolverInput input;
+    input.id = profile.id;
+    input.roots = profile.roots;
+    input.orderedScopes = MibProfileScopePaths(profile);
+    input.pins = profile.providerPins;
+    MibEffectivePlan plan = MibEffectiveRuntimePlanResolver().resolve(input, dependencyIndex);
+    plan.profileName = profile.name;
+    plan.profileType = profile.type;
+    if (!profile.unresolvedLegacyModules.isEmpty()) {
+        plan.authorityError = tr("Profile migration still has unresolved legacy intent: %1")
+            .arg(profile.unresolvedLegacyModules.join(QStringLiteral(", ")));
+        plan.missingModules.append(profile.unresolvedLegacyModules);
+        plan.missingModules.removeDuplicates();
+        plan.missingModules.sort(Qt::CaseSensitive);
+    }
     return plan;
 }
 

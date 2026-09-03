@@ -47,7 +47,7 @@ QMap<QString, MibProviderPin> pinsFromJson(const QJsonObject &values)
         const QString path = pin.value(QStringLiteral("path")).toString();
         const QString hash = pin.value(QStringLiteral("sha256")).toString();
         if (!it.key().isEmpty() && !path.isEmpty() && !hash.isEmpty())
-            result.insert(it.key(), {path, hash});
+            result.insert(it.key(), {path, hash, pin.value(QStringLiteral("reason")).toString()});
     }
     return result;
 }
@@ -57,7 +57,8 @@ QJsonObject pinsToJson(const QMap<QString, MibProviderPin> &pins)
     QJsonObject result;
     for (auto it = pins.begin(); it != pins.end(); ++it)
         result.insert(it.key(), QJsonObject{{QStringLiteral("path"), it->canonicalPath},
-                                            {QStringLiteral("sha256"), it->sha256}});
+                                            {QStringLiteral("sha256"), it->sha256},
+                                            {QStringLiteral("reason"), it->reason}});
     return result;
 }
 
@@ -95,6 +96,26 @@ QJsonArray membersToJson(QList<MibProfileMember> members)
             {"sha256", member.sha256}, {"identities", stringsToJson(uniqueSorted(member.identities))},
             {"reason", member.reason == MibProfileMemberReason::Dependency
                 ? QStringLiteral("dependency") : QStringLiteral("added")}});
+    return result;
+}
+
+QList<MibProfileScope> scopesFromJson(const QJsonArray &values)
+{
+    QList<MibProfileScope> result;
+    for (const QJsonValue &value : values) {
+        const QJsonObject object = value.toObject();
+        const QString path = canonicalFilePath(object.value(QStringLiteral("path")).toString());
+        if (!path.isEmpty()) result.append({object.value(QStringLiteral("id")).toString(), path});
+    }
+    return result;
+}
+
+QJsonArray scopesToJson(const QList<MibProfileScope> &scopes)
+{
+    QJsonArray result;
+    for (const auto &scope : scopes)
+        result.append(QJsonObject{{QStringLiteral("id"), scope.id},
+            {QStringLiteral("path"), QDir::fromNativeSeparators(scope.canonicalPath)}});
     return result;
 }
 }
@@ -153,8 +174,18 @@ QStringList MibProfileMemberIdentities(const QList<MibProfileMember> &members)
 
 bool MibProfileRequiresExactMigration(const MibProfileRecord &profile)
 {
-    return profile.members.isEmpty() && profile.unresolvedLegacyModules.isEmpty() &&
-        (!profile.explicitModules.isEmpty() || profile.includeStandardBase);
+    return !MibProfileIsManifest(profile);
+}
+
+
+bool MibProfileIsManifest(const MibProfileRecord &profile)
+{ return profile.manifestVersion == 1; }
+
+QStringList MibProfileScopePaths(const MibProfileRecord &profile)
+{
+    QStringList result;
+    for (const auto &scope : profile.orderedScopes) result.append(scope.canonicalPath);
+    return result;
 }
 
 QString MibProfileDefinitions::allId() { return QStringLiteral("builtin.all"); }
@@ -199,8 +230,9 @@ QList<MibProfileRecord> MibProfileRepository::load(QString *error) const
     }
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const int schemaVersion = document.object().value(QStringLiteral("schemaVersion")).toInt();
     if (parseError.error != QJsonParseError::NoError || !document.isObject() ||
-        !QSet<int>{1, 2, 3, 4}.contains(document.object().value(QStringLiteral("schemaVersion")).toInt())) {
+        !QSet<int>{1, 2, 3, 4, 5}.contains(schemaVersion)) {
         if (error) *error = QObject::tr("Unsupported or invalid MIB profile file");
         return {};
     }
@@ -219,7 +251,14 @@ QList<MibProfileRecord> MibProfileRepository::load(QString *error) const
         profile.members = membersFromJson(object.value(QStringLiteral("members")).toArray());
         profile.unresolvedLegacyModules = stringsFromJson(
             object.value(QStringLiteral("unresolvedLegacyModules")).toArray());
-        if (!profile.members.isEmpty())
+        if (schemaVersion >= 5 && object.value(QStringLiteral("manifestVersion")).toInt() == 1) {
+            profile.manifestVersion = 1;
+            profile.roots = membersFromJson(object.value(QStringLiteral("roots")).toArray());
+            profile.orderedScopes = scopesFromJson(object.value(QStringLiteral("scope")).toArray());
+            profile.providerPins = pinsFromJson(object.value(QStringLiteral("pins")).toObject());
+            profile.explicitModules = MibProfileMemberIdentities(profile.roots);
+        }
+        if (!MibProfileIsManifest(profile) && !profile.members.isEmpty())
             profile.explicitModules = uniqueSorted(MibProfileMemberIdentities(profile.members) +
                                                    profile.unresolvedLegacyModules);
         if (!profile.id.isEmpty() && !profile.name.isEmpty()) result.append(profile);
@@ -237,20 +276,31 @@ bool MibProfileRepository::save(const QList<MibProfileRecord> &profiles, QString
         object.insert(QStringLiteral("name"), profile.name);
         object.insert(QStringLiteral("type"), profile.type == MibProfileType::Folder
             ? QStringLiteral("folder") : QStringLiteral("custom"));
-        if (profile.type == MibProfileType::Custom)
-            object.insert(QStringLiteral("modules"), stringsToJson(uniqueSorted(profile.explicitModules)));
-        else object.insert(QStringLiteral("directory"), profile.directory);
-        object.insert(QStringLiteral("includeStandardBase"), profile.includeStandardBase);
-        if (!profile.providerPins.isEmpty())
-            object.insert(QStringLiteral("providerPins"), pinsToJson(profile.providerPins));
-        if (!profile.members.isEmpty()) object.insert(QStringLiteral("members"), membersToJson(profile.members));
-        if (!profile.unresolvedLegacyModules.isEmpty())
-            object.insert(QStringLiteral("unresolvedLegacyModules"),
-                          stringsToJson(uniqueSorted(profile.unresolvedLegacyModules)));
+        if (MibProfileIsManifest(profile)) {
+            object.insert(QStringLiteral("manifestVersion"), 1);
+            object.insert(QStringLiteral("roots"), membersToJson(profile.roots));
+            object.insert(QStringLiteral("scope"), scopesToJson(profile.orderedScopes));
+            if (!profile.providerPins.isEmpty())
+                object.insert(QStringLiteral("pins"), pinsToJson(profile.providerPins));
+            if (!profile.unresolvedLegacyModules.isEmpty())
+                object.insert(QStringLiteral("unresolvedLegacyModules"),
+                              stringsToJson(uniqueSorted(profile.unresolvedLegacyModules)));
+        } else {
+            if (profile.type == MibProfileType::Custom)
+                object.insert(QStringLiteral("modules"), stringsToJson(uniqueSorted(profile.explicitModules)));
+            else object.insert(QStringLiteral("directory"), profile.directory);
+            object.insert(QStringLiteral("includeStandardBase"), profile.includeStandardBase);
+            if (!profile.providerPins.isEmpty())
+                object.insert(QStringLiteral("providerPins"), pinsToJson(profile.providerPins));
+            if (!profile.members.isEmpty()) object.insert(QStringLiteral("members"), membersToJson(profile.members));
+            if (!profile.unresolvedLegacyModules.isEmpty())
+                object.insert(QStringLiteral("unresolvedLegacyModules"),
+                              stringsToJson(uniqueSorted(profile.unresolvedLegacyModules)));
+        }
         items.append(object);
     }
     QJsonObject root;
-    root.insert(QStringLiteral("schemaVersion"), 4);
+    root.insert(QStringLiteral("schemaVersion"), 5);
     root.insert(QStringLiteral("ordinaryProfilesMigrated"), true);
     root.insert(QStringLiteral("profiles"), items);
     QDir().mkpath(QFileInfo(filePath).absolutePath());
@@ -338,6 +388,7 @@ QString MibProfileService::create(const QString &name, QString *error)
     if (name.trimmed().isEmpty()) { if (error) *error = QObject::tr("Profile name is required"); return {}; }
     MibProfileRecord record{QUuid::createUuid().toString(QUuid::WithoutBraces),
                             name.trimmed(), MibProfileType::Custom, {}, false};
+    record.manifestVersion = 1;
     customProfiles.append(record);
     if (!persist(error)) { customProfiles.removeLast(); return {}; }
     return record.id;
@@ -381,18 +432,14 @@ bool MibProfileService::remove(const QString &id, QString *error)
 bool MibProfileService::update(const MibProfileRecord &value, QString *error)
 {
     if (isBuiltIn(value.id) || value.type != MibProfileType::Custom) return false;
-    if (value.members.isEmpty() && value.unresolvedLegacyModules.isEmpty() &&
-        (!value.explicitModules.isEmpty() || value.includeStandardBase)) {
+    if (!MibProfileIsManifest(value)) {
         if (error) *error = QObject::tr(
             "Profiles must use exact physical files; legacy identity membership requires migration");
         return false;
     }
     for (MibProfileRecord &profile : customProfiles) if (profile.id == value.id) {
         const MibProfileRecord old = profile; profile = value;
-        if (!profile.members.isEmpty())
-            profile.explicitModules = uniqueSorted(MibProfileMemberIdentities(profile.members) +
-                                                   profile.unresolvedLegacyModules);
-        profile.explicitModules = uniqueSorted(profile.explicitModules);
+        profile.explicitModules = MibProfileMemberIdentities(profile.roots);
         if (!persist(error)) { profile = old; return false; }
         return true;
     }
@@ -406,7 +453,14 @@ bool MibProfileService::importCustomProfile(const QString &stableId, const QStri
     for (MibProfileRecord &profile : customProfiles) if (profile.id == stableId) {
         const MibProfileRecord old = profile;
         profile.name = name; profile.type = MibProfileType::Custom;
-        if (profile.members.isEmpty() && profile.unresolvedLegacyModules.isEmpty()) {
+        if (MibProfileIsManifest(profile)) {
+            const QStringList exactIdentities = MibProfileMemberIdentities(profile.roots);
+            for (const QString &identity : modules)
+                if (!exactIdentities.contains(identity) &&
+                    !profile.unresolvedLegacyModules.contains(identity))
+                    profile.unresolvedLegacyModules.append(identity);
+            profile.unresolvedLegacyModules = uniqueSorted(profile.unresolvedLegacyModules);
+        } else if (profile.members.isEmpty() && profile.unresolvedLegacyModules.isEmpty()) {
             profile.explicitModules = uniqueSorted(modules);
         } else {
             const QStringList exactIdentities = MibProfileMemberIdentities(profile.members);
@@ -434,81 +488,153 @@ bool MibProfileService::migrateLegacyProfiles(const MibDependencyIndex &index, Q
     const QList<MibProfileRecord> previous = customProfiles;
     bool changed = false;
     for (MibProfileRecord &profile : customProfiles) {
-        const bool rawLegacy = MibProfileRequiresExactMigration(profile);
-        if (!rawLegacy && profile.unresolvedLegacyModules.isEmpty()) continue;
+        if (MibProfileIsManifest(profile)) {
+            QStringList stillUnresolved;
+            for (const QString &identity : std::as_const(profile.unresolvedLegacyModules)) {
+                const auto providers = index.providersFor(identity);
+                const auto exact = providers.size() == 1
+                    ? MibProfileMembersFromFiles({providers.first().canonicalPath})
+                    : QList<MibProfileMember>{};
+                if (exact.size() != 1 || exact.first().sha256 != providers.first().sha256) {
+                    stillUnresolved.append(identity);
+                    continue;
+                }
+                if (std::none_of(profile.roots.cbegin(), profile.roots.cend(), [&exact](const auto &root) {
+                        return canonicalFilePath(root.canonicalPath).compare(
+                            canonicalFilePath(exact.first().canonicalPath), Qt::CaseInsensitive) == 0;
+                    })) profile.roots.append(exact.first());
+                const QString parent = canonicalFilePath(QFileInfo(exact.first().canonicalPath).absolutePath());
+                if (std::none_of(profile.orderedScopes.cbegin(), profile.orderedScopes.cend(),
+                    [&parent](const auto &scope) {
+                        return scope.canonicalPath.compare(parent, Qt::CaseInsensitive) == 0;
+                    })) profile.orderedScopes.append({QStringLiteral("collection:") +
+                        QDir::fromNativeSeparators(QDir(index.libraryRoot()).relativeFilePath(parent)), parent});
+            }
+            stillUnresolved = uniqueSorted(stillUnresolved);
+            if (stillUnresolved != profile.unresolvedLegacyModules) {
+                profile.unresolvedLegacyModules = stillUnresolved;
+                profile.explicitModules = MibProfileMemberIdentities(profile.roots);
+                changed = true;
+            }
+            continue;
+        }
         const MibProfileRecord before = profile;
-        QStringList identities = rawLegacy ? profile.explicitModules
-                                           : profile.unresolvedLegacyModules;
-        if (rawLegacy && profile.includeStandardBase)
-            identities.append(MibProfileDefinitions::standardsModules());
-        identities = uniqueSorted(identities);
-        QMap<QString, MibProfileMemberReason> reasons;
-        for (const QString &identity : std::as_const(identities))
-            reasons.insert(identity, MibProfileMemberReason::Added);
-        QList<MibProfileMember> members = profile.members;
-        QStringList unresolved;
-        QSet<QString> processed;
-        QSet<QString> seenPaths;
-        for (const auto &member : std::as_const(members)) {
-#ifdef Q_OS_WIN
-            seenPaths.insert(QDir::fromNativeSeparators(member.canonicalPath).toLower());
-#else
-            seenPaths.insert(QDir::fromNativeSeparators(member.canonicalPath));
-#endif
-        }
-        while (!identities.isEmpty()) {
-            const QString identity = identities.takeFirst();
-            if (processed.contains(identity)) continue;
-            processed.insert(identity);
-            const QList<MibIndexedProvider> providers = index.providersFor(identity);
-            if (providers.size() != 1) {
-                unresolved.append(identity);
-                continue;
+        QList<MibProfileMember> roots;
+        QStringList unresolved = profile.unresolvedLegacyModules;
+        bool broadGeneratedStandards = false;
+        if (profile.members.isEmpty()) {
+            QStringList identities = profile.explicitModules;
+            if (profile.includeStandardBase) identities.append(MibProfileDefinitions::standardsModules());
+            for (const QString &identity : uniqueSorted(identities)) {
+                const auto providers = index.providersFor(identity);
+                if (providers.size() != 1) { unresolved.append(identity); continue; }
+                const auto exact = MibProfileMembersFromFiles({providers.first().canonicalPath});
+                if (exact.size() != 1 || exact.first().sha256 != providers.first().sha256)
+                    unresolved.append(identity);
+                else if (std::none_of(roots.cbegin(), roots.cend(), [&exact](const auto &root) {
+                    return canonicalFilePath(root.canonicalPath).compare(
+                        canonicalFilePath(exact.first().canonicalPath), Qt::CaseInsensitive) == 0;
+                })) roots.append(exact.first());
             }
-            for (const QString &dependency : providers.first().imports) {
-                if (!reasons.contains(dependency))
-                    reasons.insert(dependency, MibProfileMemberReason::Dependency);
-                if (!processed.contains(dependency)) identities.append(dependency);
-            }
-            const QString path = providers.first().canonicalPath;
+        } else {
+            int standardsCount = 0;
+            for (const auto &member : profile.members)
+                if (QDir::fromNativeSeparators(member.canonicalPath).contains(
+                        QStringLiteral("/Standards/"), Qt::CaseInsensitive)) ++standardsCount;
+            broadGeneratedStandards = standardsCount >= 20 && standardsCount < profile.members.size() &&
+                !profile.unresolvedLegacyModules.isEmpty();
+            if (broadGeneratedStandards) {
+                for (const auto &member : profile.members)
+                    if (!QDir::fromNativeSeparators(member.canonicalPath)
+                            .contains(QStringLiteral("/Standards/"), Qt::CaseInsensitive))
+                        roots.append(member);
+            } else {
+                QSet<QString> imported;
+                const auto pathKey = [](const QString &path) {
+                    const QString value = QDir::fromNativeSeparators(canonicalFilePath(path));
 #ifdef Q_OS_WIN
-            const QString key = QDir::fromNativeSeparators(path).toLower();
+                    return value.toLower();
 #else
-            const QString key = QDir::fromNativeSeparators(path);
+                    return value;
 #endif
-            if (seenPaths.contains(key)) {
-                if (reasons.value(identity) == MibProfileMemberReason::Added)
-                    for (MibProfileMember &member : members) {
-#ifdef Q_OS_WIN
-                        const bool same = QDir::fromNativeSeparators(member.canonicalPath)
-                            .compare(QDir::fromNativeSeparators(path), Qt::CaseInsensitive) == 0;
-#else
-                        const bool same = QDir::fromNativeSeparators(member.canonicalPath) ==
-                            QDir::fromNativeSeparators(path);
-#endif
-                        if (same)
-                            member.reason = MibProfileMemberReason::Added;
+                };
+                const auto indexedRecord = [&index](const MibProfileMember &member)
+                    -> const MibDependencyFileRecord * {
+                    for (const auto &record : index.files())
+                        if (canonicalFilePath(record.canonicalPath).compare(
+                                canonicalFilePath(member.canonicalPath), Qt::CaseInsensitive) == 0 &&
+                            record.sha256 == member.sha256) return &record;
+                    return nullptr;
+                };
+                for (const auto &member : profile.members)
+                    if (const auto *record = indexedRecord(member))
+                        for (const auto &imports : record->importsByModule) imported.unite(QSet<QString>(
+                            imports.cbegin(), imports.cend()));
+                QSet<QString> reachablePaths;
+                for (const auto &member : profile.members)
+                    if (std::none_of(member.identities.cbegin(), member.identities.cend(),
+                        [&imported](const QString &identity) { return imported.contains(identity); })) {
+                        roots.append(member);
+                        reachablePaths.insert(pathKey(member.canonicalPath));
                     }
-                continue;
+                bool progress = true;
+                while (progress) {
+                    progress = false;
+                    QStringList needed;
+                    for (const auto &member : profile.members)
+                        if (reachablePaths.contains(pathKey(member.canonicalPath)))
+                            if (const auto *record = indexedRecord(member))
+                                for (const auto &imports : record->importsByModule) needed.append(imports);
+                    for (const QString &identity : uniqueSorted(needed)) {
+                        QList<MibProfileMember> matches;
+                        for (const auto &member : profile.members)
+                            if (member.identities.contains(identity)) matches.append(member);
+                        if (matches.size() == 1 && !reachablePaths.contains(
+                                pathKey(matches.first().canonicalPath))) {
+                            reachablePaths.insert(pathKey(matches.first().canonicalPath));
+                            progress = true;
+                        }
+                    }
+                }
+                for (const auto &member : profile.members)
+                    if (!reachablePaths.contains(pathKey(member.canonicalPath)))
+                        roots.append(member);
             }
-            const QList<MibProfileMember> exact = MibProfileMembersFromFiles(
-                {path}, reasons.value(identity));
-            if (exact.size() != 1 || exact.first().sha256 != providers.first().sha256) {
-                unresolved.append(identity);
-                continue;
-            }
-            seenPaths.insert(key);
-            members.append(exact.first());
         }
-        profile.members = members;
+        QList<MibProfileScope> scopes;
+        const auto appendScope = [&scopes, &index](const QString &path) {
+            const QString canonical = canonicalFilePath(path);
+            if (canonical.isEmpty() || std::any_of(scopes.cbegin(), scopes.cend(), [&canonical](const auto &scope) {
+                    return scope.canonicalPath.compare(canonical, Qt::CaseInsensitive) == 0;
+                })) return;
+            QString relative = QDir(index.libraryRoot()).relativeFilePath(canonical);
+            scopes.append({QStringLiteral("collection:") + QDir::fromNativeSeparators(relative), canonical});
+        };
+        QString standardsScope;
+        for (const auto &member : profile.members) {
+            const QString normalized = QDir::fromNativeSeparators(member.canonicalPath);
+            const qsizetype marker = normalized.indexOf(QStringLiteral("/Standards/"), 0,
+                                                         Qt::CaseInsensitive);
+            if (marker >= 0) standardsScope = normalized.left(marker + 10);
+        }
+        for (const auto &root : roots) {
+            const QString parent = QFileInfo(root.canonicalPath).absolutePath();
+            if (!QDir::fromNativeSeparators(parent).endsWith(QStringLiteral("/Unassigned"),
+                                                              Qt::CaseInsensitive))
+                appendScope(parent);
+        }
+        if (!standardsScope.isEmpty()) appendScope(standardsScope);
+        profile.manifestVersion = 1;
+        profile.roots = roots;
+        profile.orderedScopes = scopes;
         profile.unresolvedLegacyModules = uniqueSorted(unresolved);
-        profile.explicitModules = uniqueSorted(MibProfileMemberIdentities(members) +
-                                               profile.unresolvedLegacyModules);
+        profile.explicitModules = MibProfileMemberIdentities(roots);
+        profile.members.clear();
         profile.includeStandardBase = false;
-        changed |= profile.members != before.members ||
-            profile.unresolvedLegacyModules != before.unresolvedLegacyModules ||
-            profile.explicitModules != before.explicitModules ||
-            profile.includeStandardBase != before.includeStandardBase;
+        profile.directory.clear();
+        if (broadGeneratedStandards)
+            profile.unresolvedLegacyModules.clear();
+        changed |= profile.manifestVersion != before.manifestVersion;
     }
     if (!changed) return true;
     if (persist(error)) return true;
@@ -530,7 +656,13 @@ bool MibProfileService::migrateLegacyFolderProfiles(QString *error)
             if (MibCandidateFilter::accepts(QFileInfo(path).fileName())) files.append(path);
         }
         profile.members = MibProfileMembersFromFiles(files);
-        profile.explicitModules = MibProfileMemberIdentities(profile.members);
+        profile.roots = profile.members;
+        profile.members.clear();
+        profile.explicitModules = MibProfileMemberIdentities(profile.roots);
+        profile.manifestVersion = 1;
+        profile.orderedScopes = {{QStringLiteral("folder:") + QDir::fromNativeSeparators(profile.directory),
+                                  canonicalFilePath(profile.directory)}};
+        profile.directory.clear();
         profile.type = MibProfileType::Custom;
         customProfiles.append(profile);
     }
@@ -560,7 +692,7 @@ bool MibProfileService::addFiles(const QString &id, const QStringList &files,
     }
     MibProfileRecord changed = *current;
     for (const auto &member : additions) {
-        const auto existing = std::find_if(changed.members.cbegin(), changed.members.cend(),
+        const auto existing = std::find_if(changed.roots.cbegin(), changed.roots.cend(),
             [&member](const auto &candidate) {
 #ifdef Q_OS_WIN
                 return candidate.canonicalPath.compare(member.canonicalPath, Qt::CaseInsensitive) == 0;
@@ -568,14 +700,18 @@ bool MibProfileService::addFiles(const QString &id, const QStringList &files,
                 return candidate.canonicalPath == member.canonicalPath;
 #endif
             });
-        if (existing == changed.members.cend()) changed.members.append(member);
+        if (existing == changed.roots.cend()) changed.roots.append(member);
+        const QString parent = canonicalFilePath(QFileInfo(member.canonicalPath).absolutePath());
+        if (std::none_of(changed.orderedScopes.cbegin(), changed.orderedScopes.cend(),
+            [&parent](const auto &scope) {
+                return scope.canonicalPath.compare(parent, Qt::CaseInsensitive) == 0;
+            })) changed.orderedScopes.append({QStringLiteral("collection:") +
+                QDir::fromNativeSeparators(parent), parent});
     }
-    changed.explicitModules = MibProfileMemberIdentities(changed.members);
+    changed.explicitModules = MibProfileMemberIdentities(changed.roots);
     for (const auto &member : additions)
         for (const QString &identity : member.identities)
             changed.unresolvedLegacyModules.removeAll(identity);
-    changed.explicitModules = uniqueSorted(changed.explicitModules +
-                                           changed.unresolvedLegacyModules);
     return update(changed, error);
 }
 
