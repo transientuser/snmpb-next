@@ -194,17 +194,6 @@ QString canonicalPath(const QString &path)
     return canonical.isEmpty() ? QFileInfo(normalized).absoluteFilePath() : canonical;
 }
 
-bool pathWithin(const QString &path, const QString &directory)
-{
-    QString root = QDir::fromNativeSeparators(canonicalPath(directory));
-    const QString candidate = QDir::fromNativeSeparators(canonicalPath(path));
-    if (!root.endsWith('/')) root += '/';
-#ifdef Q_OS_WIN
-    return candidate.startsWith(root, Qt::CaseInsensitive);
-#else
-    return candidate.startsWith(root, Qt::CaseSensitive);
-#endif
-}
 }
 
 MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
@@ -226,8 +215,8 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
     for (const auto &entry : plan.runtimePaths.entries())
         environment->authorityPaths.append(entry.canonicalPath);
     environment->requestedRoots = plan.runtimeConfiguration.explicitRoots();
-    for (const auto &member : plan.runtimeConfiguration.authorizedFiles())
-        environment->authorityFiles.insert(canonicalPath(member.canonicalPath), member.sha256);
+    for (const auto &file : plan.runtimeFiles)
+        environment->authorityFiles.insert(canonicalPath(file.canonicalPath), file.sha256);
     environment->rootOutcomes = rootOutcomes;
     environment->authorityDiagnostics = diagnostics;
     environment->loadedProvidersAuthorized = true;
@@ -264,25 +253,24 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
             record.actualProviderPath = stagedSource.value();
         environment->actualLoadedIdentities.append(record.identity);
         environment->actualProviderPaths.insert(record.identity, record.actualProviderPath);
-        const auto exactMember = std::find_if(
-            plan.runtimeConfiguration.authorizedFiles().cbegin(),
-            plan.runtimeConfiguration.authorizedFiles().cend(), [&record](const auto &member) {
+        const auto exactFile = std::find_if(
+            plan.runtimeFiles.cbegin(), plan.runtimeFiles.cend(), [&record](const auto &file) {
 #ifdef Q_OS_WIN
-                return canonicalPath(member.canonicalPath).compare(
+                return canonicalPath(file.canonicalPath).compare(
                     record.actualProviderPath, Qt::CaseInsensitive) == 0;
 #else
-                return canonicalPath(member.canonicalPath) == record.actualProviderPath;
+                return canonicalPath(file.canonicalPath) == record.actualProviderPath;
 #endif
             });
         bool exactAuthorized = true;
         QString exactFailure;
-        if (!plan.runtimeConfiguration.authorizedFiles().isEmpty()) {
-            if (exactMember == plan.runtimeConfiguration.authorizedFiles().cend()) {
+        if (plan.hasRuntimePaths) {
+            if (exactFile == plan.runtimeFiles.cend()) {
                 exactAuthorized = false;
-                exactFailure = QStringLiteral("physical file is not an exact Profile member");
-            } else if (!exactMember->identities.contains(record.identity)) {
+                exactFailure = QStringLiteral("physical file is not in the Effective Plan");
+            } else if (!exactFile->identities.contains(record.identity)) {
                 exactAuthorized = false;
-                exactFailure = QStringLiteral("Profile member did not authorize this declared identity");
+                exactFailure = QStringLiteral("Effective Plan file did not authorize this declared identity");
             } else {
                 QFile provider(record.actualProviderPath);
                 if (!provider.open(QIODevice::ReadOnly)) {
@@ -291,20 +279,14 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
                 } else {
                     const QString actualHash = QString::fromLatin1(QCryptographicHash::hash(
                         provider.readAll(), QCryptographicHash::Sha256).toHex());
-                    if (actualHash != exactMember->sha256) {
+                    if (actualHash != exactFile->sha256) {
                         exactAuthorized = false;
-                        exactFailure = QStringLiteral("Profile member content changed");
+                        exactFailure = QStringLiteral("Effective Plan file content changed");
                     }
                 }
             }
         }
-        if (!exactAuthorized || (plan.hasRuntimePaths &&
-            plan.runtimeConfiguration.authorizedFiles().isEmpty() &&
-            !record.actualProviderPath.isEmpty() &&
-            std::none_of(plan.runtimePaths.entries().cbegin(), plan.runtimePaths.entries().cend(),
-                [&record](const MibRuntimePathEntry &entry) {
-                    return pathWithin(record.actualProviderPath, entry.canonicalPath);
-                }))) {
+        if (!exactAuthorized) {
             environment->loadedProvidersAuthorized = false;
             const QString detail = exactFailure.isEmpty()
                 ? QStringLiteral("module loaded from unauthorized runtime path") : exactFailure;

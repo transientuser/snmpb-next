@@ -501,8 +501,7 @@ MibEffectivePlan MibModule::BuildEffectivePlan(const MibProfileRecord &profile) 
     plan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(
         plan.runtimeConfiguration, dependencyIndex);
     plan.hasRuntimePaths = true;
-    plan.sha256 = QString::fromLatin1(QCryptographicHash::hash(
-        MibEffectivePlanResolver::canonicalBytes(plan), QCryptographicHash::Sha256).toHex());
+    MibEffectivePlanResolver::sealRuntimeAuthority(&plan);
     return plan;
 }
 
@@ -644,7 +643,7 @@ MibEnvironmentBuildResult MibModule::BuildEnvironment(const MibEffectivePlan &pl
         result.error = tr("MIB Library changed after the Profile runtime configuration was created");
         return result;
     }
-    const MibRuntimeStageResult stage = MibRuntimeStage::prepare(plan.runtimeConfiguration);
+    const MibRuntimeStageResult stage = MibRuntimeStage::prepare(plan);
     if (!stage.success) { result.error = stage.error; return result; }
     MibEffectivePlan isolatedPlan = plan;
     isolatedPlan.runtimeConfiguration = stage.configuration;

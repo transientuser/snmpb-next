@@ -91,22 +91,27 @@ int main(int argc, char **argv)
             return item.id == profileId;
         });
         if (found == profiles.cend()) { std::cerr << "profile not found\n"; return 3; }
-        const auto refreshed = MibResolveProfileDependencies(*found, index);
-        MibEffectivePlan plan = MibEffectivePlanResolver().resolve(refreshed.profile, index);
-        const auto configuration = MibProfileRuntimeConfigurationBuilder().build(refreshed.profile, index, {});
-        const auto stage = MibRuntimeStage::prepare(configuration, application.arguments().value(6));
+        MibEffectivePlan plan = MibEffectivePlanResolver().resolve(*found, index);
+        plan.runtimeConfiguration = MibProfileRuntimeConfigurationBuilder().build(*found, index, {});
+        plan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(plan.runtimeConfiguration, index);
+        plan.hasRuntimePaths = true;
+        MibEffectivePlanResolver::sealRuntimeAuthority(&plan);
+        const auto diagnosticResolution = MibResolveProfileDependencies(*found, index);
+        const auto stage = MibRuntimeStage::prepare(plan, application.arguments().value(6));
         std::cout << "added_before=" << found->members.size()
-                  << " dependencies_added=" << refreshed.addedDependencies.size()
-                  << " unresolved=" << refreshed.unresolved.size()
+                  << " plan_files=" << plan.runtimeFiles.size()
+                  << " catalog_candidates_not_added=" << diagnosticResolution.addedDependencies.size()
+                  << " unresolved=" << diagnosticResolution.unresolved.size()
                   << " stage_success=" << stage.success << " stage_reused=" << stage.reused << '\n';
         for (const QString &identity : {QStringLiteral("ATM-TC-MIB"), QStringLiteral("BRIDGE-MIB"),
                                        QStringLiteral("EXTREME-BASE-MIB"), QStringLiteral("UDP-MIB")}) {
-            for (const auto &member : refreshed.profile.members)
+            for (const auto &member : found->members)
                 if (member.identities.contains(identity))
                     std::cout << identity.toStdString() << '=' << canonical(member.canonicalPath).toStdString() << '\n';
         }
-        if (!refreshed.unresolved.isEmpty())
-            std::cout << "unresolved_identities=" << refreshed.unresolved.join(',').toStdString() << '\n';
+        if (!diagnosticResolution.unresolved.isEmpty())
+            std::cout << "unresolved_identities="
+                      << diagnosticResolution.unresolved.join(',').toStdString() << '\n';
         if (!stage.success) { std::cerr << stage.error.toStdString() << '\n'; return 4; }
         plan.runtimeConfiguration = stage.configuration;
         plan.runtimePaths = stage.paths; plan.hasRuntimePaths = true;
@@ -170,11 +175,98 @@ int main(int argc, char **argv)
     ok &= check(phaseFPaths.isValid() && phaseFPaths.orderedPaths() ==
                     QStringList{canonical(productA)},
                 "runtime paths contain only exact-member parent directories");
-    const auto phaseFPlan = MibEffectivePlanResolver().resolve(exact, index);
+    MibEffectivePlan phaseFPlan = MibEffectivePlanResolver().resolve(exact, index);
     ok &= check(phaseFPlan.member("ROOT-MIB") &&
                 phaseFPlan.member("ROOT-MIB")->provider.canonicalPath.endsWith("odd-name.mib") &&
                 !phaseFPlan.member("CONFLICT-MIB"),
                 "Effective Plan cannot select outside exact membership");
+    phaseFPlan.runtimeConfiguration = phaseFRuntime;
+    phaseFPlan.runtimePaths = phaseFPaths;
+    phaseFPlan.hasRuntimePaths = true;
+    MibEffectivePlanResolver::sealRuntimeAuthority(&phaseFPlan);
+    const auto oddPlanFile = std::find_if(phaseFPlan.runtimeFiles.cbegin(), phaseFPlan.runtimeFiles.cend(),
+        [&exact](const auto &file) { return file.canonicalPath == canonical(exact.members.first().canonicalPath); });
+    ok &= check(phaseFPlan.runtimeFiles.size() == exact.members.size() &&
+                oddPlanFile != phaseFPlan.runtimeFiles.cend() &&
+                !oddPlanFile->sha256.isEmpty() &&
+                !oddPlanFile->identities.isEmpty() &&
+                !oddPlanFile->aliases.isEmpty() &&
+                !phaseFPlan.runtimeAuthoritySha256.isEmpty(),
+                "Effective Plan carries the complete exact runtime file authority");
+    QTemporaryDir phaseFStageCache;
+    const auto phaseFStage = MibRuntimeStage::prepare(phaseFPlan, phaseFStageCache.path());
+    const QStringList phaseFArtifacts = QDir(phaseFStage.paths.orderedPaths().value(0))
+        .entryList(QDir::Files | QDir::NoDotAndDotDot);
+    ok &= check(phaseFStage.success &&
+                QDir(phaseFStage.directory).dirName() == phaseFPlan.runtimeAuthoritySha256 &&
+                phaseFStage.configuration.authorizedFiles().size() == exact.members.size() &&
+                QSet<QString>(phaseFArtifacts.cbegin(), phaseFArtifacts.cend()) ==
+                    QSet<QString>(phaseFRuntime.explicitRoots().cbegin(),
+                                  phaseFRuntime.explicitRoots().cend()),
+                "runtime stage is keyed by and consumes sealed Effective Plan authority");
+    MibProfileRecord renamedExact = exact;
+    renamedExact.name = "Cosmetic rename";
+    MibEffectivePlan renamedPlan = MibEffectivePlanResolver().resolve(renamedExact, index);
+    renamedPlan.runtimeConfiguration = exactBuilder.build(renamedExact, index, {});
+    renamedPlan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(
+        renamedPlan.runtimeConfiguration, index);
+    renamedPlan.hasRuntimePaths = true;
+    MibEffectivePlanResolver::sealRuntimeAuthority(&renamedPlan);
+    ok &= check(renamedPlan.runtimeAuthoritySha256 == phaseFPlan.runtimeAuthoritySha256 &&
+                renamedPlan.sha256 == phaseFPlan.sha256,
+                "cosmetic Profile name changes do not invalidate runtime authority or Plan identity");
+    MibProfileRecord changedContentAuthority = exact;
+    changedContentAuthority.members.first().sha256 = QString(64, 'a');
+    MibEffectivePlan changedContentPlan = MibEffectivePlanResolver().resolve(
+        changedContentAuthority, index);
+    changedContentPlan.runtimeConfiguration = exactBuilder.build(changedContentAuthority, index, {});
+    changedContentPlan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(
+        changedContentPlan.runtimeConfiguration, index);
+    changedContentPlan.hasRuntimePaths = true;
+    MibEffectivePlanResolver::sealRuntimeAuthority(&changedContentPlan);
+    ok &= check(changedContentPlan.runtimeAuthoritySha256 != phaseFPlan.runtimeAuthoritySha256,
+                "exact provider content hashes participate in Plan authority identity");
+    MibProfileRecord dependencyMarked = exact;
+    dependencyMarked.members.last().reason = MibProfileMemberReason::Dependency;
+    const auto dependencyMarkedPlan = MibEffectivePlanResolver().resolve(dependencyMarked, index);
+    ok &= check(std::any_of(dependencyMarkedPlan.runtimeFiles.cbegin(),
+                    dependencyMarkedPlan.runtimeFiles.cend(), [](const auto &file) {
+                        return file.origin == MibEffectivePlanFileOrigin::Dependency;
+                    }),
+                "existing deterministic Profile metadata marks dependency-origin Plan files");
+    MibProfileRecord admissionProfile;
+    admissionProfile.id = "plan-admission"; admissionProfile.name = "Plan admission";
+    admissionProfile.type = MibProfileType::Custom;
+    admissionProfile.members = MibProfileMembersFromFiles({QDir(productA).filePath("TEST-MIB")});
+    MibEffectivePlan admissionPlan = MibEffectivePlanResolver().resolve(admissionProfile, index);
+    admissionPlan.runtimeConfiguration = exactBuilder.build(admissionProfile, index, {});
+    admissionPlan.runtimePaths = MibRuntimePathConfigurationBuilder().derive(
+        admissionPlan.runtimeConfiguration, index);
+    admissionPlan.hasRuntimePaths = true;
+    MibEffectivePlanResolver::sealRuntimeAuthority(&admissionPlan);
+    QTemporaryDir admissionStageCache;
+    const auto admissionStage = MibRuntimeStage::prepare(admissionPlan, admissionStageCache.path());
+    smiInit("effective-runtime-plan-test");
+    MibEffectivePlan stagedAdmissionPlan = admissionPlan;
+    stagedAdmissionPlan.runtimeConfiguration = admissionStage.configuration;
+    stagedAdmissionPlan.runtimePaths = admissionStage.paths;
+    const auto admissionReset = MibRuntimeParser::reset(stagedAdmissionPlan.runtimePaths);
+    const auto admissionLoads = admissionReset.success
+        ? MibRuntimeParser::loadExplicitRoots(stagedAdmissionPlan.runtimeConfiguration,
+                                              stagedAdmissionPlan.runtimePaths)
+        : MibExplicitRootLoadBatch{};
+    const auto admitted = MibEnvironmentExtractor().extract(
+        stagedAdmissionPlan, admissionLoads.failedIdentities(), admissionLoads.roots);
+    MibEffectivePlan excludedPlan = stagedAdmissionPlan;
+    excludedPlan.runtimeFiles.clear();
+    const auto excluded = MibEnvironmentExtractor().extract(
+        excludedPlan, admissionLoads.failedIdentities(), admissionLoads.roots);
+    ok &= check(admissionStage.success && admissionReset.success && admitted->publishable() &&
+                canonical(admitted->loadedProviderPaths().value("TEST-MIB")) ==
+                    canonical(QDir(productA).filePath("TEST-MIB")) &&
+                !excluded->publishable() && !excluded->providersAuthorized(),
+                "post-load admission restores provenance and authorizes only Plan files");
+    smiExit();
     MibProfileRecord legacy = exact; legacy.members.clear(); legacy.unresolvedLegacyModules.clear();
     const auto rejected = MibEffectivePlanResolver().resolve(legacy, index);
     ok &= check(!rejected.authorityError.isEmpty() && rejected.members.isEmpty(),
@@ -620,7 +712,7 @@ int main(int argc, char **argv)
     ok &= check(!unauthorizedSiblingEnvironment->publishable() &&
                 !unauthorizedSiblingEnvironment->providersAuthorized() &&
                 unauthorizedSiblingEnvironment->constructionDiagnostics().join('\n').contains(
-                    "not an exact Profile member"),
+                "not in the Effective Plan"),
                 "a sibling file in an authorized directory is rejected unless it is an exact member");
 
     const QString collisionDir = QDir(aliasProduct).filePath("collision");
@@ -653,9 +745,8 @@ int main(int argc, char **argv)
             profile, aliasIndex, {aliasProductCollection, aliasStandardsCollection});
         plan.runtimePaths = pathBuilder.derive(plan.runtimeConfiguration, aliasIndex);
         plan.hasRuntimePaths = true;
-        plan.sha256 = QString::fromLatin1(QCryptographicHash::hash(
-            MibEffectivePlanResolver::canonicalBytes(plan), QCryptographicHash::Sha256).toHex());
-        const auto stage = MibRuntimeStage::prepare(plan.runtimeConfiguration, stageCache.path());
+        MibEffectivePlanResolver::sealRuntimeAuthority(&plan);
+        const auto stage = MibRuntimeStage::prepare(plan, stageCache.path());
         if (!stage.success) return std::pair<MibEffectivePlan, MibEnvironmentPtr>{plan, {}};
         plan.runtimeConfiguration = stage.configuration;
         plan.runtimePaths = stage.paths;
@@ -692,10 +783,8 @@ int main(int argc, char **argv)
     dependencyAProfile.id = "dependency-a"; dependencyAProfile.name = "dependency-a";
     dependencyAProfile.type = MibProfileType::Custom;
     dependencyAProfile.members = MibProfileMembersFromFiles({dependencyRootFile, dependencyAFile});
-    const auto dependencyAConfiguration = runtimeBuilder.build(
-        dependencyAProfile, aliasIndex, {aliasProductCollection, aliasStandardsCollection});
     const auto dependencyAStage = MibRuntimeStage::prepare(
-        dependencyAConfiguration, stageCache.path());
+        dependencyA.first, stageCache.path());
     ok &= check(dependencyAStage.success && dependencyAStage.reused &&
                 dependencyAStage.paths.orderedPaths().size() == 1 &&
                 !dependencyAStage.paths.orderedPaths().first().contains(collisionDir),
@@ -746,8 +835,11 @@ int main(int argc, char **argv)
     MibEffectivePlan refreshedPlan = MibEffectivePlanResolver().resolve(refreshed.profile, refreshIndex);
     const auto refreshedConfiguration = runtimeBuilder.build(refreshed.profile, refreshIndex, {});
     refreshedPlan.runtimeConfiguration = refreshedConfiguration;
+    refreshedPlan.runtimePaths = pathBuilder.derive(refreshedPlan.runtimeConfiguration, refreshIndex);
+    refreshedPlan.hasRuntimePaths = true;
+    MibEffectivePlanResolver::sealRuntimeAuthority(&refreshedPlan);
     const auto refreshedStage = MibRuntimeStage::prepare(
-        refreshedPlan.runtimeConfiguration, stageCache.path());
+        refreshedPlan, stageCache.path());
     refreshedPlan.runtimeConfiguration = refreshedStage.configuration;
     refreshedPlan.runtimePaths = refreshedStage.paths; refreshedPlan.hasRuntimePaths = true;
     MibRuntimeParser::reset(refreshedPlan.runtimePaths);
@@ -762,7 +854,7 @@ int main(int argc, char **argv)
     const QByteArray originalDependencyBytes = mib("ATM-TC-MIB") + "-- product\n";
     writeFile(productDependency, mib("ATM-TC-MIB") + "-- changed\n");
     const auto changedSourceStage = MibRuntimeStage::prepare(
-        refreshedConfiguration, stageCache.path());
+        refreshedPlan, stageCache.path());
     ok &= check(!changedSourceStage.success,
                 "changed source hash is rejected before cached-stage reuse");
     writeFile(productDependency, originalDependencyBytes);
@@ -770,13 +862,13 @@ int main(int argc, char **argv)
         .filePath("UNAUTHORIZED-MIB");
     writeFile(injectedArtifact, mib("UNAUTHORIZED-MIB"));
     const auto repairedStage = MibRuntimeStage::prepare(
-        runtimeBuilder.build(refreshed.profile, refreshIndex, {}), stageCache.path());
+        refreshedPlan, stageCache.path());
     ok &= check(repairedStage.success && !repairedStage.reused &&
                 !QFileInfo::exists(injectedArtifact),
                 "unrecognized staged artifacts invalidate and rebuild the stage");
     QFile::remove(QDir(repairedStage.directory).filePath("complete.json"));
     const auto incompleteStage = MibRuntimeStage::prepare(
-        runtimeBuilder.build(refreshed.profile, refreshIndex, {}), stageCache.path());
+        refreshedPlan, stageCache.path());
     ok &= check(incompleteStage.success && !incompleteStage.reused,
                 "incomplete stage is rejected and reconstructed atomically");
 

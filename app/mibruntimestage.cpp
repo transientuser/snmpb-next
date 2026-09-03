@@ -51,7 +51,7 @@ QString defaultRoot()
 }
 
 bool validateStage(const QString &directory,
-                   const MibProfileRuntimeConfiguration &configuration,
+                   const MibEffectivePlan &plan,
                    QMap<QString, QString> *aliases, QMap<QString, QString> *provenance)
 {
     QFile manifest(QDir(directory).filePath(QStringLiteral("complete.json")));
@@ -59,14 +59,14 @@ bool validateStage(const QString &directory,
     const QJsonDocument document = QJsonDocument::fromJson(manifest.readAll());
     const QJsonObject root = document.object();
     if (root.value("schema").toInt() != MibRuntimeStage::SchemaVersion ||
-        root.value("authority").toString() != configuration.sha256()) return false;
+        root.value("authority").toString() != plan.runtimeAuthoritySha256) return false;
     QSet<QString> expected;
-    for (auto it = configuration.rootAliases().cbegin(); it != configuration.rootAliases().cend(); ++it) {
-        expected.insert(it.key());
-        const QString staged = canonical(QDir(directory).filePath(QStringLiteral("aliases/") + it.key()));
-        if (!QFileInfo(staged).isFile() || sha256(staged) != it->sha256) return false;
-        aliases->insert(it.key(), staged);
-        provenance->insert(pathKey(staged), canonical(it->canonicalPath));
+    for (const auto &file : plan.runtimeFiles) for (const auto &alias : file.aliases) {
+        expected.insert(alias.identity);
+        const QString staged = canonical(QDir(directory).filePath(QStringLiteral("aliases/") + alias.identity));
+        if (!QFileInfo(staged).isFile() || sha256(staged) != file.sha256) return false;
+        aliases->insert(alias.identity, staged);
+        provenance->insert(pathKey(staged), canonical(file.canonicalPath));
     }
     const QStringList artifacts = QDir(QDir(directory).filePath(QStringLiteral("aliases")))
         .entryList(QDir::Files | QDir::NoDotAndDotDot);
@@ -76,18 +76,23 @@ bool validateStage(const QString &directory,
 }
 
 MibRuntimeStageResult MibRuntimeStage::prepare(
-    const MibProfileRuntimeConfiguration &source, const QString &requestedRoot)
+    const MibEffectivePlan &plan, const QString &requestedRoot)
 {
     MibRuntimeStageResult result;
+    const MibProfileRuntimeConfiguration &source = plan.runtimeConfiguration;
     result.configuration = source;
+    if (plan.runtimeAuthoritySha256.isEmpty()) {
+        result.error = QStringLiteral("Effective Plan runtime authority is not sealed");
+        return result;
+    }
     QMap<QString, QString> identitySources;
-    for (const auto &member : source.authorizedFiles()) {
-        const QString original = canonical(member.canonicalPath);
-        if (!QFileInfo(original).isFile() || sha256(original) != member.sha256) {
+    for (const auto &file : plan.runtimeFiles) {
+        const QString original = canonical(file.canonicalPath);
+        if (!QFileInfo(original).isFile() || sha256(original) != file.sha256) {
             result.error = QStringLiteral("Authorized MIB source is missing or changed: %1").arg(original);
             return result;
         }
-        for (const QString &identity : member.identities) {
+        for (const QString &identity : file.identities) {
             if (!safeIdentity(identity)) {
                 result.error = QStringLiteral("Unsafe declared MIB identity: %1").arg(identity);
                 return result;
@@ -107,9 +112,9 @@ MibRuntimeStageResult MibRuntimeStage::prepare(
         result.error = QStringLiteral("Cannot create runtime-stage cache: %1").arg(root);
         return result;
     }
-    const QString finalDirectory = QDir(root).filePath(source.sha256());
+    const QString finalDirectory = QDir(root).filePath(plan.runtimeAuthoritySha256);
     QMap<QString, QString> aliases, provenance;
-    if (validateStage(finalDirectory, source, &aliases, &provenance)) {
+    if (validateStage(finalDirectory, plan, &aliases, &provenance)) {
         result.reused = true;
     } else {
         if (QFileInfo::exists(finalDirectory) && !QDir(finalDirectory).removeRecursively()) {
@@ -120,22 +125,27 @@ MibRuntimeStageResult MibRuntimeStage::prepare(
             .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
         QDir temp;
         if (!temp.mkpath(QDir(temporary).filePath(QStringLiteral("aliases")))) {
-            result.error = QStringLiteral("Cannot create temporary runtime stage");
+            result.error = QStringLiteral("Cannot create temporary runtime stage: %1")
+                .arg(QDir(temporary).filePath(QStringLiteral("aliases")));
             return result;
         }
         bool populated = true;
-        for (auto it = source.rootAliases().cbegin(); it != source.rootAliases().cend(); ++it) {
-            const QString staged = QDir(temporary).filePath(QStringLiteral("aliases/") + it.key());
-            if (!QFile::copy(it->canonicalPath, staged) || sha256(staged) != it->sha256) {
+        for (const auto &file : plan.runtimeFiles) for (const auto &alias : file.aliases) {
+            const QString staged = QDir(temporary).filePath(QStringLiteral("aliases/") + alias.identity);
+            if (!QFile::copy(file.canonicalPath, staged) || sha256(staged) != file.sha256) {
                 populated = false;
-                result.error = QStringLiteral("Cannot stage exact provider for %1").arg(it.key());
+                result.error = QStringLiteral("Cannot stage exact provider for %1").arg(alias.identity);
                 break;
             }
+        }
+        if (!populated) {
+            QDir(temporary).removeRecursively();
+            return result;
         }
         if (populated) {
             QSaveFile marker(QDir(temporary).filePath(QStringLiteral("complete.json")));
             const QByteArray bytes = QJsonDocument(QJsonObject{
-                {"schema", SchemaVersion}, {"authority", source.sha256()}}).toJson(QJsonDocument::Compact);
+                {"schema", SchemaVersion}, {"authority", plan.runtimeAuthoritySha256}}).toJson(QJsonDocument::Compact);
             populated = marker.open(QIODevice::WriteOnly) && marker.write(bytes) == bytes.size() && marker.commit();
             if (!populated) result.error = QStringLiteral("Cannot complete runtime-stage manifest");
         }
@@ -146,14 +156,14 @@ MibRuntimeStageResult MibRuntimeStage::prepare(
         QDir parent(root);
         if (!parent.rename(QFileInfo(temporary).fileName(), QFileInfo(finalDirectory).fileName())) {
             QDir(temporary).removeRecursively();
-            if (!validateStage(finalDirectory, source, &aliases, &provenance)) {
+            if (!validateStage(finalDirectory, plan, &aliases, &provenance)) {
                 result.error = QStringLiteral("Cannot atomically promote runtime stage");
                 return result;
             }
             result.reused = true;
         }
         aliases.clear(); provenance.clear();
-        if (!validateStage(finalDirectory, source, &aliases, &provenance)) {
+        if (!validateStage(finalDirectory, plan, &aliases, &provenance)) {
             result.error = QStringLiteral("Completed runtime stage failed validation");
             return result;
         }
@@ -161,16 +171,16 @@ MibRuntimeStageResult MibRuntimeStage::prepare(
 
     result.directory = canonical(finalDirectory);
     result.configuration.rootAliasesValue.clear();
-    for (auto it = source.rootAliases().cbegin(); it != source.rootAliases().cend(); ++it) {
-        MibRuntimeRootAlias alias = it.value();
-        alias.canonicalPath = aliases.value(it.key());
-        result.configuration.rootAliasesValue.insert(it.key(), alias);
+    for (const auto &file : plan.runtimeFiles) for (const auto &sourceAlias : file.aliases) {
+        MibRuntimeRootAlias alias = sourceAlias;
+        alias.canonicalPath = aliases.value(alias.identity);
+        result.configuration.rootAliasesValue.insert(alias.identity, alias);
     }
     result.configuration.stagedToOriginalValue = provenance;
     result.paths.entriesValue.append({canonical(QDir(finalDirectory).filePath(QStringLiteral("aliases"))),
         QString(), MibRuntimeCollectionRole::General, false});
     result.paths.sha256Value = QString::fromLatin1(QCryptographicHash::hash(
-        MibRuntimePathConfigurationBuilder::canonicalBytes(result.paths, source.sha256()),
+        MibRuntimePathConfigurationBuilder::canonicalBytes(result.paths, plan.runtimeAuthoritySha256),
         QCryptographicHash::Sha256).toHex());
     result.success = true;
     return result;

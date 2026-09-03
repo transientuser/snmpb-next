@@ -118,9 +118,24 @@ struct MibEffectivePlanMember {
     QStringList imports;
 };
 
+enum class MibEffectivePlanFileOrigin { Root, Dependency };
+
+struct MibEffectivePlanFile {
+    QString canonicalPath;
+    QString sha256;
+    QStringList identities;
+    MibEffectivePlanFileOrigin origin = MibEffectivePlanFileOrigin::Root;
+    QStringList requiredBy;
+    int loadOrder = -1;
+    QList<MibRuntimeRootAlias> aliases;
+    QStringList diagnostics;
+};
+
 struct MibEffectivePlan {
-    static constexpr int SchemaVersion = 2;
+    static constexpr int SchemaVersion = 3;
     static constexpr int PolicyVersion = 2;
+    static constexpr int RuntimeAuthoritySchemaVersion = 1;
+    static constexpr int RuntimeStageSchemaVersion = 1;
     static constexpr int MaximumConvergencePasses = 8;
 
     QString profileId;
@@ -137,6 +152,8 @@ struct MibEffectivePlan {
     QStringList nonConvergentModules;
     QStringList cycles;
     QStringList initialLoadOrder;
+    QList<MibEffectivePlanFile> runtimeFiles;
+    QString runtimeAuthoritySha256;
     QString authorityError;
     int convergencePasses = 0;
     bool converged = true;
@@ -156,6 +173,8 @@ public:
     MibEffectivePlan resolve(const MibProfileRecord &profile,
                              const MibDependencyIndex &library) const;
     static QByteArray canonicalBytes(const MibEffectivePlan &plan);
+    static QByteArray runtimeAuthorityCanonicalBytes(const MibEffectivePlan &plan);
+    static void sealRuntimeAuthority(MibEffectivePlan *plan);
 };
 
 #endif

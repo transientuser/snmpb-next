@@ -238,7 +238,7 @@ int main(int argc, char **argv)
                 moduleSourceText.contains("MibRuntimeParser::loadExplicitRoots(") &&
                 !moduleSourceText.contains("MibBoundedDependencyLoader().load(plan, load)") &&
                 moduleSourceText.contains("MibEnvironmentExtractor().extract(isolatedPlan,missing,rootOutcomes)") &&
-                moduleSourceText.contains("MibRuntimeStage::prepare(plan.runtimeConfiguration)") &&
+                moduleSourceText.contains("MibRuntimeStage::prepare(plan)") &&
                 moduleSourceText.contains("RestoreRuntimeAfterEditorValidation"),
                 "one pure Effective Plan resolver owns membership while runtime loads explicit roots alias-first and leaves imports native");
     auto *table = widget.findChild<QTableWidget *>("MibLibraryTable");

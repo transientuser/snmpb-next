@@ -15,9 +15,9 @@ struct MibRuntimeStageResult {
 class MibRuntimeStage final
 {
 public:
-    static constexpr int SchemaVersion = 1;
+    static constexpr int SchemaVersion = MibEffectivePlan::RuntimeStageSchemaVersion;
     static MibRuntimeStageResult prepare(
-        const MibProfileRuntimeConfiguration &configuration,
+        const MibEffectivePlan &plan,
         const QString &cacheRoot = {});
 };
 

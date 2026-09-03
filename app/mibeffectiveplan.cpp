@@ -344,6 +344,35 @@ MibEffectivePlan MibEffectivePlanResolver::resolve(const MibProfileRecord &profi
     for (const QString &identity : plan.effectiveModules) visit(identity, {});
     plan.cycles = sortedUnique(plan.cycles);
     plan.initialLoadOrder.removeDuplicates();
+
+    QList<MibProfileMember> profileFiles = profile.members;
+    std::sort(profileFiles.begin(), profileFiles.end(), [](const auto &a, const auto &b) {
+        const QString left = canonicalPath(a.canonicalPath), right = canonicalPath(b.canonicalPath);
+        const int insensitive = QString::compare(left, right, Qt::CaseInsensitive);
+        return insensitive != 0 ? insensitive < 0
+                                : QString::compare(left, right, Qt::CaseSensitive) < 0;
+    });
+    for (const auto &profileFile : std::as_const(profileFiles)) {
+        MibEffectivePlanFile file;
+        file.canonicalPath = canonicalPath(profileFile.canonicalPath);
+        file.sha256 = profileFile.sha256;
+        file.identities = sortedUnique(profileFile.identities);
+        file.origin = profileFile.reason == MibProfileMemberReason::Dependency
+            ? MibEffectivePlanFileOrigin::Dependency : MibEffectivePlanFileOrigin::Root;
+        for (const QString &identity : std::as_const(file.identities)) {
+            const int position = plan.initialLoadOrder.indexOf(identity);
+            if (position >= 0 && (file.loadOrder < 0 || position < file.loadOrder))
+                file.loadOrder = position;
+            file.aliases.append({identity, QString(), file.canonicalPath, file.sha256});
+            for (const auto &candidate : std::as_const(plan.members))
+                if (candidate.imports.contains(identity)) file.requiredBy.append(candidate.identity);
+        }
+        file.requiredBy = sortedUnique(file.requiredBy);
+        if (!QFileInfo(file.canonicalPath).isFile())
+            file.diagnostics.append(QObject::tr("Planned MIB file is not readable: %1")
+                                        .arg(file.canonicalPath));
+        plan.runtimeFiles.append(file);
+    }
     plan.sha256 = QString::fromLatin1(QCryptographicHash::hash(
         canonicalBytes(plan), QCryptographicHash::Sha256).toHex());
     return plan;
@@ -390,11 +419,50 @@ QByteArray MibEffectivePlanResolver::canonicalBytes(const MibEffectivePlan &plan
     root.insert(QStringLiteral("members"), members);
     root.insert(QStringLiteral("order"), strings(plan.initialLoadOrder));
     root.insert(QStringLiteral("cycles"), strings(plan.cycles));
+    root.insert(QStringLiteral("runtimeAuthority"), plan.runtimeAuthoritySha256);
+    root.insert(QStringLiteral("runtimeFiles"),
+                QJsonDocument::fromJson(runtimeAuthorityCanonicalBytes(plan)).object()
+                    .value(QStringLiteral("files")));
     if (plan.hasRuntimePaths) {
         root.insert(QStringLiteral("runtimeConfiguration"), plan.runtimeConfiguration.sha256());
         root.insert(QStringLiteral("runtimePaths"), plan.runtimePaths.sha256());
     }
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+QByteArray MibEffectivePlanResolver::runtimeAuthorityCanonicalBytes(const MibEffectivePlan &plan)
+{
+    QJsonObject root{{QStringLiteral("schema"), MibEffectivePlan::RuntimeAuthoritySchemaVersion},
+                     {QStringLiteral("stageSchema"), MibEffectivePlan::RuntimeStageSchemaVersion},
+                     {QStringLiteral("runtimeConfiguration"), plan.runtimeConfiguration.sha256()},
+                     {QStringLiteral("runtimePaths"), plan.runtimePaths.sha256()}};
+    QJsonArray files;
+    for (const auto &file : plan.runtimeFiles) {
+        QJsonArray aliases;
+        for (const auto &alias : file.aliases)
+            aliases.append(QJsonObject{{QStringLiteral("identity"), alias.identity},
+                {QStringLiteral("path"), QDir::fromNativeSeparators(alias.canonicalPath)},
+                {QStringLiteral("hash"), alias.sha256}});
+        files.append(QJsonObject{{QStringLiteral("path"), QDir::fromNativeSeparators(file.canonicalPath)},
+            {QStringLiteral("hash"), file.sha256},
+            {QStringLiteral("identities"), strings(file.identities)},
+            {QStringLiteral("origin"), static_cast<int>(file.origin)},
+            {QStringLiteral("requiredBy"), strings(file.requiredBy)},
+            {QStringLiteral("loadOrder"), file.loadOrder},
+            {QStringLiteral("aliases"), aliases},
+            {QStringLiteral("diagnostics"), strings(file.diagnostics)}});
+    }
+    root.insert(QStringLiteral("files"), files);
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+void MibEffectivePlanResolver::sealRuntimeAuthority(MibEffectivePlan *plan)
+{
+    if (!plan) return;
+    plan->runtimeAuthoritySha256 = QString::fromLatin1(QCryptographicHash::hash(
+        runtimeAuthorityCanonicalBytes(*plan), QCryptographicHash::Sha256).toHex());
+    plan->sha256 = QString::fromLatin1(QCryptographicHash::hash(
+        canonicalBytes(*plan), QCryptographicHash::Sha256).toHex());
 }
 
 MibDependencyCheckResult MibBoundedDependencyLoader::load(
