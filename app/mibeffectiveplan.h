@@ -41,16 +41,19 @@ public:
     quint64 libraryGeneration() const { return libraryGenerationValue; }
     const QMap<QString, MibRuntimeRootAlias> &rootAliases() const { return rootAliasesValue; }
     const QList<MibProfileMember> &authorizedFiles() const { return authorizedFilesValue; }
+    const QMap<QString, QString> &stagedToOriginal() const { return stagedToOriginalValue; }
     QString sha256() const { return sha256Value; }
 
 private:
     friend class MibProfileRuntimeConfigurationBuilder;
+    friend class MibRuntimeStage;
     QString profileIdValue;
     QString profileRevisionSha256Value;
     QStringList explicitRootsValue;
     quint64 libraryGenerationValue = 0;
     QMap<QString, MibRuntimeRootAlias> rootAliasesValue;
     QList<MibProfileMember> authorizedFilesValue;
+    QMap<QString, QString> stagedToOriginalValue;
     QList<MibRuntimeCollectionReference> noCollections;
     QString sha256Value;
 };
@@ -83,6 +86,7 @@ public:
 
 private:
     friend class MibRuntimePathConfigurationBuilder;
+    friend class MibRuntimeStage;
     QList<MibRuntimePathEntry> entriesValue;
     QStringList diagnosticsValue;
     QString sha256Value;

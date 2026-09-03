@@ -176,6 +176,18 @@ int main(int argc, char **argv)
     ok &= check(applicationSourceText.contains("removeTab(legacyModulesTab)") &&
                 applicationSourceText.contains("insertTab(1, mibLibrary, tr(\"MIBs\"))"),
                 "top-level navigation exposes one consolidated MIBs workspace");
+    ok &= check(applicationSourceText.contains("CurrentEnvironmentStatus") &&
+                applicationSourceText.contains("CurrentMibProfile") &&
+                applicationSourceText.contains("QueryToolBar") &&
+                applicationSourceText.contains("QueryObjectAddress") &&
+                applicationSourceText.contains("MibTreeFilter") &&
+                applicationSourceText.contains("StructuredQueryResults"),
+                "Wave 1 exposes persistent context, query actions, target, filter, and structured results");
+    ok &= check(!moduleSourceText.contains("MainUI()->LoadedModules") &&
+                !moduleSourceText.contains("MainUI()->UnloadedModules") &&
+                !moduleSourceText.contains("MainUI()->ModuleAdd") &&
+                !moduleSourceText.contains("MainUI()->ModuleDelete"),
+                "legacy Available/Loaded Modules presentation plumbing is disconnected");
     ok &= check(applicationSourceText.contains("mibLibrary->activate();") &&
                 !applicationSourceText.contains("currentTab == mibLibrary) {\n        SetEditorMenus(false);\n        MainUI()->actionMultipleVarbinds->setEnabled(false);\n        mibLibrary->refresh();"),
                 "top-level MIBs activation does not call Library refresh");
@@ -225,7 +237,8 @@ int main(int argc, char **argv)
                 !effectivePlanSourceText.contains("mibpreloads") &&
                 moduleSourceText.contains("MibRuntimeParser::loadExplicitRoots(") &&
                 !moduleSourceText.contains("MibBoundedDependencyLoader().load(plan, load)") &&
-                moduleSourceText.contains("MibEnvironmentExtractor().extract(plan,missing,rootOutcomes)") &&
+                moduleSourceText.contains("MibEnvironmentExtractor().extract(isolatedPlan,missing,rootOutcomes)") &&
+                moduleSourceText.contains("MibRuntimeStage::prepare(plan.runtimeConfiguration)") &&
                 moduleSourceText.contains("RestoreRuntimeAfterEditorValidation"),
                 "one pure Effective Plan resolver owns membership while runtime loads explicit roots alias-first and leaves imports native");
     auto *table = widget.findChild<QTableWidget *>("MibLibraryTable");

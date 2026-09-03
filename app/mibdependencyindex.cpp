@@ -178,7 +178,7 @@ bool MibDependencyIndex::load(QString *error)
         return true;
     }
     records = loaded; currentGeneration = quint64(root.value("generation").toDouble());
-    const bool scannerUpgradeRequired = root.value("scannerVersion").toInt() != 2;
+    const bool scannerUpgradeRequired = root.value("scannerVersion").toInt() != 4;
     if (scannerUpgradeRequired) for (auto &record : records) record.size = -1;
     profileChecks.clear();
     const QJsonObject checks = root.value("profileChecks").toObject();
@@ -235,7 +235,7 @@ bool MibDependencyIndex::save(QString *error) const
             {"checkedUtc", c.checkedUtc.toUTC().toString(Qt::ISODate)}, {"elapsedMsecs", double(c.elapsedMsecs)}});
     }
     QDir().mkpath(QFileInfo(filePath).absolutePath()); QSaveFile file(filePath);
-    const QJsonObject root{{"schemaVersion", 1}, {"scannerVersion", 2}, {"generation", double(currentGeneration)},
+    const QJsonObject root{{"schemaVersion", 1}, {"scannerVersion", 4}, {"generation", double(currentGeneration)},
                            {"libraryRoot", ownedLibraryRoot}, {"files", files},
                            {"profileChecks", checks}};
     if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 || !file.commit()) {

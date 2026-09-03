@@ -22,6 +22,7 @@ public:
     void showAllModules();
     QStringList visibleModules() const;
     bool queryTableAvailable() const;
+    QString currentObjectOid() const { return currentOid(); }
 
 signals:
     void NodeProperties(const QString &text);
@@ -35,6 +36,7 @@ signals:
     void GetTableInstancesFromOid(const QString &oid);
     void VarbindsFromOid(const QString &oid);
     void QueryTableAvailabilityChanged(bool available);
+    void CurrentObjectChanged(const QString &oid);
 
 public slots:
     void SetWalkInProgress(bool value) { walkInProgress = value; }
@@ -42,6 +44,10 @@ public slots:
     void ExecuteFindNext();
     void QueryTableFromCurrent();
     void SetQueryPrerequisitesAvailable(bool available);
+    void SetFilterText(const QString &text);
+    void QueryCurrent(int operation);
+    void WalkCurrent();
+    void SetCurrent();
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;

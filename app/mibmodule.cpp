@@ -43,6 +43,7 @@
 #include "mibprofile.h"
 #include "mibcandidatefilter.h"
 #include "mibruntimeparser.h"
+#include "mibruntimestage.h"
 
 namespace {
 QString currentLibraryRoot()
@@ -156,22 +157,6 @@ MibModule::MibModule(Snmpb *snmpb)
     DiagnosticLogger::log("Startup", tr("requested MIB load complete elapsed_ms=%1 requested=%2 loaded=%3")
         .arg(phase.elapsed()).arg(0).arg(Loaded.size()));
 
-    // Connect some signals
-    connect( s->MainUI()->UnloadedModules, 
-             SIGNAL(itemDoubleClicked ( QTreeWidgetItem *, int )),
-             this, SLOT( AddModule() ) );
-    connect( s->MainUI()->LoadedModules, 
-             SIGNAL(itemDoubleClicked ( QTreeWidgetItem *, int )),
-             this, SLOT( RemoveModule() ) );
-    connect( s->MainUI()->LoadedModules, SIGNAL(itemSelectionChanged ()),
-             this, SLOT( ShowModuleInfo() ) );
-    connect( this, SIGNAL(ModuleProperties(const QString&)),
-             (QObject*)s->MainUI()->ModuleInfo, 
-             SLOT(setHtml(const QString&)) );
-    connect( s->MainUI()->ModuleAdd, 
-             SIGNAL( clicked() ), this, SLOT( AddModule() ));
-    connect( s->MainUI()->ModuleDelete, 
-             SIGNAL( clicked() ), this, SLOT( RemoveModule() ));
     connect( this, SIGNAL( StopAgentTimer() ), 
              s->AgentObj(), SLOT( StopTimer() ));
     environmentManager=std::make_unique<MibEnvironmentManager>(
@@ -194,25 +179,8 @@ MibModule::MibModule(Snmpb *snmpb)
 
 void MibModule::ShowModuleInfo()
 {
-    QTreeWidgetItem *item;
-    QList<QTreeWidgetItem *> item_list = 
-                             s->MainUI()->LoadedModules->selectedItems();
-
-    if ((item_list.count() == 1) && ((item = item_list.first()) != 0))
-    {
-        QString text;
-        LoadedMibModule *lmodule;
-        for(int i = 0; i < Loaded.count(); i++)
-        { 
-            lmodule = &Loaded[i];
-            if (lmodule->name == item->text(0))
-            {
-                lmodule->PrintProperties(text);
-                emit ModuleProperties(text);
-                break;
-            }
-        }
-    }    
+    // Legacy Available/Loaded Modules presentation was removed. Module metadata
+    // is presented by the Environment-backed inspector and MIB Catalog.
 }
 
 // For sorting total module list based on name
@@ -572,7 +540,6 @@ void MibModule::RebuildLoadedList()
 {
     auto engineOperation=MibEngine::instance().beginOperation(QStringLiteral("loaded-list"));
     Loaded.clear();
-    s->MainUI()->LoadedModules->clear();
 
     for (SmiModule *mod = smiGetFirstModule();
          mod;
@@ -581,15 +548,6 @@ void MibModule::RebuildLoadedList()
         LoadedMibModule lmodule(SnapshotMibModule(mod));
         Loaded.append(lmodule);
 
-        QString required = hasActiveProfilePlan && activeProfilePlan.explicitModules.contains(lmodule.name)
-            ? tr("yes") : tr("no");
-
-        QStringList columns;
-        columns << lmodule.name.toUtf8().data()
-                << required
-                << lmodule.GetMibLanguage()
-                << lmodule.path;
-        new QTreeWidgetItem(s->MainUI()->LoadedModules, columns);
     }
     
     std::sort(Loaded.begin(), Loaded.end(), lessThanLoadedMibModule);
@@ -598,7 +556,6 @@ void MibModule::RebuildLoadedList()
 void MibModule::RebuildUnloadedList()
 {
     Unloaded.clear();
-    s->MainUI()->UnloadedModules->clear();
     
     for(int i = 0; i < Total.count(); ++i)
     {
@@ -617,8 +574,6 @@ void MibModule::RebuildUnloadedList()
         }
         if (!found) {
             Unloaded.append(current);
-            new QTreeWidgetItem(s->MainUI()->UnloadedModules, 
-                                QStringList(current));
         }
     }
 }
@@ -689,15 +644,20 @@ MibEnvironmentBuildResult MibModule::BuildEnvironment(const MibEffectivePlan &pl
         result.error = tr("MIB Library changed after the Profile runtime configuration was created");
         return result;
     }
-    const auto reset = MibRuntimeParser::reset(plan.runtimePaths, [] {
+    const MibRuntimeStageResult stage = MibRuntimeStage::prepare(plan.runtimeConfiguration);
+    if (!stage.success) { result.error = stage.error; return result; }
+    MibEffectivePlan isolatedPlan = plan;
+    isolatedPlan.runtimeConfiguration = stage.configuration;
+    isolatedPlan.runtimePaths = stage.paths;
+    const auto reset = MibRuntimeParser::reset(isolatedPlan.runtimePaths, [] {
         smiSetErrorHandler(NormalErrorHdlr);
         smiSetErrorLevel(0);
     });
     if (!reset.success) { result.error = reset.error; return result; }
     DiagnosticLogger::log("MIB", tr("Profile runtime parser reset paths=%1 path-hash=%2")
-        .arg(reset.appliedPaths.size()).arg(plan.runtimePaths.sha256()));
+        .arg(reset.appliedPaths.size()).arg(isolatedPlan.runtimePaths.sha256()));
     QList<MibExplicitRootLoadResult> rootOutcomes;
-    const QStringList unavailable=LoadEffectivePlan(plan,&rootOutcomes);
+    const QStringList unavailable=LoadEffectivePlan(isolatedPlan,&rootOutcomes);
     QStringList missing;
     for(const QString &identity:plan.effectiveModules)
         if(!smiGetModule(identity.toLocal8Bit().constData()))missing.append(identity);
@@ -705,7 +665,7 @@ MibEnvironmentBuildResult MibModule::BuildEnvironment(const MibEffectivePlan &pl
     missing.append(plan.ambiguousModules);
     missing.append(plan.pinFailureModules);
     missing.append(unavailable);missing.removeDuplicates();
-    result.environment=MibEnvironmentExtractor().extract(plan,missing,rootOutcomes);
+    result.environment=MibEnvironmentExtractor().extract(isolatedPlan,missing,rootOutcomes);
     for(SmiModule *module=smiGetFirstModule();module;module=smiGetNextModule(module))
         if(module->name)result.loadedModules.append(QString::fromLocal8Bit(module->name));
     result.loadedModules.removeDuplicates();result.loadedModules.sort(Qt::CaseSensitive);
@@ -728,7 +688,7 @@ MibEnvironmentBuildResult MibModule::BuildEnvironment(const MibEffectivePlan &pl
             }
         result.error=tr("MIB Environment authorization failed; parser modules=%1; first provider=%2; first actual=%3; runtime paths=%4; diagnostics=%5")
             .arg(result.loadedModules.size()).arg(firstProvider, firstActualProvider,
-                plan.runtimePaths.orderedPaths().join(QDir::listSeparator()),
+                isolatedPlan.runtimePaths.orderedPaths().join(QDir::listSeparator()),
                 result.environment ? result.environment->constructionDiagnostics().join(QStringLiteral("; "))
                                    : QString());
     }
@@ -776,10 +736,6 @@ void MibModule::Refresh()
     }
 
     if (hasActiveProfilePlan) ApplyProfileRuntime(activeProfilePlan);
-    s->MainUI()->LoadedModules->resizeColumnToContents(0);
-    s->MainUI()->UnloadedModules->resizeColumnToContents(0);
-    s->MainUI()->LoadedModules->sortByColumn(0, Qt::AscendingOrder);
-    s->MainUI()->UnloadedModules->sortByColumn(0, Qt::AscendingOrder);
 }
 
 void MibModule::RescanPath()

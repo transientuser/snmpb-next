@@ -120,4 +120,13 @@ struct MibProfileModuleAdditionResult {
 MibProfileModuleAdditionResult MibAddModulesToEditableProfile(
     MibProfileService &service, const QString &profileId, const QStringList &moduleIdentities);
 
+struct MibProfileDependencyRefreshResult {
+    MibProfileRecord profile;
+    QList<MibProfileMember> addedDependencies;
+    QStringList unresolved;
+};
+
+MibProfileDependencyRefreshResult MibResolveProfileDependencies(
+    const MibProfileRecord &profile, const MibDependencyIndex &index);
+
 #endif

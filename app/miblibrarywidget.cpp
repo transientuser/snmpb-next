@@ -376,10 +376,10 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     auto *profileLayout = new QVBoxLayout(profilePage);
     auto *profileActions = new QHBoxLayout;
     profileCombo = new QComboBox(profilePage); profileCombo->setObjectName("MibProfileEditorSelector");
-    auto *newProfile = new QPushButton(tr("New"), profilePage);
+    auto *newProfile = new QPushButton(tr("New Profile"), profilePage);
     auto *duplicateProfileButton = new QPushButton(tr("Duplicate"), profilePage);
-    auto *addFilesButton = new QPushButton(tr("Add Files"), profilePage);
-    auto *addFolderButton = new QPushButton(tr("Add Folder"), profilePage);
+    auto *addFilesButton = new QPushButton(tr("Add Files..."), profilePage);
+    auto *addFolderButton = new QPushButton(tr("Add Folder Snapshot..."), profilePage);
     renameProfileButton = new QPushButton(tr("Rename"), profilePage);
     deleteProfileButton = new QPushButton(tr("Delete"), profilePage);
     auto *activeProfileLabel = new QLabel(tr("Active MIB Profile:"), profilePage);
@@ -412,13 +412,14 @@ MibLibraryWidget::MibLibraryWidget(const QStringList &paths,
     removeMemberButton = new QPushButton(tr("< Remove"), movePane);
     moveLayout->addWidget(addMemberButton); moveLayout->addWidget(removeMemberButton); moveLayout->addStretch();
     auto *memberPane = new QWidget(profileSplitter); auto *memberLayout = new QVBoxLayout(memberPane);
-    memberLayout->addWidget(new QLabel(tr("Profile MIBs"), memberPane));
+    memberLayout->addWidget(new QLabel(tr("Profile files — File · Declared identities · Why · Status"), memberPane));
     memberSearch = new QLineEdit(memberPane); memberSearch->setObjectName("MibProfileMemberFilter");
     memberSearch->setPlaceholderText(tr("Filter profile"));
     memberList = new QListWidget(memberPane); memberList->setObjectName("MibProfileMemberList");
     memberList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     includeStandards = new QCheckBox(tr("Include standard SNMP / MIB-II base"), memberPane);
     includeStandards->setObjectName("MibProfileIncludeStandards");
+    includeStandards->hide();
     memberLayout->addWidget(memberSearch); memberLayout->addWidget(memberList); memberLayout->addWidget(includeStandards);
     profileEmptyState = new QLabel(memberPane);
     profileEmptyState->setObjectName("MibProfileEmptyState");
@@ -943,7 +944,7 @@ void MibLibraryWidget::profileChanged()
     includeStandards->setEnabled(editable);
     profileSource->setText(tr("%n exact file member(s)", nullptr, selectedProfile.members.size()));
     profileGuidance->setText(tr("Profile membership is a saved snapshot of exact files. Later folder changes do not rewrite this Profile."));
-    openProfileFolderButton->setVisible(selectedProfile.type == MibProfileType::Folder);
+    openProfileFolderButton->hide();
     const MibEffectivePlan plan = planFor(selectedProfile);
     refreshProfileLists(&plan);
     for (int row = 0; row < table->rowCount(); ++row) {
@@ -1048,14 +1049,20 @@ void MibLibraryWidget::refreshProfileLists(const MibEffectivePlan *providedPlan)
     memberList->clear();
     if (!profile->members.isEmpty()) {
         for (const auto &member : profile->members) {
-            auto *item = new QListWidgetItem(tr("%1 — %2").arg(
-                member.identities.join(QStringLiteral(", ")),
-                QDir::toNativeSeparators(member.canonicalPath)), memberList);
-            item->setData(Qt::UserRole, member.canonicalPath);
             const auto state = MibProfileMemberCurrentState(member);
+            const QString stateText = state == MibProfileMemberState::Current ? tr("OK")
+                : state == MibProfileMemberState::Missing ? tr("Missing")
+                : state == MibProfileMemberState::Changed ? tr("Changed") : tr("Catalog stale");
+            const QString why = member.reason == MibProfileMemberReason::Dependency
+                ? tr("Dependency") : tr("Added");
+            auto *item = new QListWidgetItem(tr("%1 · %2 · %3 · %4").arg(
+                QFileInfo(member.canonicalPath).fileName(),
+                member.identities.join(QStringLiteral(", ")), why, stateText), memberList);
+            item->setData(Qt::UserRole, member.canonicalPath);
+            item->setToolTip(QDir::toNativeSeparators(member.canonicalPath));
             if (state != MibProfileMemberState::Current)
-                item->setToolTip(state == MibProfileMemberState::Missing
-                    ? tr("Profile file is missing") : tr("Profile file content changed"));
+                item->setToolTip(item->toolTip() + (state == MibProfileMemberState::Missing
+                    ? tr("\nProfile file is missing") : tr("\nProfile file content changed")));
         }
     } else memberList->addItems(profile->explicitModules);
     profileEmptyState->setVisible(memberList->count() == 0);

@@ -621,3 +621,83 @@ MibProfileModuleAdditionResult MibAddModulesToEditableProfile(
     result.status = MibProfileModuleAdditionStatus::Updated;
     return result;
 }
+
+MibProfileDependencyRefreshResult MibResolveProfileDependencies(
+    const MibProfileRecord &profile, const MibDependencyIndex &index)
+{
+    MibProfileDependencyRefreshResult result;
+    result.profile = profile;
+    QMap<QString, MibProfileMember> selected;
+    for (const auto &member : profile.members)
+        for (const QString &identity : member.identities)
+            selected.insert(identity, member);
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        QMap<QString, QSet<QString>> requestedFromFolders;
+        for (auto it = selected.cbegin(); it != selected.cend(); ++it) {
+            const QString identity = it.key();
+            const MibProfileMember &member = it.value();
+            QStringList dependencies;
+            for (const auto &provider : index.providersFor(identity)) {
+                if (QFileInfo(provider.canonicalPath).canonicalFilePath().compare(
+                        QFileInfo(member.canonicalPath).canonicalFilePath(), Qt::CaseInsensitive) == 0 &&
+                    provider.sha256 == member.sha256) {
+                    dependencies = provider.imports;
+                    break;
+                }
+            }
+            for (const QString &dependency : dependencies)
+                if (!selected.contains(dependency))
+                    requestedFromFolders[dependency].insert(
+                        QFileInfo(member.canonicalPath).canonicalPath());
+        }
+
+        for (auto request = requestedFromFolders.cbegin(); request != requestedFromFolders.cend(); ++request) {
+            const QString identity = request.key();
+            QList<MibIndexedProvider> candidates = index.providersFor(identity);
+            QList<MibIndexedProvider> contextual;
+            for (const QString &source : request.value()) {
+                const auto local = index.providersFor(identity, QFileInfo(source).absolutePath(),
+                                                       MibCatalogProviderScope::ExactFolder);
+                for (const auto &provider : local)
+                    if (std::none_of(contextual.cbegin(), contextual.cend(), [&provider](const auto &item) {
+                        return item.canonicalPath.compare(provider.canonicalPath, Qt::CaseInsensitive) == 0 &&
+                               item.sha256 == provider.sha256;
+                    })) contextual.append(provider);
+            }
+            if (contextual.size() == 1) candidates = contextual;
+            else if (!contextual.isEmpty()) candidates.clear();
+            if (candidates.size() != 1) continue;
+            const auto &provider = candidates.first();
+            MibProfileMember member{provider.canonicalPath, provider.sha256, {},
+                                    MibProfileMemberReason::Dependency};
+            for (const auto &record : index.files())
+                if (record.canonicalPath.compare(provider.canonicalPath, Qt::CaseInsensitive) == 0) {
+                    member.identities = record.importsByModule.keys();
+                    break;
+                }
+            if (member.identities.isEmpty()) member.identities.append(identity);
+            result.profile.members.append(member);
+            result.addedDependencies.append(member);
+            for (const QString &provided : member.identities) selected.insert(provided, member);
+            changed = true;
+        }
+    }
+
+    QSet<QString> unresolved;
+    for (auto it = selected.cbegin(); it != selected.cend(); ++it) {
+        for (const auto &provider : index.providersFor(it.key())) {
+            if (provider.canonicalPath.compare(it->canonicalPath, Qt::CaseInsensitive) != 0 ||
+                provider.sha256 != it->sha256) continue;
+            for (const QString &dependency : provider.imports)
+                if (!selected.contains(dependency)) unresolved.insert(dependency);
+            break;
+        }
+    }
+    result.unresolved = unresolved.values();
+    result.unresolved.sort(Qt::CaseSensitive);
+    result.profile.unresolvedLegacyModules = result.unresolved;
+    return result;
+}

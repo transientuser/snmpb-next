@@ -253,6 +253,15 @@ MibEnvironmentPtr MibEnvironmentExtractor::extract(const MibEffectivePlan &plan,
         record.identity = text(module->name);
         record.language = language(module->language);
         record.actualProviderPath = canonicalPath(text(module->path));
+        const auto stagedSource = plan.runtimeConfiguration.stagedToOriginal().constFind(
+#ifdef Q_OS_WIN
+            QDir::fromNativeSeparators(record.actualProviderPath).toLower()
+#else
+            QDir::fromNativeSeparators(record.actualProviderPath)
+#endif
+        );
+        if (stagedSource != plan.runtimeConfiguration.stagedToOriginal().cend())
+            record.actualProviderPath = stagedSource.value();
         environment->actualLoadedIdentities.append(record.identity);
         environment->actualProviderPaths.insert(record.identity, record.actualProviderPath);
         const auto exactMember = std::find_if(

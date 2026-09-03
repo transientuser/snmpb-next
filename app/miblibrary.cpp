@@ -124,6 +124,29 @@ MibImportScanner::Result MibImportScanner::scan(const QByteArray &content)
                 QRegularExpression::CaseInsensitiveOption).globalMatch(moduleText.mid(match.capturedEnd(), blockEnd - match.capturedEnd()));
             while (from.hasNext()) { const QString dependency = normalizedModule(from.next().captured(1)); if (!direct.contains(dependency)) direct.append(dependency); }
         }
+        QStringList semantic;
+        QString semanticText = moduleText;
+        semanticText.remove(QRegularExpression(QStringLiteral("\"(?:\"\"|[^\"])*\""),
+            QRegularExpression::DotMatchesEverythingOption));
+        auto semanticModules = QRegularExpression(
+            QStringLiteral("(?m)^\\s*(?:SUPPORTS|MODULE)\\s+([A-Za-z][A-Za-z0-9-]*)\\s*$"),
+            QRegularExpression::CaseInsensitiveOption).globalMatch(semanticText);
+        while (semanticModules.hasNext()) {
+            const QString dependency = normalizedModule(semanticModules.next().captured(1));
+            static const QSet<QString> currentModuleClauses{
+                QStringLiteral("MANDATORY-GROUPS"), QStringLiteral("GROUP"),
+                QStringLiteral("OBJECT"), QStringLiteral("WRITE-SYNTAX"),
+                QStringLiteral("MIN-ACCESS"), QStringLiteral("DESCRIPTION")};
+            if (dependency != declarations[i].first &&
+                !currentModuleClauses.contains(dependency.toUpper()) &&
+                !semantic.contains(dependency))
+                semantic.append(dependency);
+        }
+        semantic.sort(Qt::CaseSensitive);
+        result.semanticDependenciesByModule.insert(declarations[i].first, semantic);
+        for (const QString &dependency : std::as_const(semantic))
+            if (!direct.contains(dependency)) direct.append(dependency);
+        direct.sort(Qt::CaseSensitive);
         result.importsByModule.insert(declarations[i].first, direct);
     }
     return result;

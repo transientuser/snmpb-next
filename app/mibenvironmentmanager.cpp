@@ -11,13 +11,18 @@ bool authorityMatches(const MibEnvironmentPtr &environment, const MibEffectivePl
         return MibEnvironmentRegistry::isUsableMaterialization(environment);
     QStringList requestedPaths;
     for (const auto &entry : plan.runtimePaths.entries()) requestedPaths.append(entry.canonicalPath);
+    const bool exactFileRuntime = !plan.runtimeConfiguration.authorizedFiles().isEmpty();
+    const bool runtimePathsMatch = environment && (exactFileRuntime
+        ? !environment->authorizedRuntimePaths().isEmpty() &&
+          environment->runtimePathHash() != plan.runtimePaths.sha256()
+        : environment->runtimePathHash() == plan.runtimePaths.sha256() &&
+          environment->authorizedRuntimePaths() == requestedPaths);
     return environment && environment->publishable() &&
         environment->profileId() == plan.profileId &&
         environment->planHash() == plan.sha256 &&
         environment->runtimeConfigurationHash() == plan.runtimeConfiguration.sha256() &&
-        environment->runtimePathHash() == plan.runtimePaths.sha256() &&
         environment->libraryGeneration() == plan.runtimeConfiguration.libraryGeneration() &&
-        environment->authorizedRuntimePaths() == requestedPaths &&
+        runtimePathsMatch &&
         environment->explicitRoots() == plan.runtimeConfiguration.explicitRoots();
 }
 }

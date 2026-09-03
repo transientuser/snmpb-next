@@ -25,6 +25,10 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+#include <QDateTime>
+#include <QFontDatabase>
+#include <QTableWidget>
+#include <QTableWidgetItem>
 
 #include "mibview.h"
 #include "agent.h"
@@ -53,6 +57,51 @@ typedef struct
     int syntax;
     QString val;
 } vb_data;
+
+namespace {
+QTableWidget *structuredResults(Snmpb *snmpb)
+{
+    return snmpb->MainUI()->Query->window()->findChild<QTableWidget *>(
+        QStringLiteral("StructuredQueryResults"));
+}
+
+void clearStructuredResults(Snmpb *snmpb)
+{
+    if (auto *table = structuredResults(snmpb)) {
+        table->setSortingEnabled(false);
+        table->setRowCount(0);
+        table->setSortingEnabled(true);
+    }
+}
+
+void appendStructuredResult(Snmpb *snmpb, const MibResolvedObject &resolved,
+                            const Oid &oid, const Vb &vb)
+{
+    auto *table = structuredResults(snmpb);
+    if (!table) return;
+    const bool sorting = table->isSortingEnabled();
+    table->setSortingEnabled(false);
+    const int row = table->rowCount();
+    table->insertRow(row);
+    const QString numericOid = QString::fromLatin1(oid.get_printable());
+    const QString object = resolved.node && !resolved.node->qualifiedName.isEmpty()
+        ? resolved.node->qualifiedName : resolved.node ? resolved.node->name : numericOid;
+    const QString syntax = resolved.node
+        ? (!resolved.node->syntaxName.isEmpty() ? resolved.node->syntaxName
+                                                : resolved.node->typeId)
+        : QString::number(vb.get_syntax());
+    const QStringList values{object, resolved.instanceSuffix.join('.'), numericOid, syntax,
+                             RenderMibValue(resolved, vb),
+                             QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz"))};
+    for (int column = 0; column < values.size(); ++column) {
+        auto *item = new QTableWidgetItem(values[column]);
+        if (column == 1 || column == 2 || column == 4)
+            item->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        table->setItem(row, column, item);
+    }
+    table->setSortingEnabled(sorting);
+}
+}
 
 Q_DECLARE_METATYPE(vb_data);
 
@@ -920,6 +969,7 @@ void Agent::AsyncCallback(int reason, Pdu &pdu,
 
                 const auto resolved=ResolveMibObject(
                     activeRequestContext?activeRequestContext->environment():MibEnvironmentPtr{},tmp);
+                appendStructuredResult(s, resolved, tmp, vb);
                 if (resolved.node)
                 {
                     if (vb_error || (pdu_error && (z+1 == pdu_index)))
@@ -1183,6 +1233,7 @@ void Agent::WalkFrom(const QString& oid)
     
     // Clear the Query window ...
     s->MainUI()->Query->clear();
+    clearStructuredResults(s);
     s->MainUI()->Query->append(tr("<font color=black>-----SNMP query started-----</font>"));
     
     // Clear some global vars
@@ -1249,6 +1300,7 @@ void Agent::Get(const QString& oid, bool usevblist)
     
     // Clear the Query window ...
     s->MainUI()->Query->clear();
+    clearStructuredResults(s);
     s->MainUI()->Query->append(tr("<font color=black>-----SNMP query started-----</font>"));
     
     // Clear some global vars
@@ -1292,6 +1344,7 @@ void Agent::GetNext(const QString& oid, bool usevblist)
         
     // Clear the Query window ...
     s->MainUI()->Query->clear();
+    clearStructuredResults(s);
     s->MainUI()->Query->append(tr("<font color=black>-----SNMP query started-----</font>"));
     
     // Clear some global vars
@@ -1335,6 +1388,7 @@ void Agent::GetBulk(const QString& oid, bool usevblist)
         
     // Clear the Query window ...
     s->MainUI()->Query->clear();
+    clearStructuredResults(s);
     s->MainUI()->Query->append(tr("<font color=black>-----SNMP query started-----</font>"));
     
     // Clear some global vars
@@ -1381,6 +1435,7 @@ void Agent::Set(const QString& oid, bool usevblist)
 
     // Clear the Query window ...
     s->MainUI()->Query->clear();
+    clearStructuredResults(s);
     s->MainUI()->Query->append(tr("<font color=black>-----SNMP set started-----</font>"));
 
     // Clear some global vars
@@ -1456,6 +1511,7 @@ void Agent::TableViewFrom(const QString& oid)
     
     // Clear the Query window ...
     s->MainUI()->Query->clear();
+    clearStructuredResults(s);
     s->MainUI()->Query->append(tr("<font color=black>-----SNMP query started-----</font>"));
     
     s->MainUI()->Query->append(tr("Collecting table objects, please wait ...<br>"));
@@ -1525,6 +1581,11 @@ void Agent::PresentTableResult(const SnmpTableResult &result)
             }
             Vb vb = row.cells[i].varbind;
             Oid oid = result.columns[i].oid;
+            Oid instanceOid;
+            vb.get_oid(instanceOid);
+            if (instanceOid.len() == 0) instanceOid = oid;
+            appendStructuredResult(s, ResolveMibObject(result.environment, instanceOid),
+                                   instanceOid, vb);
             output += QString("<td>%1</td>").arg(
                 RenderMibValue(ResolveMibObject(result.environment,oid),vb).toHtmlEscaped());
         }

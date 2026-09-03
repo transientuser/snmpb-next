@@ -48,6 +48,7 @@ set(SNMPB_APP_SOURCES
     mibengine.cpp
     mibenginevalidation.cpp
     mibruntimeparser.cpp
+    mibruntimestage.cpp
     mibvaluesemantics.cpp
     mibprofile.cpp
     mibdownloadtransport.cpp
@@ -143,6 +144,7 @@ set(SNMPB_APP_HEADERS
     mibenvironmentmanager.h
     mibengine.h
     mibruntimeparser.h
+    mibruntimestage.h
     mibservice_internal.h
     mibvaluesemantics.h
     mibprofile.h
@@ -384,6 +386,7 @@ if(BUILD_TESTING)
     add_executable(snmpb_mib_effective_plan_test
         mibengine.cpp mibengine.h
         mibruntimeparser.cpp mibruntimeparser.h
+        mibruntimestage.cpp mibruntimestage.h
         mibenvironment.cpp mibenvironment.h
         mibenvironmentextractor.cpp mibenvironmentextractor.h
         mibcandidatefilter.cpp mibcandidatefilter.h

@@ -81,6 +81,7 @@ public:
         QStringList moduleNames;
         QStringList imports;
         QMap<QString, QStringList> importsByModule;
+        QMap<QString, QStringList> semanticDependenciesByModule;
         QString revision;
         bool malformedImports = false;
     };

@@ -101,6 +101,21 @@ END
                 "no IMPORTS");
     ok &= check(MibImportScanner::scan("BAD DEFINITIONS ::= BEGIN\nIMPORTS x FROM Y")
                     .malformedImports, "malformed IMPORTS");
+    const auto semantic = MibImportScanner::scan(
+        "CAP-MIB DEFINITIONS ::= BEGIN\n"
+        "IMPORTS MODULE-IDENTITY, AGENT-CAPABILITIES FROM SNMPv2-SMI;\n"
+        "cap MODULE-IDENTITY ::= { 1 3 6 1 4 1 999 1 }\n"
+        "agent AGENT-CAPABILITIES\nSUPPORTS UDP-MIB\n"
+        "INCLUDES { udpGroup }\nMODULE IF-MIB\n"
+        "MODULE\nMANDATORY-GROUPS { udpGroup }\n"
+        "VARIATION ifIndex DESCRIPTION \"x\" ::= { cap 1 }\nEND\n");
+    ok &= check(semantic.importsByModule.value("CAP-MIB").contains("UDP-MIB") &&
+                semantic.importsByModule.value("CAP-MIB").contains("IF-MIB"),
+                "SUPPORTS and named MODULE clauses are semantic dependencies");
+    ok &= check(!semantic.importsByModule.value("CAP-MIB").contains("udpGroup") &&
+                !semantic.importsByModule.value("CAP-MIB").contains("ifIndex") &&
+                !semantic.importsByModule.value("CAP-MIB").contains("MANDATORY-GROUPS"),
+                "INCLUDES and VARIATION symbols are not mistaken for module dependencies");
     const auto pibScan = MibImportScanner::scan(
         "ACCOUNTING-FRAMEWORK-PIB PIB-DEFINITIONS ::= BEGIN\n"
         "IMPORTS x FROM COPS-PR-SPPI;\nEND\n");

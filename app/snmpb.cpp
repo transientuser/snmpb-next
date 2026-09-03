@@ -30,6 +30,10 @@
 #include <QLabel>
 #include <QSplitter>
 #include <QElapsedTimer>
+#include <QHeaderView>
+#include <QLineEdit>
+#include <QTableWidget>
+#include <QToolButton>
 #include <qmenu.h>
 #include "snmpb.h"
 #include "mibmodule.h"
@@ -383,6 +387,78 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     browserProfileLayout->addWidget(new QLabel(tr("Active MIB Profile:"), browserProfileRow));
     browserProfileLayout->addWidget(browserProfile, 1);
     qobject_cast<QVBoxLayout *>(w.MIBTreeLayout->layout())->insertWidget(1, browserProfileRow);
+
+    auto *queryTools = new QWidget(w.MIBTreeLayout);
+    queryTools->setObjectName(QStringLiteral("QueryToolBar"));
+    auto *queryToolsLayout = new QHBoxLayout(queryTools);
+    queryToolsLayout->setContentsMargins(0, 3, 0, 3);
+    queryToolsLayout->setSpacing(4);
+    const auto addQueryButton = [queryTools, queryToolsLayout](const QString &text,
+                                                               QStyle::StandardPixmap icon) {
+        auto *button = new QToolButton(queryTools);
+        button->setText(text);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        button->setIcon(button->style()->standardIcon(icon));
+        queryToolsLayout->addWidget(button);
+        return button;
+    };
+    auto *getButton = addQueryButton(tr("Get"), QStyle::SP_ArrowRight);
+    auto *getNextButton = addQueryButton(tr("Get Next"), QStyle::SP_ArrowForward);
+    auto *getBulkButton = addQueryButton(tr("Get Bulk"), QStyle::SP_FileDialogListView);
+    auto *walkButton = addQueryButton(tr("Walk"), QStyle::SP_ArrowDown);
+    auto *tableButton = addQueryButton(tr("Table"), QStyle::SP_FileDialogDetailedView);
+    auto *setButton = addQueryButton(tr("Set"), QStyle::SP_DialogApplyButton);
+    auto *stopButton = addQueryButton(tr("Stop"), QStyle::SP_BrowserStop);
+    connect(getButton, &QToolButton::clicked, w.MIBTree, [this]() { w.MIBTree->QueryCurrent(0); });
+    connect(getNextButton, &QToolButton::clicked, w.MIBTree, [this]() { w.MIBTree->QueryCurrent(1); });
+    connect(getBulkButton, &QToolButton::clicked, w.MIBTree, [this]() { w.MIBTree->QueryCurrent(2); });
+    connect(walkButton, &QToolButton::clicked, w.MIBTree, &MibModelView::WalkCurrent);
+    connect(tableButton, &QToolButton::clicked, w.MIBTree, &MibModelView::QueryTableFromCurrent);
+    connect(setButton, &QToolButton::clicked, w.MIBTree, &MibModelView::SetCurrent);
+    connect(stopButton, &QToolButton::clicked, w.actionStop, &QAction::trigger);
+    connect(w.MIBTree, &MibModelView::QueryTableAvailabilityChanged,
+            tableButton, &QToolButton::setEnabled);
+    connect(w.actionStop, &QAction::changed, stopButton,
+            [stopButton, action=w.actionStop]() { stopButton->setEnabled(action->isEnabled()); });
+    qobject_cast<QVBoxLayout *>(w.MIBTreeLayout->layout())->insertWidget(2, queryTools);
+
+    auto *objectRow = new QWidget(w.MIBTreeLayout);
+    auto *objectLayout = new QHBoxLayout(objectRow);
+    objectLayout->setContentsMargins(0, 0, 0, 4);
+    objectLayout->setSpacing(6);
+    objectLayout->addWidget(new QLabel(tr("Object / OID:"), objectRow));
+    auto *objectAddress = new QLineEdit(objectRow);
+    objectAddress->setObjectName(QStringLiteral("QueryObjectAddress"));
+    objectAddress->setPlaceholderText(tr("Numeric OID or current Tree object"));
+    objectAddress->setClearButtonEnabled(true);
+    objectLayout->addWidget(objectAddress, 2);
+    objectLayout->addWidget(new QLabel(tr("Filter Tree:"), objectRow));
+    auto *treeFilter = new QLineEdit(objectRow);
+    treeFilter->setObjectName(QStringLiteral("MibTreeFilter"));
+    treeFilter->setPlaceholderText(tr("Name, module, or OID prefix"));
+    treeFilter->setClearButtonEnabled(true);
+    objectLayout->addWidget(treeFilter, 1);
+    connect(objectAddress, &QLineEdit::returnPressed, w.MIBTree,
+            [this, objectAddress]() { w.MIBTree->SelectFromOid(objectAddress->text().trimmed()); });
+    connect(w.MIBTree, &MibModelView::CurrentObjectChanged, objectAddress, &QLineEdit::setText);
+    connect(treeFilter, &QLineEdit::textChanged, w.MIBTree, &MibModelView::SetFilterText);
+    qobject_cast<QVBoxLayout *>(w.MIBTreeLayout->layout())->insertWidget(3, objectRow);
+
+    auto *resultTable = new QTableWidget(w.QueryLayout);
+    resultTable->setObjectName(QStringLiteral("StructuredQueryResults"));
+    resultTable->setColumnCount(6);
+    resultTable->setHorizontalHeaderLabels({tr("Object"), tr("Instance"), tr("OID"),
+                                            tr("Syntax"), tr("Value"), tr("Time")});
+    resultTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    resultTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    resultTable->setSortingEnabled(true);
+    resultTable->setAlternatingRowColors(true);
+    resultTable->verticalHeader()->setVisible(false);
+    resultTable->horizontalHeader()->setStretchLastSection(true);
+    for (int column = 0; column < 4; ++column)
+        resultTable->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+    qobject_cast<QVBoxLayout *>(w.QueryLayout->layout())->insertWidget(1, resultTable, 2);
+    w.Query->setToolTip(tr("Raw protocol and diagnostic output"));
     const auto refreshMibProfiles = [this, browserProfile]() {
         const QString selected = QSettings().value("mib-library/current-profile",
             MibProfileDefinitions::allId()).toString();
@@ -442,8 +518,24 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     contextName->setFont(contextFont);
     auto *contextSummary = new QLabel(tr("Select a device from the sidebar"), contextWidget);
     contextSummary->setObjectName(QStringLiteral("CurrentDeviceSummary"));
+    auto *contextState = new QWidget(contextWidget);
+    auto *contextStateLayout = new QHBoxLayout(contextState);
+    contextStateLayout->setContentsMargins(0, 2, 0, 0);
+    contextStateLayout->setSpacing(12);
+    auto *securityContext = new QLabel(tr("SNMP: No connection"), contextState);
+    securityContext->setObjectName(QStringLiteral("CurrentSecurityContext"));
+    auto *mibContext = new QLabel(tr("MIB Profile: %1").arg(browserProfile->currentText()), contextState);
+    mibContext->setObjectName(QStringLiteral("CurrentMibProfile"));
+    auto *environmentContext = new QLabel(tr("Environment: Building"), contextState);
+    environmentContext->setObjectName(QStringLiteral("CurrentEnvironmentStatus"));
+    environmentContext->setProperty("status", QStringLiteral("building"));
+    contextStateLayout->addWidget(securityContext);
+    contextStateLayout->addWidget(mibContext);
+    contextStateLayout->addWidget(environmentContext);
+    contextStateLayout->addStretch();
     contextLayout->addWidget(contextName);
     contextLayout->addWidget(contextSummary);
+    contextLayout->addWidget(contextState);
     if (auto *centralLayout = qobject_cast<QGridLayout *>(w.widget->layout())) {
         centralLayout->removeWidget(w.TabW);
         centralLayout->setContentsMargins(8, 8, 8, 8);
@@ -507,14 +599,59 @@ void Snmpb::BindToGUI(QMainWindow* mw)
     connect(devicePane, &DevicePane::profileSelected,
             agent, &Agent::SelectProfileById);
     connect(devicePane, &DevicePane::currentContextChanged, mw,
-            [contextName, contextSummary](const QString &name, const QString &summary) {
+            [contextName, contextSummary, securityContext](const QString &name, const QString &summary) {
         DiagnosticLogger::log("UI", QStringLiteral(
             "current-profile header update begin name=%1").arg(name));
         contextName->setText(name.isEmpty() ? QObject::tr("No device selected") : name);
         contextSummary->setText(summary.isEmpty() ?
             QObject::tr("Select a device from the sidebar") : summary);
+        securityContext->setText(summary.isEmpty() ? QObject::tr("SNMP: No connection")
+                                                    : QObject::tr("SNMP: %1").arg(summary));
         DiagnosticLogger::log("UI", "current-profile header update end");
     });
+    connect(browserProfile, &QComboBox::currentTextChanged, mibContext,
+            [mibContext](const QString &name) {
+        mibContext->setText(QObject::tr("MIB Profile: %1").arg(name.isEmpty()
+            ? QObject::tr("None") : name));
+    });
+    connect(modules, &MibModule::profileRuntimeBuildStarted, environmentContext,
+            [environmentContext](const QString &) {
+        environmentContext->setText(QObject::tr("Environment: Building"));
+        environmentContext->setProperty("status", QStringLiteral("building"));
+        environmentContext->style()->unpolish(environmentContext);
+        environmentContext->style()->polish(environmentContext);
+    });
+    connect(modules, &MibModule::profileRuntimeReady, environmentContext,
+            [environmentContext](const QString &, const MibEffectivePlan &, MibEnvironmentPtr environment,
+                                 const QStringList &, bool, bool partial) {
+        const QString state = !environment || environment->loadedCount() == 0
+            ? QObject::tr("Empty") : partial ? QObject::tr("Needs attention") : QObject::tr("Ready");
+        environmentContext->setText(QObject::tr("Environment: %1").arg(state));
+        environmentContext->setProperty("status", partial ? QStringLiteral("warning")
+            : state == QObject::tr("Ready") ? QStringLiteral("ready") : QStringLiteral("empty"));
+        environmentContext->style()->unpolish(environmentContext);
+        environmentContext->style()->polish(environmentContext);
+    });
+    connect(modules, &MibModule::profileRuntimeFailed, environmentContext,
+            [environmentContext](const QString &, const QString &) {
+        environmentContext->setText(QObject::tr("Environment: Error"));
+        environmentContext->setProperty("status", QStringLiteral("error"));
+        environmentContext->style()->unpolish(environmentContext);
+        environmentContext->style()->polish(environmentContext);
+    });
+
+    mw->setStyleSheet(mw->styleSheet() + QStringLiteral(R"(
+        QWidget#CurrentDeviceContext { background: palette(alternate-base); border-bottom: 1px solid palette(mid); }
+        QLabel#CurrentEnvironmentStatus { border-radius: 3px; padding: 2px 7px; font-weight: 600; }
+        QLabel#CurrentEnvironmentStatus[status="ready"] { color: #237a3b; background: #dff2e4; }
+        QLabel#CurrentEnvironmentStatus[status="building"] { color: #765600; background: #fff0bd; }
+        QLabel#CurrentEnvironmentStatus[status="warning"] { color: #8a4b00; background: #ffe4c2; }
+        QLabel#CurrentEnvironmentStatus[status="error"] { color: #9b2525; background: #f8d7da; }
+        QWidget#QueryToolBar { border-bottom: 1px solid palette(mid); }
+        QToolButton { padding: 3px 7px; }
+        QHeaderView::section { padding: 4px 6px; font-weight: 600; }
+        QTreeView::item, QTableView::item, QListView::item { min-height: 20px; }
+    )"));
     connect(devicePane->detailsEditor(), &DeviceDetailsEditor::profileApplied,
             devicePane, [this](const QString &profileId) {
         DiagnosticLogger::log("Connections", QStringLiteral(

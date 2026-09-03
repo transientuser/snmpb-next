@@ -26,7 +26,31 @@ void MibModelView::currentChanged(const QModelIndex &current, const QModelIndex 
     updateQueryTableAvailability();
     if (!current.isValid()) { emit NodeProperties({}); return; }
     retainedOid = current.data(MibTreeModel::OidRole).toString();
+    emit CurrentObjectChanged(retainedOid);
     emit NodeProperties(detailsFor(current));
+}
+
+void MibModelView::SetFilterText(const QString &text)
+{
+    searchText = text.trimmed();
+    filterModel->setFilterFixedString(searchText);
+    if (searchText.isEmpty()) expandToDepth(1); else expandAll();
+}
+
+void MibModelView::QueryCurrent(int operation)
+{
+    const QString oid = currentOid();
+    if (!oid.isEmpty()) emit GetFromOid(oid + QStringLiteral(".0"), operation);
+}
+
+void MibModelView::WalkCurrent()
+{
+    if (!currentOid().isEmpty()) emit WalkFromOid(currentOid());
+}
+
+void MibModelView::SetCurrent()
+{
+    if (!currentOid().isEmpty()) emit SetFromOid(currentOid());
 }
 
 bool MibModelView::queryTableAvailable() const

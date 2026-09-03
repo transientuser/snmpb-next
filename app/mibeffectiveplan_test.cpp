@@ -1,6 +1,7 @@
 #include "mibeffectiveplan.h"
 #include "mibenvironmentextractor.h"
 #include "mibruntimeparser.h"
+#include "mibruntimestage.h"
 #include "smi.h"
 
 #include <QCoreApplication>
@@ -77,6 +78,54 @@ int main(int argc, char **argv)
                   << "\" largest_modules=" << largest << " convergence_passes=" << largestPasses
                   << " slowest_plan_ms=" << slowestMsecs << '\n';
         return 0;
+    }
+    if (application.arguments().value(1) == QStringLiteral("--materialize-profile")) {
+        const QString libraryRoot = application.arguments().value(2);
+        MibDependencyIndex index(application.arguments().value(5), libraryRoot);
+        QString error;
+        index.update({libraryRoot}, &error);
+        if (!error.isEmpty()) { std::cerr << error.toStdString() << '\n'; return 2; }
+        const auto profiles = MibProfileRepository(application.arguments().value(3)).load(&error);
+        const QString profileId = application.arguments().value(4);
+        const auto found = std::find_if(profiles.cbegin(), profiles.cend(), [&profileId](const auto &item) {
+            return item.id == profileId;
+        });
+        if (found == profiles.cend()) { std::cerr << "profile not found\n"; return 3; }
+        const auto refreshed = MibResolveProfileDependencies(*found, index);
+        MibEffectivePlan plan = MibEffectivePlanResolver().resolve(refreshed.profile, index);
+        const auto configuration = MibProfileRuntimeConfigurationBuilder().build(refreshed.profile, index, {});
+        const auto stage = MibRuntimeStage::prepare(configuration, application.arguments().value(6));
+        std::cout << "added_before=" << found->members.size()
+                  << " dependencies_added=" << refreshed.addedDependencies.size()
+                  << " unresolved=" << refreshed.unresolved.size()
+                  << " stage_success=" << stage.success << " stage_reused=" << stage.reused << '\n';
+        for (const QString &identity : {QStringLiteral("ATM-TC-MIB"), QStringLiteral("BRIDGE-MIB"),
+                                       QStringLiteral("EXTREME-BASE-MIB"), QStringLiteral("UDP-MIB")}) {
+            for (const auto &member : refreshed.profile.members)
+                if (member.identities.contains(identity))
+                    std::cout << identity.toStdString() << '=' << canonical(member.canonicalPath).toStdString() << '\n';
+        }
+        if (!refreshed.unresolved.isEmpty())
+            std::cout << "unresolved_identities=" << refreshed.unresolved.join(',').toStdString() << '\n';
+        if (!stage.success) { std::cerr << stage.error.toStdString() << '\n'; return 4; }
+        plan.runtimeConfiguration = stage.configuration;
+        plan.runtimePaths = stage.paths; plan.hasRuntimePaths = true;
+        const auto reset = MibRuntimeParser::reset(plan.runtimePaths);
+        const auto loads = reset.success
+            ? MibRuntimeParser::loadExplicitRoots(plan.runtimeConfiguration, plan.runtimePaths)
+            : MibExplicitRootLoadBatch{};
+        QStringList unavailable = loads.failedIdentities() + plan.missingModules +
+            plan.ambiguousModules + plan.pinFailureModules;
+        unavailable.removeDuplicates();
+        const auto environment = MibEnvironmentExtractor().extract(plan, unavailable, loads.roots);
+        std::cout << "runtime_paths=" << plan.runtimePaths.orderedPaths().join(';').toStdString()
+                  << " parser_modules=" << environment->loadedCount()
+                  << " providers_authorized=" << environment->providersAuthorized()
+                  << " publishable=" << environment->publishable()
+                  << " nodes=" << environment->nodes().size() << '\n';
+        if (!environment->publishable())
+            std::cout << "diagnostics=" << environment->constructionDiagnostics().join(" | ").toStdString() << '\n';
+        return environment->publishable() ? 0 : 5;
     }
     bool ok = true; QTemporaryDir temp;
     const QString standards = QDir(temp.path()).filePath("Standards/IETF");
@@ -593,6 +642,7 @@ int main(int argc, char **argv)
     writeFile(dependencyBFile, "EXACT-DEPENDENCY-MIB DEFINITIONS ::= BEGIN\n"
                                "depRoot OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 99202 }\nEND\n");
     aliasIndex.update({aliasProduct, aliasStandards});
+    QTemporaryDir stageCache;
     const auto materializeExact = [&](const QString &id, const QStringList &files) {
         MibProfileRecord profile;
         profile.id = id; profile.name = id; profile.type = MibProfileType::Custom;
@@ -605,6 +655,10 @@ int main(int argc, char **argv)
         plan.hasRuntimePaths = true;
         plan.sha256 = QString::fromLatin1(QCryptographicHash::hash(
             MibEffectivePlanResolver::canonicalBytes(plan), QCryptographicHash::Sha256).toHex());
+        const auto stage = MibRuntimeStage::prepare(plan.runtimeConfiguration, stageCache.path());
+        if (!stage.success) return std::pair<MibEffectivePlan, MibEnvironmentPtr>{plan, {}};
+        plan.runtimeConfiguration = stage.configuration;
+        plan.runtimePaths = stage.paths;
         MibRuntimeParser::reset(plan.runtimePaths);
         const auto loads = MibRuntimeParser::loadExplicitRoots(
             plan.runtimeConfiguration, plan.runtimePaths);
@@ -617,12 +671,12 @@ int main(int argc, char **argv)
             MibEnvironmentExtractor().extract(plan, unavailable, loads.roots)};
     };
     const auto selectedA = materializeExact("same-a", {providerAFile});
-    ok &= check(selectedA.second->publishable() &&
+    ok &= check(selectedA.second && selectedA.second->publishable() &&
                 canonical(selectedA.second->loadedProviderPaths().value("SAME-DIR-MIB")) ==
                     canonical(providerAFile),
                 "same-identity same-directory provider A is deliberately materialized");
     const auto selectedB = materializeExact("same-b", {providerBFile});
-    ok &= check(selectedB.second->publishable() &&
+    ok &= check(selectedB.second && selectedB.second->publishable() &&
                 canonical(selectedB.second->loadedProviderPaths().value("SAME-DIR-MIB")) ==
                     canonical(providerBFile),
                 "reversed exact selection deliberately materializes provider B");
@@ -634,6 +688,23 @@ int main(int argc, char **argv)
                 canonical(dependencyA.second->loadedProviderPaths().value("EXACT-DEPENDENCY-MIB")) ==
                     canonical(dependencyAFile),
                 "authorized dependency is loaded before its importer and provider A publishes");
+    MibProfileRecord dependencyAProfile;
+    dependencyAProfile.id = "dependency-a"; dependencyAProfile.name = "dependency-a";
+    dependencyAProfile.type = MibProfileType::Custom;
+    dependencyAProfile.members = MibProfileMembersFromFiles({dependencyRootFile, dependencyAFile});
+    const auto dependencyAConfiguration = runtimeBuilder.build(
+        dependencyAProfile, aliasIndex, {aliasProductCollection, aliasStandardsCollection});
+    const auto dependencyAStage = MibRuntimeStage::prepare(
+        dependencyAConfiguration, stageCache.path());
+    ok &= check(dependencyAStage.success && dependencyAStage.reused &&
+                dependencyAStage.paths.orderedPaths().size() == 1 &&
+                !dependencyAStage.paths.orderedPaths().first().contains(collisionDir),
+                "completed exact runtime stage is reusable and excludes the source directory");
+    const QStringList stagedNames = QDir(dependencyA.first.runtimePaths.orderedPaths().first())
+        .entryList(QDir::Files | QDir::NoDotAndDotDot);
+    ok &= check(QSet<QString>(stagedNames.cbegin(), stagedNames.cend()) ==
+                    QSet<QString>({"DEPENDENT-ROOT-MIB", "EXACT-DEPENDENCY-MIB"}),
+                "runtime stage exposes only authorized identity aliases");
     const auto dependencyB = materializeExact(
         "dependency-b", {dependencyRootFile, dependencyBFile});
     ok &= check(dependencyB.second->publishable() &&
@@ -644,6 +715,78 @@ int main(int argc, char **argv)
     ok &= check(missingDependency.first.missingModules.contains("EXACT-DEPENDENCY-MIB") &&
                 !missingDependency.second->publishable(),
                 "removing an exact dependency reports it missing and cannot authorize a Catalog substitute");
+
+    const auto duplicateAuthority = materializeExact(
+        "duplicate-authority", {providerAFile, providerBFile});
+    ok &= check(!duplicateAuthority.second,
+                "differing exact providers for one identity fail deterministically before parsing");
+
+    QTemporaryDir refreshFixture;
+    const QString refreshProduct = QDir(refreshFixture.path()).filePath("Vendor Product");
+    const QString refreshStandards = QDir(refreshFixture.path()).filePath("Standards");
+    QDir().mkpath(refreshProduct); QDir().mkpath(refreshStandards);
+    const QString refreshRootFile = QDir(refreshProduct).filePath("root.my");
+    const QString productDependency = QDir(refreshProduct).filePath("atm_tc.mib");
+    const QString standardsDependency = QDir(refreshStandards).filePath("ATM-TC-MIB");
+    writeFile(refreshRootFile, mib("PRODUCT-ROOT-MIB", {"ATM-TC-MIB"}));
+    writeFile(productDependency, mib("ATM-TC-MIB") + "-- product\n");
+    writeFile(standardsDependency, mib("ATM-TC-MIB") + "-- standards\n");
+    MibDependencyIndex refreshIndex(QDir(refreshFixture.path()).filePath("index.json"));
+    refreshIndex.update({refreshProduct, refreshStandards});
+    MibProfileRecord refreshProfile;
+    refreshProfile.id = "refresh"; refreshProfile.name = "Refresh";
+    refreshProfile.type = MibProfileType::Custom;
+    refreshProfile.members = MibProfileMembersFromFiles({refreshRootFile});
+    const auto refreshed = MibResolveProfileDependencies(refreshProfile, refreshIndex);
+    ok &= check(refreshed.addedDependencies.size() == 1 && refreshed.unresolved.isEmpty() &&
+                canonical(refreshed.addedDependencies.first().canonicalPath) ==
+                    canonical(productDependency) &&
+                refreshed.addedDependencies.first().reason == MibProfileMemberReason::Dependency,
+                "dependency refresh uses one exact same-folder provider without global guessing");
+    MibEffectivePlan refreshedPlan = MibEffectivePlanResolver().resolve(refreshed.profile, refreshIndex);
+    const auto refreshedConfiguration = runtimeBuilder.build(refreshed.profile, refreshIndex, {});
+    refreshedPlan.runtimeConfiguration = refreshedConfiguration;
+    const auto refreshedStage = MibRuntimeStage::prepare(
+        refreshedPlan.runtimeConfiguration, stageCache.path());
+    refreshedPlan.runtimeConfiguration = refreshedStage.configuration;
+    refreshedPlan.runtimePaths = refreshedStage.paths; refreshedPlan.hasRuntimePaths = true;
+    MibRuntimeParser::reset(refreshedPlan.runtimePaths);
+    const auto refreshedLoads = MibRuntimeParser::loadExplicitRoots(
+        refreshedPlan.runtimeConfiguration, refreshedPlan.runtimePaths);
+    const auto isolatedRefresh = MibEnvironmentExtractor().extract(
+        refreshedPlan, {}, refreshedLoads.roots);
+    ok &= check(refreshedStage.success && isolatedRefresh->publishable() &&
+                canonical(isolatedRefresh->loadedProviderPaths().value("ATM-TC-MIB")) ==
+                    canonical(productDependency),
+                "isolated runtime preserves contextual exact dependency provider");
+    const QByteArray originalDependencyBytes = mib("ATM-TC-MIB") + "-- product\n";
+    writeFile(productDependency, mib("ATM-TC-MIB") + "-- changed\n");
+    const auto changedSourceStage = MibRuntimeStage::prepare(
+        refreshedConfiguration, stageCache.path());
+    ok &= check(!changedSourceStage.success,
+                "changed source hash is rejected before cached-stage reuse");
+    writeFile(productDependency, originalDependencyBytes);
+    const QString injectedArtifact = QDir(refreshedStage.paths.orderedPaths().first())
+        .filePath("UNAUTHORIZED-MIB");
+    writeFile(injectedArtifact, mib("UNAUTHORIZED-MIB"));
+    const auto repairedStage = MibRuntimeStage::prepare(
+        runtimeBuilder.build(refreshed.profile, refreshIndex, {}), stageCache.path());
+    ok &= check(repairedStage.success && !repairedStage.reused &&
+                !QFileInfo::exists(injectedArtifact),
+                "unrecognized staged artifacts invalidate and rebuild the stage");
+    QFile::remove(QDir(repairedStage.directory).filePath("complete.json"));
+    const auto incompleteStage = MibRuntimeStage::prepare(
+        runtimeBuilder.build(refreshed.profile, refreshIndex, {}), stageCache.path());
+    ok &= check(incompleteStage.success && !incompleteStage.reused,
+                "incomplete stage is rejected and reconstructed atomically");
+
+    writeFile(QDir(refreshProduct).filePath("atm_tc_second.mib"),
+              mib("ATM-TC-MIB") + "-- second product\n");
+    refreshIndex.update({refreshProduct, refreshStandards});
+    const auto ambiguousRefresh = MibResolveProfileDependencies(refreshProfile, refreshIndex);
+    ok &= check(ambiguousRefresh.addedDependencies.isEmpty() &&
+                ambiguousRefresh.unresolved.contains("ATM-TC-MIB"),
+                "dependency refresh retains same-folder ambiguity instead of selecting by order");
 
     const auto exactMulti = materializeExact("multi", {multiAliasFile});
     ok &= check(exactMulti.second->publishable() && exactMulti.second->authorizedFiles().size() == 1 &&
